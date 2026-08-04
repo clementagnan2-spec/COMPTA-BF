@@ -77,12 +77,38 @@ def init_db(conn):
             libelle TEXT,
             debit REAL NOT NULL DEFAULT 0,
             credit REAL NOT NULL DEFAULT 0,
-            flux_code TEXT
+            flux_code TEXT,
+            analytic_code TEXT
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS settings (
+            key TEXT PRIMARY KEY,
+            value TEXT
         )
     """)
     conn.commit()
+    _migrate(conn)
     if conn.execute("SELECT COUNT(*) FROM accounts").fetchone()[0] == 0:
         load_plan_comptable(conn)
+
+
+def _migrate(conn):
+    """Ajoute les colonnes manquantes si la base a été créée par une version antérieure."""
+    cols = [r["name"] for r in conn.execute("PRAGMA table_info(entries)")]
+    if "analytic_code" not in cols:
+        conn.execute("ALTER TABLE entries ADD COLUMN analytic_code TEXT")
+    conn.commit()
+
+
+def get_setting(conn, key, default=0.0):
+    row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+    return float(row["value"]) if row else default
+
+
+def set_setting(conn, key, value):
+    conn.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, str(value)))
+    conn.commit()
 
 
 def load_plan_comptable(conn, json_path=None):
@@ -123,11 +149,14 @@ def get_account_label(conn, code):
 # ---------------------------------------------------------------------------
 # Écritures (Saisie)
 # ---------------------------------------------------------------------------
-def add_entry(conn, date_str, piece, journal, compte, tiers, libelle, debit, credit, flux_code=""):
+def add_entry(conn, date_str, piece, journal, compte, tiers, libelle, debit, credit,
+              flux_code="", analytic_code=""):
     conn.execute(
-        """INSERT INTO entries (date, piece, journal, compte, tiers, libelle, debit, credit, flux_code)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (date_str, piece, journal, compte, tiers, libelle, debit or 0, credit or 0, flux_code),
+        """INSERT INTO entries (date, piece, journal, compte, tiers, libelle, debit, credit,
+                                 flux_code, analytic_code)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (date_str, piece, journal, compte, tiers, libelle, debit or 0, credit or 0,
+         flux_code, analytic_code),
     )
     conn.commit()
 
@@ -306,6 +335,97 @@ def compute_bilan(conn, stock_initial=0.0):
     }
 
 
+def compute_grand_livre(conn, compte, tiers=None, date_from=None, date_to=None):
+    """Détail chronologique des écritures d'un compte, avec solde cumulé."""
+    query = "SELECT * FROM entries WHERE compte = ?"
+    params = [compte]
+    if tiers:
+        query += " AND tiers LIKE ?"
+        params.append(f"%{tiers}%")
+    if date_from:
+        query += " AND date >= ?"
+        params.append(date_from)
+    if date_to:
+        query += " AND date <= ?"
+        params.append(date_to)
+    query += " ORDER BY date, id"
+    rows = [dict(r) for r in conn.execute(query, params).fetchall()]
+    solde = 0.0
+    for r in rows:
+        solde += r["debit"] - r["credit"]
+        r["solde_cumule"] = solde
+    return rows
+
+
+# ---------------------------------------------------------------------------
+# Stocks
+# ---------------------------------------------------------------------------
+def compute_stocks(conn):
+    balance = compute_balance(conn, only_with_movement=False)
+    by_code = {b["code"]: b for b in balance}
+    result = []
+    for code in COMPTES_STOCK:
+        b = by_code.get(code, {"label": get_account_label(conn, code), "debit": 0.0, "credit": 0.0})
+        initial = get_setting(conn, f"stock_initial_{code}", 0.0)
+        entrees, sorties = b["debit"], b["credit"]
+        result.append({
+            "code": code, "label": b["label"], "stock_initial": initial,
+            "entrees": entrees, "sorties": sorties,
+            "stock_final": initial + entrees - sorties,
+        })
+    return result
+
+
+def set_stock_initial(conn, code, value):
+    set_setting(conn, f"stock_initial_{code}", value)
+
+
+# ---------------------------------------------------------------------------
+# Production / coûts de fabrication (écritures taguées analytic_code = AN-FAB)
+# ---------------------------------------------------------------------------
+FLUX_FAB = "AN-FAB"
+FAB_POSTES = [
+    ("Matières premières et fournitures consommées", ["602000", "604000"]),
+    ("Main-d'œuvre directe de production", ["661000", "663000", "664000"]),
+    ("Charges indirectes de fabrication", ["624000", "625000", "681000"]),
+]
+
+
+def compute_production(conn):
+    balance = compute_balance(conn, only_with_movement=False)
+
+    def net_produit(codes):
+        d, c = _sum_accounts(balance, codes)
+        return c - d
+
+    ventes = net_produit(["702000", "705000", "706000"])
+    stock_d, stock_c = _sum_accounts(balance, ["360000"])
+    production_stockee = stock_d - stock_c
+    valeur_production = ventes + production_stockee
+
+    postes = []
+    total_cout = 0.0
+    for label, codes in FAB_POSTES:
+        placeholders = ",".join("?" * len(codes))
+        row = conn.execute(
+            f"SELECT COALESCE(SUM(debit),0) d, COALESCE(SUM(credit),0) c FROM entries "
+            f"WHERE compte IN ({placeholders}) AND analytic_code = ?",
+            (*codes, FLUX_FAB),
+        ).fetchone()
+        montant = row["d"] - row["c"]
+        postes.append({"label": label, "comptes": ", ".join(codes), "montant": montant})
+        total_cout += montant
+
+    return {
+        "ventes": ventes,
+        "production_stockee": production_stockee,
+        "valeur_production": valeur_production,
+        "postes_cout": postes,
+        "cout_production": total_cout,
+        "marge": valeur_production - total_cout,
+    }
+
+
 def compute_tft(conn, treso_ouverture=0.0):
     balance = compute_balance(conn, only_with_movement=False)
     treso_debit, treso_credit = _sum_accounts(balance, COMPTES_TRESORERIE)
@@ -365,6 +485,17 @@ if __name__ == "__main__":
 
     print("\n--- TFT ---")
     print(compute_tft(conn))
+
+    print("\n--- Grand livre (411000) ---")
+    for r in compute_grand_livre(conn, "411000"):
+        print(r)
+
+    print("\n--- Stocks ---")
+    for s in compute_stocks(conn):
+        print(s)
+
+    print("\n--- Production ---")
+    print(compute_production(conn))
 
     conn.close()
     os.remove("test_core.db")

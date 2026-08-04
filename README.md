@@ -65,12 +65,26 @@ pip install -r requirements.txt
 python main.py
 ```
 
+## Onglets disponibles
+
+Saisie, Grand livre, Balance, Stocks, Production (coûts de fabrication),
+Compte de résultat, Bilan, TFT (tableau des flux de trésorerie).
+
+- **Grand livre** : tapez un N° Compte (ex. `411000`) puis « Afficher » pour
+  voir le détail chronologique et le solde cumulé.
+- **Stocks** : sélectionnez un compte de stock dans le tableau, saisissez
+  son stock initial, puis « Enregistrer ».
+- **Production** : pour qu'une charge remonte dans les coûts de fabrication,
+  tapez `AN-FAB` dans le champ « Code analytique » de l'onglet Saisie sur
+  la ligne concernée.
+- **TFT** : saisissez la trésorerie d'ouverture, et codez `FLUX-EXP`,
+  `FLUX-INV` ou `FLUX-FIN` dans le champ « Code flux » des écritures de
+  trésorerie (comptes 521000/531000/570000/585000) dans l'onglet Saisie.
+
 ## Limites de cette version par rapport au classeur Excel
 
-Pour rester livrable rapidement, cette v1 couvre Saisie, Balance, Compte de
-résultat et Bilan. Elle ne reprend pas encore : Grand livre, Stocks,
-Production/coûts de fabrication, Suivi budgétaire/analytique/bailleurs,
-TFT détaillé dans l'interface (le calcul existe dans `core.py`,
-`compute_tft()`, mais n'a pas encore d'onglet dédié). Dites-moi si vous
-voulez que je les ajoute — le moteur (`core.py`) est structuré pour que ce
-soit un ajout incrémental, pas une réécriture.
+Cette version ne reprend pas encore le suivi budgétaire / analytique par
+projet / par bailleur de fonds (feuille « Rapport d'exécution » du
+classeur), ni les comptes auxiliaires Fournisseurs/Clients détaillés.
+Dites-moi si vous voulez que je les ajoute — le moteur (`core.py`) est
+structuré pour que ce soit un ajout incrémental, pas une réécriture.
