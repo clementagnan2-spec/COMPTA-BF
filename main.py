@@ -1,8 +1,9 @@
 """
 main.py — Application de comptabilité SYSCOHADA autonome (Tkinter).
 
-Lance une fenêtre avec 4 onglets : Saisie, Balance, Compte de résultat, Bilan.
-Les données sont stockées localement dans un fichier SQLite
+Navigation par menu (SAISIE, COMMERCE, PRODUCTION, ENGAGEMENTS-PROJETS,
+ÉTATS ET RAPPORTS) : un seul panneau de contenu, qui change selon le menu
+choisi. Les données sont stockées localement dans un fichier SQLite
 (%LOCALAPPDATA%\\SaisieComptable\\comptabilite.db sous Windows).
 """
 import tkinter as tk
@@ -12,91 +13,108 @@ from datetime import date
 import core
 
 
-class EtatsFinanciersTab(ttk.Frame):
-    """Regroupe Grand livre, Balance, Bilan et Liasse fiscale sous un seul onglet,
-    avec un sous-notebook interne (accessible aussi via le menu ÉTATS FINANCIERS)."""
-
-    def __init__(self, parent, conn):
-        super().__init__(parent)
-        self.conn = conn
-        self.inner = ttk.Notebook(self)
-        self.inner.pack(fill="both", expand=True)
-
-        self.grand_livre_tab = GrandLivreTab(self.inner, conn)
-        self.balance_tab = BalanceTab(self.inner, conn)
-        self.bilan_tab = BilanTab(self.inner, conn)
-        self.liasse_tab = LiasseFiscaleTab(self.inner, conn)
-
-        self.inner.add(self.grand_livre_tab, text="Grand livre")
-        self.inner.add(self.balance_tab, text="Balance")
-        self.inner.add(self.bilan_tab, text="Bilan")
-        self.inner.add(self.liasse_tab, text="Liasse fiscale")
-
-        self.inner.bind("<<NotebookTabChanged>>", lambda e: self.refresh())
-
-    def select(self, name):
-        widget = {"grand_livre": self.grand_livre_tab, "balance": self.balance_tab,
-                  "bilan": self.bilan_tab, "liasse": self.liasse_tab}[name]
-        self.inner.select(widget)
-        self.refresh()
-
-    def refresh(self):
-        self.grand_livre_tab.refresh()
-        self.balance_tab.refresh()
-        self.bilan_tab.refresh()
-
-
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("Saisie Comptable SYSCOHADA")
-        self.geometry("1150x650")
+        self.geometry("1200x680")
         self.conn = core.get_connection()
 
-        notebook = ttk.Notebook(self)
-        notebook.pack(fill="both", expand=True)
-        self.notebook = notebook
+        self.content = ttk.Frame(self)
+        self.content.pack(fill="both", expand=True)
+        self.content.grid_rowconfigure(0, weight=1)
+        self.content.grid_columnconfigure(0, weight=1)
 
-        self.saisie_tab = SaisieTab(notebook, self.conn)
-        self.opening_tab = OpeningBalancesTab(notebook, self.conn)
-        self.stocks_tab = StocksTab(notebook, self.conn)
-        self.production_tab = ProductionTab(notebook, self.conn)
-        self.cr_tab = CompteResultatTab(notebook, self.conn)
-        self.tft_tab = TftTab(notebook, self.conn)
-        self.etats_tab = EtatsFinanciersTab(notebook, self.conn)
+        self.pages = {}
 
-        notebook.add(self.saisie_tab, text="Saisie")
-        notebook.add(self.opening_tab, text="Soldes d'ouverture")
-        notebook.add(self.stocks_tab, text="Stocks")
-        notebook.add(self.production_tab, text="Production")
-        notebook.add(self.cr_tab, text="Compte de résultat")
-        notebook.add(self.tft_tab, text="TFT")
-        notebook.add(self.etats_tab, text="États financiers")
+        def register(key, cls, *args):
+            w = cls(self.content, self.conn, *args)
+            w.grid(row=0, column=0, sticky="nsew")
+            self.pages[key] = w
+            return w
 
-        # Menu "ÉTATS FINANCIERS" avec accès direct à chacun des 4 sous-onglets
+        # ---- Instanciation de toutes les pages (une seule fois) ----
+        register("saisie", SaisieTab)
+        register("ouverture", OpeningBalancesTab)
+        register("stocks", StocksTab)
+        register("production", ProductionTab)
+        register("cr", CompteResultatTab)
+        register("tft", TftTab)
+        register("grand_livre", GrandLivreTab)
+        register("balance", BalanceTab)
+        register("bilan", BilanTab)
+        register("liasse", LiasseFiscaleTab)
+        register("ventes", VentesTab)
+        register("clients", ClientsTab)
+        register("marges", MargesTab)
+        register("achats", AchatsTab)
+        register("fournisseurs", FournisseursTab)
+        register("contrats", PlaceholderTab,
+                 "Contrats", "Suivi des contrats (fournisseurs, clients, prestataires) : échéances, "
+                 "montants engagés, renouvellements.")
+        register("budget_exec", PlaceholderTab,
+                 "Tableaux d'exécution budgétaire",
+                 "Suivi budget prévisionnel vs réalisé, par ligne budgétaire et par projet.")
+        register("impots", PlaceholderTab,
+                 "Impôts", "Calcul et suivi des impôts (IS, TVA due/récupérable, retenues à la source...).")
+        register("declarations_sociales", PlaceholderTab,
+                 "Déclarations sociales", "Préparation des déclarations CNSS et assimilées.")
+        register("rapprochements", PlaceholderTab,
+                 "Rapprochements bancaires",
+                 "Comparaison des relevés bancaires avec les comptes de trésorerie (521000/531000/570000).")
+
+        # ---- Barre de menu ----
         menubar = tk.Menu(self)
-        etats_menu = tk.Menu(menubar, tearoff=0)
-        etats_menu.add_command(label="Grand livre", command=lambda: self.goto_etats("grand_livre"))
-        etats_menu.add_command(label="Balance", command=lambda: self.goto_etats("balance"))
-        etats_menu.add_command(label="Bilan", command=lambda: self.goto_etats("bilan"))
-        etats_menu.add_command(label="Liasse fiscale", command=lambda: self.goto_etats("liasse"))
-        menubar.add_cascade(label="États financiers", menu=etats_menu)
+        bold = ("Segoe UI", 9, "bold")
+
+        def add_top_menu(label, items):
+            m = tk.Menu(menubar, tearoff=0)
+            for item_label, key in items:
+                m.add_command(label=item_label, command=lambda k=key: self.show(k))
+            menubar.add_cascade(label=label, menu=m)
+            menubar.entryconfig(menubar.index("end"), font=bold)
+
+        add_top_menu("SAISIE", [
+            ("Saisie des écritures", "saisie"),
+            ("Soldes d'ouverture", "ouverture"),
+        ])
+        add_top_menu("COMMERCE", [
+            ("Ventes", "ventes"),
+            ("Clients", "clients"),
+            ("Stocks", "stocks"),
+            ("Marges bénéficiaires", "marges"),
+        ])
+        add_top_menu("PRODUCTION", [
+            ("Matières premières", "stocks"),
+            ("Fabrication", "production"),
+            ("Produits finis", "stocks"),
+        ])
+        add_top_menu("ENGAGEMENTS-PROJETS", [
+            ("Achats", "achats"),
+            ("Fournisseurs", "fournisseurs"),
+            ("Contrats", "contrats"),
+        ])
+        add_top_menu("ÉTATS ET RAPPORTS", [
+            ("Grand livre", "grand_livre"),
+            ("Balance", "balance"),
+            ("Bilan", "bilan"),
+            ("Compte de résultat", "cr"),
+            ("TFT", "tft"),
+            ("Liasse fiscale", "liasse"),
+            ("Tableaux d'exécution budgétaire", "budget_exec"),
+            ("Impôts", "impots"),
+            ("Déclarations sociales", "declarations_sociales"),
+            ("Rapprochements bancaires", "rapprochements"),
+        ])
         self.config(menu=menubar)
 
-        # Rafraîchir les onglets de synthèse quand on les affiche
-        notebook.bind("<<NotebookTabChanged>>", lambda e: self.refresh_all())
+        self.show("saisie")
 
-    def goto_etats(self, name):
-        self.notebook.select(self.etats_tab)
-        self.etats_tab.select(name)
-
-    def refresh_all(self):
-        self.opening_tab.refresh()
-        self.stocks_tab.refresh()
-        self.production_tab.refresh()
-        self.cr_tab.refresh()
-        self.tft_tab.refresh()
-        self.etats_tab.refresh()
+    def show(self, key):
+        page = self.pages[key]
+        page.tkraise()
+        if hasattr(page, "refresh"):
+            page.refresh()
 
 
 class SaisieTab(ttk.Frame):
@@ -782,6 +800,134 @@ class LiasseFiscaleTab(ttk.Frame):
             return
         self.status_var.set(f"Export réussi : {path}")
         messagebox.showinfo("Export terminé", f"Liasse fiscale enregistrée :\n{path}")
+
+
+class PlaceholderTab(ttk.Frame):
+    """Page pas encore développée : structure de menu en place, contenu à venir."""
+
+    def __init__(self, parent, conn, title, description):
+        super().__init__(parent)
+        ttk.Label(self, text=title, font=("Segoe UI", 14, "bold")).pack(anchor="w", padx=24, pady=(24, 8))
+        ttk.Label(self, text=description, wraplength=900, foreground="#595959").pack(anchor="w", padx=24)
+        ttk.Label(self, text="Fonctionnalité pas encore développée — dites-moi si vous voulez que je "
+                              "la construise en priorité.", foreground="#B00020").pack(anchor="w", padx=24, pady=(16, 0))
+
+
+class VentesTab(ttk.Frame):
+    """Synthèse des comptes de vente (classe 7, hors produits financiers)."""
+
+    def __init__(self, parent, conn):
+        super().__init__(parent)
+        self.conn = conn
+        ttk.Label(self, text="VENTES", font=("Segoe UI", 14, "bold")).pack(anchor="w", padx=16, pady=(16, 8))
+        cols = ("code", "label", "debit", "credit", "net")
+        self.tree = ttk.Treeview(self, columns=cols, show="headings")
+        headers = ["N° Compte", "Libellé", "Débit", "Crédit", "Ventes nettes (Crédit - Débit)"]
+        widths = [90, 320, 110, 110, 150]
+        for c, h, w in zip(cols, headers, widths):
+            self.tree.heading(c, text=h)
+            self.tree.column(c, width=w, anchor="w")
+        self.tree.pack(fill="both", expand=True, padx=16, pady=8)
+        self.total_var = tk.StringVar()
+        ttk.Label(self, textvariable=self.total_var, font=("Segoe UI", 10, "bold")).pack(anchor="w", padx=16, pady=(0, 12))
+        self.refresh()
+
+    def refresh(self):
+        for row in self.tree.get_children():
+            self.tree.delete(row)
+        total = 0.0
+        for b in core.compute_balance(self.conn, only_with_movement=False):
+            if b["classe"] != "7" or int(b["code"]) in (771000, 776000):
+                continue
+            net = b["credit"] - b["debit"]
+            if b["debit"] == 0 and b["credit"] == 0:
+                continue
+            self.tree.insert("", "end", values=(b["code"], b["label"], f"{b['debit']:,.2f}",
+                                                 f"{b['credit']:,.2f}", f"{net:,.2f}"))
+            total += net
+        self.total_var.set(f"TOTAL VENTES NETTES : {total:,.2f}")
+
+
+class AchatsTab(ttk.Frame):
+    """Synthèse des comptes d'achat (classe 6, hors charges financières et dotations)."""
+
+    def __init__(self, parent, conn):
+        super().__init__(parent)
+        self.conn = conn
+        ttk.Label(self, text="ACHATS", font=("Segoe UI", 14, "bold")).pack(anchor="w", padx=16, pady=(16, 8))
+        cols = ("code", "label", "debit", "credit", "net")
+        self.tree = ttk.Treeview(self, columns=cols, show="headings")
+        headers = ["N° Compte", "Libellé", "Débit", "Crédit", "Achats nets (Débit - Crédit)"]
+        widths = [90, 320, 110, 110, 150]
+        for c, h, w in zip(cols, headers, widths):
+            self.tree.heading(c, text=h)
+            self.tree.column(c, width=w, anchor="w")
+        self.tree.pack(fill="both", expand=True, padx=16, pady=8)
+        self.total_var = tk.StringVar()
+        ttk.Label(self, textvariable=self.total_var, font=("Segoe UI", 10, "bold")).pack(anchor="w", padx=16, pady=(0, 12))
+        self.refresh()
+
+    def refresh(self):
+        for row in self.tree.get_children():
+            self.tree.delete(row)
+        total = 0.0
+        excluded = {671000, 676000, 681000, 691000}
+        for b in core.compute_balance(self.conn, only_with_movement=False):
+            if b["classe"] != "6" or int(b["code"]) in excluded:
+                continue
+            net = b["debit"] - b["credit"]
+            if b["debit"] == 0 and b["credit"] == 0:
+                continue
+            self.tree.insert("", "end", values=(b["code"], b["label"], f"{b['debit']:,.2f}",
+                                                 f"{b['credit']:,.2f}", f"{net:,.2f}"))
+            total += net
+        self.total_var.set(f"TOTAL ACHATS NETS : {total:,.2f}")
+
+
+class MargesTab(ttk.Frame):
+    """Marge commerciale et valeur ajoutée, calculées comme dans la Liasse fiscale."""
+
+    def __init__(self, parent, conn):
+        super().__init__(parent)
+        self.conn = conn
+        self.text = tk.Text(self, font=("Consolas", 11), wrap="none")
+        self.text.pack(fill="both", expand=True, padx=16, pady=16)
+        self.refresh()
+
+    def refresh(self):
+        cr = core.compute_liasse_resultat(self.conn)
+        label_ca = "Chiffre d'affaires (XB)"
+        label_re = "Résultat d'exploitation (XE)"
+        lines = [
+            "MARGES BÉNÉFICIAIRES", "=" * 60, "",
+            f"  {'Ventes de marchandises (TA)':<45} {cr['TA']:>14,.2f}",
+            f"  {'Achats de marchandises (RA)':<45} {-cr['RA']:>14,.2f}",
+            f"  {'MARGE COMMERCIALE (XA)':<45} {cr['XA']:>14,.2f}", "",
+            f"  {label_ca:<45} {cr['XB']:>14,.2f}",
+            f"  {'VALEUR AJOUTÉE (XC)':<45} {cr['XC']:>14,.2f}",
+            f"  {label_re:<45} {cr['XE']:>14,.2f}",
+            f"  {'RÉSULTAT NET (XI)':<45} {cr['XI']:>14,.2f}",
+        ]
+        self.text.delete("1.0", "end")
+        self.text.insert("1.0", "\n".join(lines))
+
+
+class ClientsTab(GrandLivreTab):
+    """Grand livre pré-filtré sur le compte Clients (411000)."""
+
+    def __init__(self, parent, conn):
+        super().__init__(parent, conn)
+        self.compte_var.set("411000")
+        self.refresh()
+
+
+class FournisseursTab(GrandLivreTab):
+    """Grand livre pré-filtré sur le compte Fournisseurs (401000)."""
+
+    def __init__(self, parent, conn):
+        super().__init__(parent, conn)
+        self.compte_var.set("401000")
+        self.refresh()
 
 
 if __name__ == "__main__":

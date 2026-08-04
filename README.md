@@ -84,19 +84,44 @@ pip install -r requirements.txt
 python main.py
 ```
 
-## Onglets et menus disponibles
+## Navigation
 
-Onglets : Saisie, Soldes d'ouverture, Stocks, Production (coûts de
-fabrication), Compte de résultat, TFT, **États financiers**.
+L'application n'a plus d'onglets classiques : la navigation se fait
+entièrement via **la barre de menu** en haut de la fenêtre, avec 5 menus
+principaux (en gras) :
 
-Un menu **« États financiers »** en haut de la fenêtre donne un accès direct
-à Grand livre / Balance / Bilan / Liasse fiscale (ils sont aussi regroupés
-comme sous-onglets à l'intérieur de l'onglet « États financiers »).
+- **SAISIE** : Saisie des écritures, Soldes d'ouverture.
+- **COMMERCE** : Ventes, Clients, Stocks, Marges bénéficiaires.
+- **PRODUCTION** : Matières premières, Fabrication, Produits finis.
+- **ENGAGEMENTS-PROJETS** : Achats, Fournisseurs, Contrats.
+- **ÉTATS ET RAPPORTS** : Grand livre, Balance, Bilan, Compte de résultat,
+  TFT, Liasse fiscale, Tableaux d'exécution budgétaire, Impôts,
+  Déclarations sociales, Rapprochements bancaires.
 
-**Dates** : toutes les dates s'affichent et se saisissent au format
-**JJ/MM/AAAA** dans l'application (Saisie, Grand livre) ainsi que dans la
-Liasse fiscale exportée (dates Excel natives, format JJ/MM/AAAA appliqué
-à toutes les cellules de type date du classeur).
+Cliquer sur un menu ouvre la liste de ses pages ; cliquer sur une page
+l'affiche dans la fenêtre (un seul panneau à la fois).
+
+### Ce qui est pleinement fonctionnel
+
+Saisie, Soldes d'ouverture, Stocks (partagé entre Matières premières et
+Produits finis pour l'instant), Fabrication, Compte de résultat, TFT, Grand
+livre, Balance, Bilan, Liasse fiscale — ainsi que 3 nouvelles pages basées
+sur vos écritures existantes :
+- **Ventes** / **Achats** : synthèse des comptes de vente (classe 7) et
+  d'achat (classe 6), hors éléments financiers.
+- **Marges bénéficiaires** : marge commerciale, valeur ajoutée, résultat
+  d'exploitation et résultat net (mêmes calculs que la Liasse fiscale).
+- **Clients** / **Fournisseurs** : Grand livre pré-filtré sur les comptes
+  411000 / 401000.
+
+### Ce qui reste à construire
+
+**Contrats**, **Tableaux d'exécution budgétaire**, **Impôts**,
+**Déclarations sociales** et **Rapprochements bancaires** apparaissent dans
+le menu mais affichent pour l'instant un message « fonctionnalité pas
+encore développée » — ce sont de nouveaux modules à part entière (suivi de
+contrats, calcul d'impôts, etc.) qui nécessitent d'être conçus et développés
+spécifiquement. Dites-moi lesquels prioriser.
 
 - **Soldes d'ouverture** *(nouveau)* : saisissez le solde de report à nouveau
   de chaque compte de bilan au 1er jour de l'exercice (= solde de clôture de
