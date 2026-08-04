@@ -273,6 +273,25 @@ def init_db(conn):
             solde REAL NOT NULL DEFAULT 0
         )
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS analytic_codes (
+            code TEXT PRIMARY KEY,
+            label TEXT NOT NULL
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS budget_codes (
+            code TEXT PRIMARY KEY,
+            label TEXT NOT NULL,
+            montant REAL NOT NULL DEFAULT 0
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS donor_codes (
+            code TEXT PRIMARY KEY,
+            label TEXT NOT NULL
+        )
+    """)
     conn.commit()
     _migrate(conn)
     if conn.execute("SELECT COUNT(*) FROM accounts").fetchone()[0] == 0:
@@ -403,6 +422,108 @@ def to_iso_date(display_str):
 def get_account_label(conn, code):
     row = conn.execute("SELECT label FROM accounts WHERE code = ?", (code,)).fetchone()
     return row["label"] if row else "Compte introuvable"
+
+
+def account_exists(conn, code):
+    return conn.execute("SELECT 1 FROM accounts WHERE code = ?", (code,)).fetchone() is not None
+
+
+def add_account(conn, code, label, classe=None):
+    code = str(code).strip()
+    classe = classe or (code[0] if code else "")
+    conn.execute("INSERT OR REPLACE INTO accounts (code, label, classe) VALUES (?, ?, ?)",
+                 (code, label.strip(), classe))
+    conn.commit()
+
+
+def delete_account(conn, code):
+    conn.execute("DELETE FROM accounts WHERE code = ?", (code,))
+    conn.commit()
+
+
+# ---------------------------------------------------------------------------
+# Plans auxiliaires : analytique, budgétaire, bailleurs de fonds
+# (même logique CRUD simple pour les 3, table dédiée chacun)
+# ---------------------------------------------------------------------------
+def _plan_list(conn, table, extra_cols=""):
+    cols = "code, label" + (f", {extra_cols}" if extra_cols else "")
+    rows = conn.execute(f"SELECT {cols} FROM {table} ORDER BY code").fetchall()
+    return [dict(r) for r in rows]
+
+
+def _plan_exists(conn, table, code):
+    return conn.execute(f"SELECT 1 FROM {table} WHERE code = ?", (code,)).fetchone() is not None
+
+
+def _plan_delete(conn, table, code):
+    conn.execute(f"DELETE FROM {table} WHERE code = ?", (code,))
+    conn.commit()
+
+
+def list_analytic_codes(conn):
+    return _plan_list(conn, "analytic_codes")
+
+
+def analytic_code_exists(conn, code):
+    return _plan_exists(conn, "analytic_codes", code)
+
+
+def add_analytic_code(conn, code, label):
+    conn.execute("INSERT OR REPLACE INTO analytic_codes (code, label) VALUES (?, ?)",
+                 (code.strip(), label.strip()))
+    conn.commit()
+
+
+def delete_analytic_code(conn, code):
+    _plan_delete(conn, "analytic_codes", code)
+
+
+def list_budget_codes(conn):
+    return _plan_list(conn, "budget_codes", extra_cols="montant")
+
+
+def budget_code_exists(conn, code):
+    return _plan_exists(conn, "budget_codes", code)
+
+
+def add_budget_code(conn, code, label, montant=0):
+    conn.execute("INSERT OR REPLACE INTO budget_codes (code, label, montant) VALUES (?, ?, ?)",
+                 (code.strip(), label.strip(), montant or 0))
+    conn.commit()
+
+
+def delete_budget_code(conn, code):
+    _plan_delete(conn, "budget_codes", code)
+
+
+def list_donor_codes(conn):
+    return _plan_list(conn, "donor_codes")
+
+
+def donor_code_exists(conn, code):
+    return _plan_exists(conn, "donor_codes", code)
+
+
+def add_donor_code(conn, code, label):
+    conn.execute("INSERT OR REPLACE INTO donor_codes (code, label) VALUES (?, ?)",
+                 (code.strip(), label.strip()))
+    conn.commit()
+
+
+def delete_donor_code(conn, code):
+    _plan_delete(conn, "donor_codes", code)
+
+
+# ---------------------------------------------------------------------------
+# Équilibrage d'une pièce comptable
+# ---------------------------------------------------------------------------
+def get_piece_balance(conn, piece):
+    """Retourne (total_debit, total_credit) pour toutes les lignes d'une pièce donnée."""
+    row = conn.execute(
+        "SELECT COALESCE(SUM(debit),0) d, COALESCE(SUM(credit),0) c FROM entries WHERE piece = ?",
+        (piece,),
+    ).fetchone()
+    return row["d"], row["c"]
 
 
 # ---------------------------------------------------------------------------

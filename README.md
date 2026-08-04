@@ -122,7 +122,34 @@ Renseignez la quantité sur chaque écriture touchant un compte de stock
 l'application calcule alors le **coût unitaire moyen** (valeur du stock
 final / quantité finale) pour chaque compte.
 
+### Gestion des plans (nouveau)
+
+Le menu **SAISIE** contient maintenant 4 écrans pour créer/modifier/
+supprimer les référentiels utilisés lors de la saisie : **Plan comptable**,
+**Plan analytique**, **Plan budgétaire** (avec montant prévu), **Plan
+bailleurs de fonds**.
+
+### Équilibrage obligatoire par pièce (nouveau)
+
+Après avoir cliqué **« Ajouter »**, l'application vérifie que la pièce
+comptable en cours est équilibrée (total Débit = total Crédit) :
+- Si elle ne l'est pas, un message s'affiche indiquant le montant manquant
+  et le sens (Débit ou Crédit), le formulaire se pré-remplit avec ce
+  montant, et le focus se place sur le champ **N° Compte** pour saisir le
+  compte de contrepartie. **Impossible de commencer une nouvelle pièce tant
+  que la précédente n'est pas équilibrée.**
+- Une fois équilibrée, le formulaire se réinitialise normalement.
+
+### Listes déroulantes avec proposition de création (nouveau)
+
+Les champs **Code analytique**, **Code budgétaire** et **Code bailleur**
+sont des listes déroulantes alimentées par leurs plans respectifs. Si vous
+tapez un code qui n'existe pas encore, l'application vous demande de
+confirmer sa création (avec un libellé) avant de passer à la cellule
+suivante — impossible d'enregistrer un code orphelin par erreur de frappe.
+
 ### Ce qui est pleinement fonctionnel
+
 
 Saisie, Soldes d'ouverture, Stocks (partagé entre Matières premières et
 Produits finis pour l'instant), Fabrication, Compte de résultat, TFT, Grand

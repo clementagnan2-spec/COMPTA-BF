@@ -7,7 +7,7 @@ choisi. Les données sont stockées localement dans un fichier SQLite
 (%LOCALAPPDATA%\\SaisieComptable\\comptabilite.db sous Windows).
 """
 import tkinter as tk
-from tkinter import ttk, messagebox, filedialog
+from tkinter import ttk, messagebox, filedialog, simpledialog
 from datetime import date
 
 import core
@@ -36,6 +36,10 @@ class App(tk.Tk):
         # ---- Instanciation de toutes les pages (une seule fois) ----
         register("saisie", SaisieTab)
         register("ouverture", OpeningBalancesTab)
+        register("plan_comptable", PlanComptableTab)
+        register("plan_analytique", PlanAnalytiqueTab)
+        register("plan_budgetaire", PlanBudgetaireTab)
+        register("plan_bailleur", PlanBailleurTab)
         register("stocks", StocksTab)
         register("production", ProductionTab)
         register("cr", CompteResultatTab)
@@ -77,6 +81,10 @@ class App(tk.Tk):
         add_top_menu("SAISIE", [
             ("Saisie des écritures", "saisie"),
             ("Soldes d'ouverture", "ouverture"),
+            ("Plan comptable", "plan_comptable"),
+            ("Plan analytique", "plan_analytique"),
+            ("Plan budgétaire", "plan_budgetaire"),
+            ("Plan bailleurs de fonds", "plan_bailleur"),
         ])
         add_top_menu("COMMERCE", [
             ("Ventes", "ventes"),
@@ -122,6 +130,7 @@ class SaisieTab(ttk.Frame):
         super().__init__(parent)
         self.conn = conn
         self.selected_id = None
+        self.pending_piece = None
         self._build()
         self.refresh()
 
@@ -148,6 +157,27 @@ class SaisieTab(ttk.Frame):
                 widget = ttk.Combobox(form, textvariable=self.vars[lbl], width=22,
                                        values=["AC", "VE", "OD", "BQ", "CA"])
                 widget.grid(row=r * 2 + 1, column=c, sticky="we", padx=4, pady=(0, 4))
+            elif lbl == "Code analytique (ex: AN-FAB)":
+                widget = ttk.Combobox(form, textvariable=self.vars[lbl], width=22)
+                widget.grid(row=r * 2 + 1, column=c, sticky="we", padx=4, pady=(0, 4))
+                widget.bind("<FocusOut>", lambda e: self._validate_plan_field(
+                    "Code analytique (ex: AN-FAB)", "analytique"))
+                self.analytique_combo = widget
+                self._refresh_plan_values("analytique")
+            elif lbl == "Code budgétaire":
+                widget = ttk.Combobox(form, textvariable=self.vars[lbl], width=22)
+                widget.grid(row=r * 2 + 1, column=c, sticky="we", padx=4, pady=(0, 4))
+                widget.bind("<FocusOut>", lambda e: self._validate_plan_field(
+                    "Code budgétaire", "budgetaire"))
+                self.budgetaire_combo = widget
+                self._refresh_plan_values("budgetaire")
+            elif lbl == "Code bailleur":
+                widget = ttk.Combobox(form, textvariable=self.vars[lbl], width=22)
+                widget.grid(row=r * 2 + 1, column=c, sticky="we", padx=4, pady=(0, 4))
+                widget.bind("<FocusOut>", lambda e: self._validate_plan_field(
+                    "Code bailleur", "bailleur"))
+                self.bailleur_combo = widget
+                self._refresh_plan_values("bailleur")
             else:
                 widget = ttk.Entry(form, textvariable=self.vars[lbl], width=24)
                 widget.grid(row=r * 2 + 1, column=c, sticky="we", padx=4, pady=(0, 4))
@@ -155,6 +185,11 @@ class SaisieTab(ttk.Frame):
         self.account_label_var = tk.StringVar()
         ttk.Label(form, textvariable=self.account_label_var, foreground="#1F4E78").grid(
             row=8, column=0, columnspan=3, sticky="w", padx=4)
+
+        self.balance_var = tk.StringVar()
+        self.balance_label = ttk.Label(form, textvariable=self.balance_var, foreground="#B00020",
+                                        font=("Segoe UI", 9, "bold"), wraplength=1000)
+        self.balance_label.grid(row=8, column=1, columnspan=2, sticky="w", padx=4)
 
         btns = ttk.Frame(form)
         btns.grid(row=9, column=0, columnspan=3, sticky="w", pady=6, padx=4)
@@ -216,6 +251,49 @@ class SaisieTab(ttk.Frame):
         else:
             self.account_label_var.set("")
 
+    def _refresh_plan_values(self, plan):
+        if plan == "analytique":
+            items = core.list_analytic_codes(self.conn)
+            self.analytique_combo["values"] = [f"{i['code']} — {i['label']}" for i in items]
+        elif plan == "budgetaire":
+            items = core.list_budget_codes(self.conn)
+            self.budgetaire_combo["values"] = [f"{i['code']} — {i['label']}" for i in items]
+        elif plan == "bailleur":
+            items = core.list_donor_codes(self.conn)
+            self.bailleur_combo["values"] = [f"{i['code']} — {i['label']}" for i in items]
+
+    def _validate_plan_field(self, var_key, plan):
+        raw = self.vars[var_key].get().strip()
+        code = raw.split(" — ", 1)[0].strip() if " — " in raw else raw
+        if not code:
+            return
+        exists_fn = {"analytique": core.analytic_code_exists,
+                     "budgetaire": core.budget_code_exists,
+                     "bailleur": core.donor_code_exists}[plan]
+        if exists_fn(self.conn, code):
+            return
+        plan_name = {"analytique": "Plan analytique", "budgetaire": "Plan budgétaire",
+                     "bailleur": "Plan bailleurs de fonds"}[plan]
+        if messagebox.askyesno(
+            "Code introuvable",
+            f"Le code « {code} » n'existe pas dans le {plan_name}.\n\n"
+            f"Voulez-vous le créer maintenant ? (Non pour effacer et choisir dans la liste existante)"
+        ):
+            label = simpledialog.askstring("Nouveau code", f"Libellé pour « {code} » :", parent=self)
+            if not label:
+                self.vars[var_key].set("")
+                return
+            if plan == "analytique":
+                core.add_analytic_code(self.conn, code, label)
+            elif plan == "budgetaire":
+                core.add_budget_code(self.conn, code, label)
+            elif plan == "bailleur":
+                core.add_donor_code(self.conn, code, label)
+            self.vars[var_key].set(code)
+            self._refresh_plan_values(plan)
+        else:
+            self.vars[var_key].set("")
+
     def _get_form(self):
         try:
             debit = float(self.vars["Débit"].get() or 0)
@@ -233,20 +311,55 @@ class SaisieTab(ttk.Frame):
             libelle=self.vars["Libellé"].get().strip(),
             debit=debit,
             credit=credit,
-            analytic_code=self.vars["Code analytique (ex: AN-FAB)"].get().strip(),
-            budget_code=self.vars["Code budgétaire"].get().strip(),
-            donor_code=self.vars["Code bailleur"].get().strip(),
+            analytic_code=self._extract_code(self.vars["Code analytique (ex: AN-FAB)"].get()),
+            budget_code=self._extract_code(self.vars["Code budgétaire"].get()),
+            donor_code=self._extract_code(self.vars["Code bailleur"].get()),
             quantite=quantite,
         )
+
+    @staticmethod
+    def _extract_code(raw):
+        raw = (raw or "").strip()
+        return raw.split(" — ", 1)[0].strip() if " — " in raw else raw
 
     def add_entry(self):
         data = self._get_form()
         if not data or not data["compte"] or not data["date_str"]:
             messagebox.showwarning("Champs manquants", "Date et N° Compte sont obligatoires.")
             return
+        piece = data["piece"]
+        if self.pending_piece and piece != self.pending_piece:
+            messagebox.showwarning(
+                "Pièce non équilibrée",
+                f"La pièce « {self.pending_piece} » n'est pas encore équilibrée (Débit ≠ Crédit).\n\n"
+                f"Ajoutez le(s) compte(s) de contrepartie pour cette pièce avant d'en commencer une nouvelle."
+            )
+            self.vars["N° Pièce"].set(self.pending_piece)
+            return
         core.add_entry(self.conn, **data)
-        self.clear_form()
         self.refresh()
+        d, c = core.get_piece_balance(self.conn, piece) if piece else (0, 0)
+        if piece and abs(d - c) >= 0.01:
+            self.pending_piece = piece
+            manque = abs(d - c)
+            cote = "Crédit" if d > c else "Débit"
+            self.balance_var.set(
+                f"⚠ Pièce « {piece} » non équilibrée — Débit {d:,.2f} / Crédit {c:,.2f} "
+                f"— il manque {manque:,.2f} au {cote}. Choisissez le compte de contrepartie ci-dessous."
+            )
+            # Prépare la ligne suivante : même pièce/date/journal, montant manquant pré-rempli
+            self.selected_id = None
+            for k in ("N° Compte", "Tiers", "Libellé", "Code analytique (ex: AN-FAB)",
+                      "Code budgétaire", "Code bailleur", "Quantité"):
+                self.vars[k].set("")
+            self.vars["Débit"].set(f"{manque:.2f}" if cote == "Débit" else "")
+            self.vars["Crédit"].set(f"{manque:.2f}" if cote == "Crédit" else "")
+            self.account_label_var.set("")
+            self.compte_combo.focus_set()
+        else:
+            self.pending_piece = None
+            self.balance_var.set("")
+            self.clear_form()
 
     def update_entry(self):
         if self.selected_id is None:
@@ -270,6 +383,8 @@ class SaisieTab(ttk.Frame):
 
     def clear_form(self):
         self.selected_id = None
+        self.pending_piece = None
+        self.balance_var.set("")
         for k, v in self.vars.items():
             v.set("" if k != "Date (JJ/MM/AAAA)" else date.today().strftime("%d/%m/%Y"))
         self.account_label_var.set("")
@@ -957,6 +1072,254 @@ class FournisseursTab(GrandLivreTab):
         super().__init__(parent, conn)
         self.compte_var.set("401000")
         self.refresh()
+
+
+class PlanComptableTab(ttk.Frame):
+    """Créer / modifier / supprimer des comptes du Plan comptable."""
+
+    def __init__(self, parent, conn):
+        super().__init__(parent)
+        self.conn = conn
+        ttk.Label(self, text="PLAN COMPTABLE", font=("Segoe UI", 14, "bold")).pack(anchor="w", padx=16, pady=(16, 4))
+
+        search_bar = ttk.Frame(self)
+        search_bar.pack(fill="x", padx=16, pady=4)
+        ttk.Label(search_bar, text="Rechercher (code ou libellé) :").pack(side="left")
+        self.search_var = tk.StringVar()
+        search_entry = ttk.Entry(search_bar, textvariable=self.search_var, width=30)
+        search_entry.pack(side="left", padx=6)
+        search_entry.bind("<KeyRelease>", lambda e: self.refresh())
+
+        form = ttk.Frame(self)
+        form.pack(fill="x", padx=16, pady=6)
+        ttk.Label(form, text="N° Compte :").grid(row=0, column=0, sticky="w")
+        self.code_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.code_var, width=16).grid(row=0, column=1, padx=6)
+        ttk.Label(form, text="Libellé :").grid(row=0, column=2, sticky="w", padx=(16, 0))
+        self.label_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.label_var, width=45).grid(row=0, column=3, padx=6)
+        ttk.Button(form, text="Créer / Modifier", command=self.save).grid(row=0, column=4, padx=6)
+        ttk.Button(form, text="Supprimer le compte sélectionné", command=self.delete).grid(row=0, column=5, padx=6)
+
+        cols = ("code", "label", "classe")
+        self.tree = ttk.Treeview(self, columns=cols, show="headings")
+        headers = ["N° Compte", "Libellé", "Classe"]
+        widths = [110, 500, 70]
+        for c, h, w in zip(cols, headers, widths):
+            self.tree.heading(c, text=h)
+            self.tree.column(c, width=w, anchor="w")
+        self.tree.pack(fill="both", expand=True, padx=16, pady=8)
+        self.tree.bind("<<TreeviewSelect>>", self._on_select)
+        self.refresh()
+
+    def _on_select(self, event=None):
+        sel = self.tree.selection()
+        if not sel:
+            return
+        values = self.tree.item(sel[0], "values")
+        self.code_var.set(values[0])
+        self.label_var.set(values[1])
+
+    def save(self):
+        code = self.code_var.get().strip()
+        label = self.label_var.get().strip()
+        if not code or not label:
+            messagebox.showwarning("Champs manquants", "N° Compte et Libellé sont obligatoires.")
+            return
+        core.add_account(self.conn, code, label)
+        self.refresh()
+
+    def delete(self):
+        code = self.code_var.get().strip()
+        if not code:
+            messagebox.showinfo("Info", "Sélectionnez d'abord un compte.")
+            return
+        if messagebox.askyesno("Confirmer", f"Supprimer le compte {code} ?"):
+            core.delete_account(self.conn, code)
+            self.code_var.set("")
+            self.label_var.set("")
+            self.refresh()
+
+    def refresh(self):
+        for row in self.tree.get_children():
+            self.tree.delete(row)
+        for a in core.search_accounts(self.conn, self.search_var.get(), limit=200):
+            self.tree.insert("", "end", values=(a["code"], a["label"], a["classe"]))
+
+
+class _SimplePlanTab(ttk.Frame):
+    """Base pour les plans Code + Libellé (analytique, bailleurs)."""
+    TITLE = ""
+    CODE_LABEL = "Code"
+
+    def list_fn(self, conn):
+        raise NotImplementedError
+
+    def add_fn(self, conn, code, label):
+        raise NotImplementedError
+
+    def delete_fn(self, conn, code):
+        raise NotImplementedError
+
+    def __init__(self, parent, conn):
+        super().__init__(parent)
+        self.conn = conn
+        ttk.Label(self, text=self.TITLE, font=("Segoe UI", 14, "bold")).pack(anchor="w", padx=16, pady=(16, 4))
+
+        form = ttk.Frame(self)
+        form.pack(fill="x", padx=16, pady=6)
+        ttk.Label(form, text=self.CODE_LABEL + " :").grid(row=0, column=0, sticky="w")
+        self.code_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.code_var, width=20).grid(row=0, column=1, padx=6)
+        ttk.Label(form, text="Libellé :").grid(row=0, column=2, sticky="w", padx=(16, 0))
+        self.label_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.label_var, width=45).grid(row=0, column=3, padx=6)
+        ttk.Button(form, text="Créer / Modifier", command=self.save).grid(row=0, column=4, padx=6)
+        ttk.Button(form, text="Supprimer", command=self.delete).grid(row=0, column=5, padx=6)
+
+        cols = ("code", "label")
+        self.tree = ttk.Treeview(self, columns=cols, show="headings")
+        for c, h, w in zip(cols, [self.CODE_LABEL, "Libellé"], [140, 500]):
+            self.tree.heading(c, text=h)
+            self.tree.column(c, width=w, anchor="w")
+        self.tree.pack(fill="both", expand=True, padx=16, pady=8)
+        self.tree.bind("<<TreeviewSelect>>", self._on_select)
+        self.refresh()
+
+    def _on_select(self, event=None):
+        sel = self.tree.selection()
+        if not sel:
+            return
+        values = self.tree.item(sel[0], "values")
+        self.code_var.set(values[0])
+        self.label_var.set(values[1])
+
+    def save(self):
+        code = self.code_var.get().strip()
+        label = self.label_var.get().strip()
+        if not code or not label:
+            messagebox.showwarning("Champs manquants", f"{self.CODE_LABEL} et Libellé sont obligatoires.")
+            return
+        self.add_fn(self.conn, code, label)
+        self.refresh()
+
+    def delete(self):
+        code = self.code_var.get().strip()
+        if not code:
+            messagebox.showinfo("Info", "Sélectionnez d'abord une ligne.")
+            return
+        if messagebox.askyesno("Confirmer", f"Supprimer « {code} » ?"):
+            self.delete_fn(self.conn, code)
+            self.code_var.set("")
+            self.label_var.set("")
+            self.refresh()
+
+    def refresh(self):
+        for row in self.tree.get_children():
+            self.tree.delete(row)
+        for item in self.list_fn(self.conn):
+            self.tree.insert("", "end", values=(item["code"], item["label"]))
+
+
+class PlanAnalytiqueTab(_SimplePlanTab):
+    TITLE = "PLAN ANALYTIQUE"
+    CODE_LABEL = "Code analytique"
+
+    def list_fn(self, conn):
+        return core.list_analytic_codes(conn)
+
+    def add_fn(self, conn, code, label):
+        core.add_analytic_code(conn, code, label)
+
+    def delete_fn(self, conn, code):
+        core.delete_analytic_code(conn, code)
+
+
+class PlanBailleurTab(_SimplePlanTab):
+    TITLE = "PLAN BAILLEURS DE FONDS"
+    CODE_LABEL = "Code bailleur"
+
+    def list_fn(self, conn):
+        return core.list_donor_codes(conn)
+
+    def add_fn(self, conn, code, label):
+        core.add_donor_code(conn, code, label)
+
+    def delete_fn(self, conn, code):
+        core.delete_donor_code(conn, code)
+
+
+class PlanBudgetaireTab(ttk.Frame):
+    """Plan budgétaire : Code + Libellé + Montant prévu."""
+
+    def __init__(self, parent, conn):
+        super().__init__(parent)
+        self.conn = conn
+        ttk.Label(self, text="PLAN BUDGÉTAIRE", font=("Segoe UI", 14, "bold")).pack(anchor="w", padx=16, pady=(16, 4))
+
+        form = ttk.Frame(self)
+        form.pack(fill="x", padx=16, pady=6)
+        ttk.Label(form, text="Code budgétaire :").grid(row=0, column=0, sticky="w")
+        self.code_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.code_var, width=16).grid(row=0, column=1, padx=6)
+        ttk.Label(form, text="Libellé :").grid(row=0, column=2, sticky="w", padx=(16, 0))
+        self.label_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.label_var, width=35).grid(row=0, column=3, padx=6)
+        ttk.Label(form, text="Montant prévu :").grid(row=0, column=4, sticky="w", padx=(16, 0))
+        self.montant_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.montant_var, width=16).grid(row=0, column=5, padx=6)
+        ttk.Button(form, text="Créer / Modifier", command=self.save).grid(row=0, column=6, padx=6)
+        ttk.Button(form, text="Supprimer", command=self.delete).grid(row=0, column=7, padx=6)
+
+        cols = ("code", "label", "montant")
+        self.tree = ttk.Treeview(self, columns=cols, show="headings")
+        for c, h, w in zip(cols, ["Code budgétaire", "Libellé", "Montant prévu"], [120, 400, 130]):
+            self.tree.heading(c, text=h)
+            self.tree.column(c, width=w, anchor="w")
+        self.tree.pack(fill="both", expand=True, padx=16, pady=8)
+        self.tree.bind("<<TreeviewSelect>>", self._on_select)
+        self.refresh()
+
+    def _on_select(self, event=None):
+        sel = self.tree.selection()
+        if not sel:
+            return
+        values = self.tree.item(sel[0], "values")
+        self.code_var.set(values[0])
+        self.label_var.set(values[1])
+        self.montant_var.set(values[2])
+
+    def save(self):
+        code = self.code_var.get().strip()
+        label = self.label_var.get().strip()
+        try:
+            montant = float(self.montant_var.get() or 0)
+        except ValueError:
+            messagebox.showerror("Erreur", "Le montant prévu doit être un nombre.")
+            return
+        if not code or not label:
+            messagebox.showwarning("Champs manquants", "Code budgétaire et Libellé sont obligatoires.")
+            return
+        core.add_budget_code(self.conn, code, label, montant)
+        self.refresh()
+
+    def delete(self):
+        code = self.code_var.get().strip()
+        if not code:
+            messagebox.showinfo("Info", "Sélectionnez d'abord une ligne.")
+            return
+        if messagebox.askyesno("Confirmer", f"Supprimer « {code} » ?"):
+            core.delete_budget_code(self.conn, code)
+            self.code_var.set("")
+            self.label_var.set("")
+            self.montant_var.set("")
+            self.refresh()
+
+    def refresh(self):
+        for row in self.tree.get_children():
+            self.tree.delete(row)
+        for item in core.list_budget_codes(self.conn):
+            self.tree.insert("", "end", values=(item["code"], item["label"], f"{item['montant']:,.2f}"))
 
 
 if __name__ == "__main__":
