@@ -23,6 +23,7 @@ class App(tk.Tk):
         notebook.pack(fill="both", expand=True)
 
         self.saisie_tab = SaisieTab(notebook, self.conn)
+        self.opening_tab = OpeningBalancesTab(notebook, self.conn)
         self.grand_livre_tab = GrandLivreTab(notebook, self.conn)
         self.balance_tab = BalanceTab(notebook, self.conn)
         self.stocks_tab = StocksTab(notebook, self.conn)
@@ -33,6 +34,7 @@ class App(tk.Tk):
         self.liasse_tab = LiasseFiscaleTab(notebook, self.conn)
 
         notebook.add(self.saisie_tab, text="Saisie")
+        notebook.add(self.opening_tab, text="Soldes d'ouverture")
         notebook.add(self.grand_livre_tab, text="Grand livre")
         notebook.add(self.balance_tab, text="Balance")
         notebook.add(self.stocks_tab, text="Stocks")
@@ -46,6 +48,7 @@ class App(tk.Tk):
         notebook.bind("<<NotebookTabChanged>>", lambda e: self.refresh_all())
 
     def refresh_all(self):
+        self.opening_tab.refresh()
         self.grand_livre_tab.refresh()
         self.balance_tab.refresh()
         self.stocks_tab.refresh()
@@ -246,10 +249,11 @@ class BalanceTab(ttk.Frame):
     def __init__(self, parent, conn):
         super().__init__(parent)
         self.conn = conn
-        cols = ("compte", "libelle", "debit", "credit", "solde")
+        cols = ("compte", "libelle", "ouverture", "debit", "credit", "mouvement", "cloture")
         self.tree = ttk.Treeview(self, columns=cols, show="headings")
-        headers = ["N° Compte", "Libellé du compte", "Total Débit", "Total Crédit", "Solde"]
-        widths = [90, 320, 110, 110, 110]
+        headers = ["N° Compte", "Libellé du compte", "Solde Ouverture", "Total Débit", "Total Crédit",
+                   "Solde Mouvement", "Solde Clôture"]
+        widths = [90, 280, 110, 100, 100, 110, 110]
         for c, h, w in zip(cols, headers, widths):
             self.tree.heading(c, text=h)
             self.tree.column(c, width=w, anchor="w")
@@ -262,7 +266,9 @@ class BalanceTab(ttk.Frame):
             self.tree.delete(row)
         for b in core.compute_balance(self.conn):
             self.tree.insert("", "end", values=(
-                b["code"], b["label"], f"{b['debit']:,.2f}", f"{b['credit']:,.2f}", f"{b['solde']:,.2f}"
+                b["code"], b["label"], f"{b['solde_ouverture']:,.2f}",
+                f"{b['debit']:,.2f}", f"{b['credit']:,.2f}",
+                f"{b['solde']:,.2f}", f"{b['solde_cloture']:,.2f}"
             ))
 
 
@@ -381,6 +387,97 @@ class GrandLivreTab(ttk.Frame):
             ))
 
 
+class OpeningBalancesTab(ttk.Frame):
+    """Soldes d'ouverture (report à nouveau) : un solde signé par compte, saisi
+    une fois en début d'exercice. Débiteur = positif, créditeur = négatif."""
+
+    def __init__(self, parent, conn):
+        super().__init__(parent)
+        self.conn = conn
+
+        ttk.Label(self, text=(
+            "Saisissez ici le solde de report à nouveau de chaque compte de bilan au 1er jour de "
+            "l'exercice (= solde de clôture de l'exercice précédent). Convention : solde débiteur = "
+            "positif, solde créditeur = négatif (ex. Capital social créditeur de 5 000 000 → -5000000). "
+            "La « Balance de clôture » (onglet Balance) et le Bilan intègrent automatiquement ces soldes."
+        ), foreground="#595959", wraplength=1000).pack(anchor="w", padx=8, pady=(8, 4))
+
+        form = ttk.Frame(self)
+        form.pack(fill="x", padx=8, pady=4)
+        ttk.Label(form, text="N° Compte :").pack(side="left")
+        self.compte_var = tk.StringVar()
+        self.compte_combo = ttk.Combobox(form, textvariable=self.compte_var, width=34)
+        self.compte_combo.pack(side="left", padx=4)
+        self.compte_combo.bind("<KeyRelease>", self._on_compte_keyrelease)
+        ttk.Label(form, text="Solde d'ouverture :").pack(side="left", padx=(12, 0))
+        self.solde_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.solde_var, width=16).pack(side="left", padx=4)
+        ttk.Button(form, text="Enregistrer", command=self.save).pack(side="left", padx=6)
+
+        cols = ("code", "label", "solde")
+        self.tree = ttk.Treeview(self, columns=cols, show="headings")
+        headers = ["N° Compte", "Libellé", "Solde d'ouverture"]
+        widths = [90, 400, 140]
+        for c, h, w in zip(cols, headers, widths):
+            self.tree.heading(c, text=h)
+            self.tree.column(c, width=w, anchor="w")
+        self.tree.pack(fill="both", expand=True, padx=8, pady=8)
+        self.tree.bind("<<TreeviewSelect>>", self._on_select)
+
+        bottom = ttk.Frame(self)
+        bottom.pack(fill="x", padx=8, pady=(0, 8))
+        self.total_var = tk.StringVar()
+        ttk.Label(bottom, textvariable=self.total_var, font=("Segoe UI", 10, "bold")).pack(side="left")
+        self.refresh()
+
+    def _extract_compte_code(self):
+        raw = self.compte_var.get().strip()
+        if " — " in raw:
+            return raw.split(" — ", 1)[0].strip()
+        return raw
+
+    def _on_compte_keyrelease(self, event=None):
+        if event is not None and event.keysym in ("Up", "Down", "Return", "Tab"):
+            return
+        query = self._extract_compte_code()
+        if query:
+            matches = core.search_accounts(self.conn, query, limit=30)
+            self.compte_combo["values"] = [f"{m['code']} — {m['label']}" for m in matches]
+
+    def _on_select(self, event=None):
+        sel = self.tree.selection()
+        if not sel:
+            return
+        values = self.tree.item(sel[0], "values")
+        self.compte_var.set(values[0])
+        self.solde_var.set(values[2])
+
+    def save(self):
+        code = self._extract_compte_code()
+        if not code:
+            messagebox.showinfo("Info", "Choisissez d'abord un compte.")
+            return
+        try:
+            value = float(self.solde_var.get() or 0)
+        except ValueError:
+            messagebox.showerror("Erreur", "Le solde d'ouverture doit être un nombre.")
+            return
+        core.set_opening_balance(self.conn, code, value)
+        self.compte_var.set("")
+        self.solde_var.set("")
+        self.refresh()
+
+    def refresh(self):
+        for row in self.tree.get_children():
+            self.tree.delete(row)
+        total = 0.0
+        for b in core.list_opening_balances(self.conn):
+            self.tree.insert("", "end", values=(b["code"], b["label"], f"{b['solde']:,.2f}"))
+            total += b["solde"]
+        equilibre = "Équilibré ✓" if abs(total) < 0.01 else "NON ÉQUILIBRÉ ✗ (la somme des soldes d'ouverture doit être nulle)"
+        self.total_var.set(f"Somme des soldes d'ouverture : {total:,.2f}   {equilibre}")
+
+
 class StocksTab(ttk.Frame):
     def __init__(self, parent, conn):
         super().__init__(parent)
@@ -472,14 +569,16 @@ class TftTab(ttk.Frame):
 
         bar = ttk.Frame(self)
         bar.pack(fill="x", padx=8, pady=8)
-        ttk.Label(bar, text="Trésorerie d'ouverture :").pack(side="left")
-        self.ouverture_var = tk.StringVar(value=str(core.get_setting(conn, "treso_ouverture", 0.0)))
+        ttk.Label(bar, text="Trésorerie d'ouverture (auto., ou forcez une valeur) :").pack(side="left")
+        self.ouverture_var = tk.StringVar()
         ttk.Entry(bar, textvariable=self.ouverture_var, width=14).pack(side="left", padx=4)
-        ttk.Button(bar, text="Enregistrer et actualiser", command=self.save_and_refresh).pack(side="left", padx=6)
+        ttk.Button(bar, text="Forcer cette valeur", command=self.save_and_refresh).pack(side="left", padx=4)
+        ttk.Button(bar, text="Revenir à l'automatique", command=self.reset_auto).pack(side="left", padx=4)
         ttk.Label(bar, text=(
-            "Astuce : les mouvements de trésorerie (521000/531000/570000/585000) se classent "
-            "par nature via le code flux EXP / INV / FIN saisi dans l'onglet Saisie."
-        ), foreground="#595959", wraplength=650).pack(side="left", padx=12)
+            "Par défaut = somme des soldes d'ouverture des comptes de trésorerie (onglet « Soldes "
+            "d'ouverture »). Les mouvements se classent par nature via le code flux EXP/INV/FIN saisi "
+            "dans l'onglet Saisie."
+        ), foreground="#595959", wraplength=550).pack(side="left", padx=12)
 
         self.text = tk.Text(self, font=("Consolas", 11), wrap="none")
         self.text.pack(fill="both", expand=True, padx=8, pady=8)
@@ -491,13 +590,19 @@ class TftTab(ttk.Frame):
         except ValueError:
             messagebox.showerror("Erreur", "La trésorerie d'ouverture doit être un nombre.")
             return
-        core.set_setting(self.conn, "treso_ouverture", value)
+        core.set_setting(self.conn, "treso_ouverture_override", value)
+        core.set_setting(self.conn, "treso_ouverture_use_override", 1)
+        self.refresh()
+
+    def reset_auto(self):
+        core.set_setting(self.conn, "treso_ouverture_use_override", 0)
         self.refresh()
 
     def refresh(self):
-        ouverture = core.get_setting(self.conn, "treso_ouverture", 0.0)
-        self.ouverture_var.set(str(ouverture))
-        t = core.compute_tft(self.conn, treso_ouverture=ouverture)
+        use_override = core.get_setting(self.conn, "treso_ouverture_use_override", 0.0)
+        ouverture_override = core.get_setting(self.conn, "treso_ouverture_override", 0.0) if use_override else None
+        t = core.compute_tft(self.conn, treso_ouverture=ouverture_override)
+        self.ouverture_var.set(str(t["ouverture"]))
         label_ouv = "Trésorerie d'ouverture"
         label_inv = "Flux liés aux activités d'investissement (INV)"
         label_clot = "TRÉSORERIE DE CLÔTURE"
@@ -538,22 +643,25 @@ class LiasseFiscaleTab(ttk.Frame):
         ttk.Label(params, text="Stock initial total (cf. onglet Stocks) :").grid(row=0, column=0, sticky="w", padx=4, pady=4)
         self.stock_initial_var = tk.StringVar(value="0")
         ttk.Entry(params, textvariable=self.stock_initial_var, width=16).grid(row=0, column=1, sticky="w", padx=4)
-        ttk.Label(params, text="Trésorerie d'ouverture (cf. onglet TFT) :").grid(row=0, column=2, sticky="w", padx=(20, 4))
-        self.treso_var = tk.StringVar(value=str(core.get_setting(conn, "treso_ouverture", 0.0)))
-        ttk.Entry(params, textvariable=self.treso_var, width=16).grid(row=0, column=3, sticky="w", padx=4)
+        ttk.Label(params, text="(complément optionnel — utilisez plutôt l'onglet « Soldes d'ouverture »)",
+                  foreground="#595959").grid(row=0, column=2, sticky="w", padx=(10, 4))
 
         note = ttk.Label(self, wraplength=900, foreground="#595959", text=(
-            "Génère un classeur .xlsx avec les codes officiels SYSCOHADA système normal (COUVERTURE, BILAN, "
-            "RESULTAT, TFT). Les totaux (AZ, BK, BT, BZ, CP, DD, DP, DT, DZ) sont calculés directement depuis "
-            "vos écritures et fiables. Le détail par ligne (AE à AN, CA à CM, DA à DM) est une répartition "
-            "indicative par plage de comptes, le TFT est simplifié (méthode directe, pas la méthode indirecte "
-            "officielle avec CAFG), et les 39 notes annexes / tableaux fiscaux DGI ne sont pas générés — "
-            "cet export est une aide à la préparation, à faire vérifier par un expert-comptable avant tout "
-            "dépôt officiel."
+            "Génère un classeur .xlsx COMPLET reprenant les 92 pages du modèle SYSCOHADA système "
+            "normal (mêmes dimensions, mêmes codes officiels) : COUVERTURE, BILAN, RESULTAT, TFT, "
+            "39 notes annexes, ~20 tableaux fiscaux DGI. BILAN et RESULTAT sont calculés automatiquement "
+            "depuis vos écritures (soldes de clôture = solde d'ouverture + mouvements de l'exercice, "
+            "cf. onglet « Soldes d'ouverture »). Le TFT officiel (méthode indirecte, CAFG) est laissé "
+            "vierge — un onglet « TFT (simplifie) » calculé en méthode directe est ajouté à titre "
+            "indicatif. Toutes les autres pages gardent leur mise en page et leurs dimensions exactes, "
+            "mais leurs valeurs sont vidées (ce ne sont pas vos chiffres) pour être complétées "
+            "manuellement — le détail des lignes du Bilan (AE à AN, CA à CM, DA à DM) est une "
+            "répartition indicative par plage de comptes. À faire vérifier par un expert-comptable "
+            "avant tout dépôt officiel auprès de la DGI."
         ))
         note.pack(fill="x", padx=8, pady=(0, 8))
 
-        ttk.Button(self, text="Exporter la liasse fiscale (.xlsx)", command=self.export).pack(padx=8, pady=8, anchor="w")
+        ttk.Button(self, text="Exporter la liasse fiscale complète (.xlsx)", command=self.export).pack(padx=8, pady=8, anchor="w")
         self.status_var = tk.StringVar()
         ttk.Label(self, textvariable=self.status_var, foreground="#1F4E78").pack(padx=8, anchor="w")
 
@@ -566,11 +674,9 @@ class LiasseFiscaleTab(ttk.Frame):
         self.save_info()
         try:
             stock_initial = float(self.stock_initial_var.get() or 0)
-            treso_ouverture = float(self.treso_var.get() or 0)
         except ValueError:
-            messagebox.showerror("Erreur", "Stock initial et Trésorerie d'ouverture doivent être des nombres.")
+            messagebox.showerror("Erreur", "Le complément de stock initial doit être un nombre.")
             return
-        core.set_setting(self.conn, "treso_ouverture", treso_ouverture)
         path = filedialog.asksaveasfilename(
             defaultextension=".xlsx",
             filetypes=[("Classeur Excel", "*.xlsx")],
@@ -580,7 +686,7 @@ class LiasseFiscaleTab(ttk.Frame):
         if not path:
             return
         try:
-            core.export_liasse_fiscale(self.conn, path, stock_initial=stock_initial, treso_ouverture=treso_ouverture)
+            core.export_liasse_fiscale_complete(self.conn, path, stock_initial=stock_initial)
         except Exception as exc:
             messagebox.showerror("Erreur", f"Échec de l'export : {exc}")
             return

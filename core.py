@@ -88,7 +88,7 @@ def _sum_range(balance, ranges, classe=None):
         if classe and b["classe"] != classe:
             continue
         if _in_ranges(code_int, ranges):
-            total += b["solde"]
+            total += b["solde_cloture"]
     return total
 
 
@@ -264,6 +264,12 @@ def init_db(conn):
             value TEXT
         )
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS opening_balances (
+            code TEXT PRIMARY KEY,
+            solde REAL NOT NULL DEFAULT 0
+        )
+    """)
     conn.commit()
     _migrate(conn)
     if conn.execute("SELECT COUNT(*) FROM accounts").fetchone()[0] == 0:
@@ -271,10 +277,21 @@ def init_db(conn):
 
 
 def _migrate(conn):
-    """Ajoute les colonnes manquantes si la base a été créée par une version antérieure."""
+    """Ajoute les colonnes/tables manquantes si la base a été créée par une version antérieure."""
     cols = [r["name"] for r in conn.execute("PRAGMA table_info(entries)")]
     if "analytic_code" not in cols:
         conn.execute("ALTER TABLE entries ADD COLUMN analytic_code TEXT")
+    # Migre l'ancien mécanisme "stock_initial_<compte>" (settings) vers opening_balances
+    old_rows = conn.execute("SELECT key, value FROM settings WHERE key LIKE 'stock_initial_%'").fetchall()
+    for row in old_rows:
+        code = row["key"].replace("stock_initial_", "")
+        try:
+            val = float(row["value"])
+        except (TypeError, ValueError):
+            val = 0.0
+        if val:
+            conn.execute("INSERT OR REPLACE INTO opening_balances (code, solde) VALUES (?, ?)", (code, val))
+        conn.execute("DELETE FROM settings WHERE key = ?", (row["key"],))
     conn.commit()
 
 
@@ -286,6 +303,36 @@ def get_setting(conn, key, default=0.0):
 def set_setting(conn, key, value):
     conn.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, str(value)))
     conn.commit()
+
+
+# ---------------------------------------------------------------------------
+# Soldes d'ouverture (report à nouveau) — un solde signé par compte, saisi
+# une fois en début d'exercice. Balance de clôture = solde d'ouverture +
+# mouvements de l'exercice (Débit - Crédit).
+# ---------------------------------------------------------------------------
+def get_opening_balance(conn, code):
+    row = conn.execute("SELECT solde FROM opening_balances WHERE code = ?", (code,)).fetchone()
+    return row["solde"] if row else 0.0
+
+
+def set_opening_balance(conn, code, value):
+    conn.execute("INSERT OR REPLACE INTO opening_balances (code, solde) VALUES (?, ?)", (code, value))
+    conn.commit()
+
+
+def list_opening_balances(conn):
+    rows = conn.execute("""
+        SELECT o.code, a.label, a.classe, o.solde
+        FROM opening_balances o JOIN accounts a ON a.code = o.code
+        WHERE o.solde != 0
+        ORDER BY o.code
+    """).fetchall()
+    return [dict(r) for r in rows]
+
+
+def total_opening_balance(conn):
+    row = conn.execute("SELECT COALESCE(SUM(solde), 0) t FROM opening_balances").fetchone()
+    return row["t"]
 
 
 def load_plan_comptable(conn, json_path=None):
@@ -364,7 +411,7 @@ def totals_debit_credit(conn):
 # ---------------------------------------------------------------------------
 # Balance
 # ---------------------------------------------------------------------------
-def compute_balance(conn, only_with_movement=True):
+def compute_balance(conn, only_with_movement=True, include_zero_opening=True):
     rows = conn.execute("""
         SELECT a.code, a.label, a.classe,
                COALESCE(SUM(e.debit), 0)  AS debit,
@@ -374,14 +421,19 @@ def compute_balance(conn, only_with_movement=True):
         GROUP BY a.code, a.label, a.classe
         ORDER BY a.code
     """).fetchall()
+    openings = {r["code"]: r["solde"] for r in conn.execute("SELECT code, solde FROM opening_balances")}
     result = []
     for r in rows:
         debit, credit = r["debit"], r["credit"]
-        if only_with_movement and debit == 0 and credit == 0:
+        ouverture = openings.get(r["code"], 0.0)
+        if only_with_movement and debit == 0 and credit == 0 and ouverture == 0:
             continue
+        solde_mouvement = debit - credit
         result.append({
             "code": r["code"], "label": r["label"], "classe": r["classe"],
-            "debit": debit, "credit": credit, "solde": debit - credit,
+            "debit": debit, "credit": credit, "solde": solde_mouvement,
+            "solde_ouverture": ouverture,
+            "solde_cloture": ouverture + solde_mouvement,
         })
     return result
 
@@ -393,16 +445,23 @@ def _sum_accounts(balance, codes):
     return debit, credit
 
 
-def _sum_class(balance, classe, sign=None):
+def _sum_accounts_cloture(balance, codes):
+    """Somme des soldes de CLÔTURE (ouverture + mouvements) pour une liste de comptes."""
+    by_code = {b["code"]: b for b in balance}
+    return sum(by_code[c]["solde_cloture"] for c in codes if c in by_code)
+
+
+def _sum_class(balance, classe, sign=None, field="solde_cloture"):
     total = 0
     for b in balance:
         if b["classe"] != classe:
             continue
-        if sign == "pos" and b["solde"] <= 0:
+        v = b[field]
+        if sign == "pos" and v <= 0:
             continue
-        if sign == "neg" and b["solde"] >= 0:
+        if sign == "neg" and v >= 0:
             continue
-        total += b["solde"]
+        total += v
     return total
 
 
@@ -460,29 +519,26 @@ def compute_compte_resultat(conn):
 # Bilan
 # ---------------------------------------------------------------------------
 def compute_bilan(conn, stock_initial=0.0):
+    """stock_initial : conservé pour compatibilité, normalement inutile désormais —
+    utilisez la table des soldes d'ouverture (onglet « Soldes d'ouverture »)."""
     balance = compute_balance(conn, only_with_movement=False)
     cr = compute_compte_resultat(conn)
 
-    immo_brutes = sum(b["solde"] for b in balance if b["classe"] == "2" and int(b["code"]) < 280000)
-    amortissements = sum(b["solde"] for b in balance if b["classe"] == "2" and int(b["code"]) >= 280000)
+    immo_brutes = sum(b["solde_cloture"] for b in balance if b["classe"] == "2" and int(b["code"]) < 280000)
+    amortissements = sum(b["solde_cloture"] for b in balance if b["classe"] == "2" and int(b["code"]) >= 280000)
     immo_nettes = immo_brutes + amortissements
 
-    stock_debit, stock_credit = _sum_accounts(balance, COMPTES_STOCK)
-    stocks = stock_initial + stock_debit - stock_credit
+    stocks = stock_initial + _sum_accounts_cloture(balance, COMPTES_STOCK)
 
     creances = _sum_class(balance, "4", sign="pos")
     treso_actif = _sum_class(balance, "5", sign="pos")
     total_actif = immo_nettes + stocks + creances + treso_actif
 
-    capital_d, capital_c = _sum_accounts(balance, COMPTES_CAPITAL)
-    capital = capital_c - capital_d
-    subv_d, subv_c = _sum_accounts(balance, [COMPTE_SUBVENTIONS])
-    subventions = subv_c - subv_d
-    prov_d, prov_c = _sum_accounts(balance, [COMPTE_PROVISIONS])
-    provisions = prov_c - prov_d
+    capital = _sum_accounts_cloture(balance, COMPTES_CAPITAL) * -1
+    subventions = _sum_accounts_cloture(balance, [COMPTE_SUBVENTIONS]) * -1
+    provisions = _sum_accounts_cloture(balance, [COMPTE_PROVISIONS]) * -1
     resultat_net = cr["resultat_net"]
-    dettes_fin_d, dettes_fin_c = _sum_accounts(balance, COMPTES_DETTES_FIN)
-    dettes_financieres = dettes_fin_c - dettes_fin_d
+    dettes_financieres = _sum_accounts_cloture(balance, COMPTES_DETTES_FIN) * -1
     dettes_circulantes = -_sum_class(balance, "4", sign="neg")
     treso_passif = -_sum_class(balance, "5", sign="neg")
     total_passif = (capital + subventions + provisions + resultat_net
@@ -542,8 +598,9 @@ def compute_stocks(conn):
     by_code = {b["code"]: b for b in balance}
     result = []
     for code in COMPTES_STOCK:
-        b = by_code.get(code, {"label": get_account_label(conn, code), "debit": 0.0, "credit": 0.0})
-        initial = get_setting(conn, f"stock_initial_{code}", 0.0)
+        b = by_code.get(code, {"label": get_account_label(conn, code), "debit": 0.0, "credit": 0.0,
+                                "solde_ouverture": 0.0})
+        initial = get_opening_balance(conn, code)
         entrees, sorties = b["debit"], b["credit"]
         result.append({
             "code": code, "label": b["label"], "stock_initial": initial,
@@ -554,7 +611,7 @@ def compute_stocks(conn):
 
 
 def set_stock_initial(conn, code, value):
-    set_setting(conn, f"stock_initial_{code}", value)
+    set_opening_balance(conn, code, value)
 
 
 # ---------------------------------------------------------------------------
@@ -603,8 +660,14 @@ def compute_production(conn):
     }
 
 
-def compute_tft(conn, treso_ouverture=0.0):
+def compute_tft(conn, treso_ouverture=None):
+    """treso_ouverture=None : dérivée automatiquement des soldes d'ouverture des
+    comptes de trésorerie (521000/531000/570000/585000). Passez une valeur pour
+    la forcer manuellement."""
     balance = compute_balance(conn, only_with_movement=False)
+    if treso_ouverture is None:
+        treso_ouverture = _sum_accounts_cloture(
+            [dict(b, solde_cloture=b["solde_ouverture"]) for b in balance], COMPTES_TRESORERIE)
     treso_debit, treso_credit = _sum_accounts(balance, COMPTES_TRESORERIE)
     variation_totale = treso_debit - treso_credit
 
@@ -918,6 +981,149 @@ def export_liasse_fiscale(conn, path, stock_initial=0.0, treso_ouverture=0.0):
         r += 1
     ws.column_dimensions["A"].width = 45
     ws.column_dimensions["C"].width = 16
+
+    wb.save(path)
+    return path
+
+
+def export_liasse_fiscale_complete(conn, path, stock_initial=0.0):
+    """Génère la liasse fiscale COMPLÈTE (mêmes 92 pages, mêmes dimensions que le
+    modèle SYSCOHADA système normal fourni) : COUVERTURE/GARDE, BILAN et RESULTAT
+    remplis automatiquement depuis vos écritures (soldes de clôture = solde
+    d'ouverture + mouvements) ; TFT (officiel, vierge, + un onglet TFT simplifié
+    calculé) ; toutes les autres pages (39 notes annexes, ~20 tableaux fiscaux DGI)
+    sont conservées avec leur mise en page et leurs dimensions exactes, mais les
+    montants qui provenaient du modèle sont effacés (ce ne sont pas vos chiffres)
+    pour être complétées manuellement ou par votre expert-comptable."""
+    import openpyxl
+    from openpyxl.styles import Font
+
+    template_path = os.path.join(_resource_dir(), "etats_financiers_template.xlsx")
+    wb = openpyxl.load_workbook(template_path)
+    green = Font(color="FF008000")
+
+    # ---- GARDE : identification de l'entité ----
+    if "GARDE" in wb.sheetnames:
+        g = wb["GARDE"]
+        g["D22"] = get_company_value(conn, "societe_nom")
+        g["C26"] = get_company_value(conn, "societe_sigle")
+        g["C28"] = get_company_value(conn, "societe_adresse")
+        g["D30"] = get_company_value(conn, "societe_ifu")
+        g["D31"] = get_company_value(conn, "societe_teledeclarant")
+        exdate = get_company_value(conn, "exercice_clos_le")
+        if exdate:
+            g["E17"] = exdate
+
+    # ---- BILAN ----
+    liasse = compute_liasse_bilan(conn, stock_initial=stock_initial)
+    bt = liasse["totaux"]
+    ad = liasse["actif_detail"]
+    ac = liasse["actif_circulant_detail"]
+    pd_ = liasse["passif_detail"]
+
+    actif_values = {
+        "AE": ad["AE"]["net"], "AF": ad["AF"]["net"], "AG": ad["AG"]["net"], "AH": ad["AH"]["net"],
+        "AD": ad["AE"]["net"] + ad["AF"]["net"] + ad["AG"]["net"] + ad["AH"]["net"],
+        "AJ": ad["AJ"]["net"], "AK": ad["AK"]["net"], "AL": ad["AL"]["net"],
+        "AM": ad["AM"]["net"], "AN": ad["AN"]["net"],
+        "AI": ad["AJ"]["net"] + ad["AK"]["net"] + ad["AL"]["net"] + ad["AM"]["net"] + ad["AN"]["net"],
+        "AP": ad["AP"]["net"], "AR": ad["AR"]["net"], "AS": ad["AS"]["net"],
+        "AZ": bt["actif"]["Immobilisations nettes"],
+        "BB": bt["actif"]["Stocks"],
+        "BH": ac["BH"], "BI": ac["BI"],
+        "BK": bt["actif"]["Stocks"] + bt["actif"]["Créances et emplois assimilés"],
+        "BT": bt["actif"]["Trésorerie actif"],
+        "BZ": bt["total_actif"],
+    }
+    passif_values = {
+        "CA": pd_["CA"], "CD": pd_["CD"], "CF": pd_["CF_CG"], "CH": pd_["CH"],
+        "CJ": bt["passif"]["Résultat net de l'exercice"],
+        "CL": pd_["CL"], "CM": pd_["CM"],
+        "CP": (pd_["CA"] + pd_["CD"] + pd_["CF_CG"] + pd_["CH"]
+               + bt["passif"]["Résultat net de l'exercice"] + pd_["CL"] + pd_["CM"]),
+        "DA": pd_["DA"], "DB": pd_["DB"], "DC": pd_["DC"],
+        "DD": pd_["DA"] + pd_["DB"] + pd_["DC"],
+        "DJ": pd_["DJ"], "DH": pd_["DH_avances"], "DK": pd_["DK"], "DM": pd_["DM"],
+        "DP": pd_["DJ"] + pd_["DH_avances"] + pd_["DK"] + pd_["DM"],
+        "DT": bt["passif"]["Trésorerie passif"],
+        "DZ": bt["total_passif"],
+    }
+
+    if "BILAN" in wb.sheetnames:
+        ws = wb["BILAN"]
+        ws["C3"] = get_company_value(conn, "societe_nom")
+        ws["C4"] = get_company_value(conn, "societe_adresse")
+        ws["C5"] = get_company_value(conn, "societe_ifu")
+        for ref, row in {
+            "AD": 11, "AE": 12, "AF": 13, "AG": 14, "AH": 15, "AI": 16, "AJ": 17, "AK": 18,
+            "AL": 19, "AM": 20, "AN": 21, "AP": 22, "AQ": 23, "AR": 24, "AS": 25, "AZ": 26,
+            "BB": 28, "BH": 30, "BI": 31, "BK": 33, "BT": 37, "BZ": 39,
+        }.items():
+            if ref in actif_values:
+                cell = ws.cell(row=row, column=8, value=round(actif_values[ref]))
+                cell.font = green
+        for ref, row in {
+            "CA": 11, "CD": 13, "CF": 15, "CH": 17, "CJ": 18, "CL": 19, "CM": 20, "CP": 21,
+            "DA": 22, "DB": 23, "DC": 24, "DD": 25, "DH": 27, "DJ": 29, "DK": 30, "DM": 31,
+            "DP": 33, "DT": 36, "DZ": 39,
+        }.items():
+            if ref in passif_values:
+                cell = ws.cell(row=row, column=13, value=round(passif_values[ref]))
+                cell.font = green
+        ws.cell(row=40, column=13, value="=H39-M39")  # écart de contrôle
+
+    # ---- RESULTAT ----
+    cr = compute_liasse_resultat(conn)
+    if "RESULTAT" in wb.sheetnames:
+        ws = wb["RESULTAT"]
+        row_map = {"TA": 11, "RA": 12, "XA": 14, "TB": 15, "TC": 16, "TD": 17, "XB": 18,
+                   "TE": 19, "TG": 21, "TH": 22, "RC": 24, "RE": 26, "RG": 28, "RH": 29,
+                   "RI": 30, "RJ": 31, "XC": 32, "RK": 33, "XD": 34, "RL": 36, "XE": 37,
+                   "TK": 38, "RM": 41, "XF": 43, "XG": 44, "XH": 49, "RQ": 50, "RS": 51, "XI": 52}
+        sign_negative = {"RA", "RC", "RE", "RG", "RH", "RI", "RJ", "RK", "RL", "RM", "RQ", "RS"}
+        for ref, row in row_map.items():
+            val = cr.get(ref, 0.0)
+            if ref in sign_negative:
+                val = -abs(val)
+            cell = ws.cell(row=row, column=9, value=round(val))
+            cell.font = green
+
+    # ---- TFT : ajoute un onglet supplémentaire avec notre calcul simplifié ----
+    tft = compute_tft(conn)
+    if "TFT" in wb.sheetnames:
+        ws = wb["TFT"]
+        ws["I10"] = round(tft["ouverture"])
+        ws["I10"].font = green
+        ws["A44"] = ("Feuille officielle laissée vierge (méthode indirecte avec CAFG non calculée "
+                     "automatiquement) — voir l'onglet « TFT (simplifie) » pour un calcul indicatif.")
+    ws_simple = wb.create_sheet("TFT (simplifie)")
+    ws_simple["A1"] = "TFT SIMPLIFIÉ (méthode directe, calculé automatiquement)"
+    ws_simple["A1"].font = Font(bold=True, size=12)
+    lines = [
+        ("Trésorerie d'ouverture", tft["ouverture"]),
+        ("Flux liés aux activités opérationnelles (EXP)", tft["exploitation"]),
+        ("Flux liés aux activités d'investissement (INV)", tft["investissement"]),
+        ("Flux liés aux activités de financement (FIN)", tft["financement"]),
+        ("Flux non classés (à coder)", tft["non_classes"]),
+        ("VARIATION NETTE DE TRESORERIE", tft["variation"]),
+        ("TRESORERIE DE CLOTURE", tft["cloture"]),
+    ]
+    for i, (label, val) in enumerate(lines):
+        ws_simple.cell(row=3 + i, column=1, value=label)
+        ws_simple.cell(row=3 + i, column=3, value=round(val))
+    ws_simple.column_dimensions["A"].width = 45
+
+    # ---- Toutes les autres pages : structure/dimensions conservées, valeurs
+    #      chiffrées (issues du modèle GCM) effacées pour éviter toute confusion ----
+    skip = {"GARDE", "BILAN", "RESULTAT", "TFT", "TFT (simplifie)"}
+    for name in wb.sheetnames:
+        if name in skip:
+            continue
+        ws = wb[name]
+        for row in ws.iter_rows():
+            for cell in row:
+                if isinstance(cell.value, (int, float)) and not isinstance(cell.value, bool):
+                    cell.value = None
 
     wb.save(path)
     return path

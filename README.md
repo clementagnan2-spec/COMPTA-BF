@@ -72,43 +72,68 @@ python main.py
 
 ## Onglets disponibles
 
-Saisie, Grand livre, Balance, Stocks, Production (coûts de fabrication),
-Compte de résultat, Bilan, TFT (tableau des flux de trésorerie),
-**Liasse fiscale**.
+Saisie, **Soldes d'ouverture**, Grand livre, Balance, Stocks, Production
+(coûts de fabrication), Compte de résultat, Bilan, TFT, **Liasse fiscale**.
 
-- **Liasse fiscale** : renseignez l'identification de l'entité (dénomination,
-  adresse, N° IFU, exercice clos le...), puis « Exporter la liasse fiscale
-  (.xlsx) ». Le fichier généré reprend la mise en page et les codes
-  officiels SYSCOHADA système normal (COUVERTURE, BILAN avec REF AD/AE/AI...,
-  RESULTAT avec REF TA/RA/XA...), calculés depuis vos écritures.
+- **Soldes d'ouverture** *(nouveau)* : saisissez le solde de report à nouveau
+  de chaque compte de bilan au 1er jour de l'exercice (= solde de clôture de
+  l'exercice précédent). Convention : débiteur = positif, créditeur = négatif.
+  La somme de tous les soldes d'ouverture doit être nulle (partie double) —
+  un contrôle l'affiche en bas de l'onglet. **Tous les calculs (Balance,
+  Bilan, TFT, Liasse fiscale) intègrent désormais automatiquement ces soldes
+  d'ouverture** : Balance de clôture = Solde d'ouverture + Mouvements de
+  l'exercice. C'est ce qui permet au Bilan de s'équilibrer même si ce n'est
+  pas la première année d'activité.
+- **Balance** *(mise à jour)* : affiche maintenant, pour chaque compte, le
+  Solde d'ouverture, le Débit/Crédit/Solde de la période, et le **Solde de
+  clôture**.
+- **Stocks** : le stock initial saisi ici alimente désormais directement la
+  table des soldes d'ouverture (même mécanisme que ci-dessus).
+- **TFT** : la trésorerie d'ouverture est calculée **automatiquement** à
+  partir des soldes d'ouverture des comptes de trésorerie (521000/531000/
+  570000/585000) ; un bouton permet de la forcer manuellement si besoin.
+  Codez `FLUX-EXP`, `FLUX-INV` ou `FLUX-FIN` dans le champ « Code flux » des
+  écritures de trésorerie dans l'onglet Saisie pour classer les mouvements.
+- **Grand livre** : tapez un N° Compte (liste déroulante avec recherche)
+  puis « Afficher » pour voir le détail chronologique et le solde cumulé.
+- **Production** : tapez `AN-FAB` dans le champ « Code analytique » de
+  l'onglet Saisie sur les lignes de charges de fabrication pour qu'elles
+  remontent dans l'onglet Production.
 
-  **Ce que cet export fait de manière fiable** : les totaux du Bilan (AZ, BK,
-  BT, BZ, CP, DD, DP, DT, DZ) et le Résultat net (XI), calculés directement
-  depuis la partie double de vos écritures — le Bilan s'équilibre toujours.
+### Liasse fiscale *(mise à jour majeure)*
 
-  **Ce qui est indicatif, à faire vérifier par un expert-comptable avant
-  tout dépôt officiel auprès de la DGI** :
-  - Le détail par ligne du Bilan (AE à AN, CA à CM, DA à DM) : réparti par
-    plage de comptes, y compris une répartition proportionnelle des
-    amortissements entre catégories.
-  - Le TFT : version simplifiée en méthode directe (flux EXP/INV/FIN), pas
-    la méthode indirecte officielle avec CAFG.
-  - Les 39 notes annexes et les ~20 tableaux fiscaux DGI (SUPPL1 à SUPPL20)
-    du modèle fourni **ne sont pas générés** : ils demandent des données que
-    cette application ne suit pas encore (registre des immobilisations par
-    catégorie avec mouvements, balance âgée clients/fournisseurs, effectifs,
-    calcul de l'IS, etc.).
+Renseignez l'identification de l'entité (dénomination, adresse, N° IFU,
+exercice clos le...), puis « Exporter la liasse fiscale complète (.xlsx) ».
 
-- **Grand livre** : tapez un N° Compte (ex. `411000`) puis « Afficher » pour
-  voir le détail chronologique et le solde cumulé.
-- **Stocks** : sélectionnez un compte de stock dans le tableau, saisissez
-  son stock initial, puis « Enregistrer ».
-- **Production** : pour qu'une charge remonte dans les coûts de fabrication,
-  tapez `AN-FAB` dans le champ « Code analytique » de l'onglet Saisie sur
-  la ligne concernée.
-- **TFT** : saisissez la trésorerie d'ouverture, et codez `FLUX-EXP`,
-  `FLUX-INV` ou `FLUX-FIN` dans le champ « Code flux » des écritures de
-  trésorerie (comptes 521000/531000/570000/585000) dans l'onglet Saisie.
+Le fichier généré reprend **les 92 pages et les mêmes dimensions exactes du
+modèle SYSCOHADA système normal que vous avez fourni** (COUVERTURE, BILAN,
+RESULTAT, TFT, 39 notes annexes NOTE 1 à NOTE 39, ~20 tableaux fiscaux DGI
+SUPPL1 à SUPPL20, fiches R1-R4, etc.) :
+
+- ✅ **BILAN et RESULTAT** : remplis automatiquement depuis vos écritures,
+  avec les mêmes codes officiels (AD/AE/AI... côté actif, CA/CJ/DA... côté
+  passif, TA/RA/XA... au compte de résultat). Les totaux et le Résultat net
+  utilisent désormais la **balance de clôture** (soldes d'ouverture +
+  mouvements) — le Bilan s'équilibre toujours, y compris les années
+  suivantes une fois les soldes d'ouverture saisis.
+- ✅ **TFT** : la page officielle (méthode indirecte avec CAFG) est laissée
+  vierge — nous ne calculons pas la CAFG automatiquement. Un onglet
+  supplémentaire **« TFT (simplifie) »** est ajouté avec un calcul en
+  méthode directe (Ouverture, EXP/INV/FIN, Clôture), cohérent avec la
+  Balance.
+- ⚠️ **Détail des lignes du Bilan** (AE à AN, CA à CM, DA à DM) : réparti
+  par plage de comptes, y compris une répartition proportionnelle des
+  amortissements entre catégories — indicatif, à vérifier.
+- 📄 **Toutes les autres pages** (39 notes, ~20 tableaux DGI) : conservées
+  avec leur mise en page, leurs libellés et **leurs dimensions identiques**
+  au modèle fourni, mais les montants qu'elles contenaient (qui sont les
+  chiffres 2023 de l'entreprise du modèle, pas les vôtres) sont **effacés**
+  pour éviter toute confusion — à compléter manuellement ou par votre
+  expert-comptable.
+
+**À faire vérifier par un expert-comptable avant tout dépôt officiel auprès
+de la DGI** — cet export est une aide à la préparation, pas un dépôt
+directement utilisable tel quel.
 
 ## Limites de cette version par rapport au classeur Excel
 
