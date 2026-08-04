@@ -999,6 +999,14 @@ def export_liasse_fiscale_complete(conn, path, stock_initial=0.0):
     from openpyxl.styles import Font
 
     template_path = os.path.join(_resource_dir(), "etats_financiers_template.xlsx")
+    if not os.path.exists(template_path):
+        raise FileNotFoundError(
+            "Le fichier modèle 'etats_financiers_template.xlsx' est introuvable dans "
+            "l'exécutable. Cela signifie qu'il n'a pas été inclus lors de la compilation : "
+            "vérifiez que ce fichier est bien présent à la racine du dépôt GitHub (à côté de "
+            "main.py) et que .github/workflows/build.yml contient bien la ligne "
+            "--add-data \"etats_financiers_template.xlsx;.\", puis relancez le build."
+        )
     wb = openpyxl.load_workbook(template_path)
     green = Font(color="FF008000")
 
@@ -1114,7 +1122,7 @@ def export_liasse_fiscale_complete(conn, path, stock_initial=0.0):
     ws_simple.column_dimensions["A"].width = 45
 
     # ---- Toutes les autres pages : structure/dimensions conservées, valeurs
-    #      chiffrées (issues du modèle GCM) effacées pour éviter toute confusion ----
+    #      chiffrées (issues du modèle) effacées pour éviter toute confusion ----
     skip = {"GARDE", "BILAN", "RESULTAT", "TFT", "TFT (simplifie)"}
     for name in wb.sheetnames:
         if name in skip:
@@ -1124,6 +1132,21 @@ def export_liasse_fiscale_complete(conn, path, stock_initial=0.0):
             for cell in row:
                 if isinstance(cell.value, (int, float)) and not isinstance(cell.value, bool):
                     cell.value = None
+
+    # ---- Filet de sécurité : efface tout texte résiduel qui ne serait pas le
+    #      nom de VOTRE entité (au cas où le modèle contiendrait encore une
+    #      dénomination sociale tierce, pour éviter toute confusion/litige) ----
+    my_name = (get_company_value(conn, "societe_nom") or "").strip().upper()
+    for name in wb.sheetnames:
+        ws = wb[name]
+        for row in ws.iter_rows():
+            for cell in row:
+                if isinstance(cell.value, str) and "GCM" in cell.value.upper():
+                    if not my_name or my_name not in cell.value.upper():
+                        cell.value = None
+
+    wb.properties.creator = None
+    wb.properties.lastModifiedBy = None
 
     wb.save(path)
     return path
