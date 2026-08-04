@@ -12,6 +12,40 @@ from datetime import date
 import core
 
 
+class EtatsFinanciersTab(ttk.Frame):
+    """Regroupe Grand livre, Balance, Bilan et Liasse fiscale sous un seul onglet,
+    avec un sous-notebook interne (accessible aussi via le menu ÉTATS FINANCIERS)."""
+
+    def __init__(self, parent, conn):
+        super().__init__(parent)
+        self.conn = conn
+        self.inner = ttk.Notebook(self)
+        self.inner.pack(fill="both", expand=True)
+
+        self.grand_livre_tab = GrandLivreTab(self.inner, conn)
+        self.balance_tab = BalanceTab(self.inner, conn)
+        self.bilan_tab = BilanTab(self.inner, conn)
+        self.liasse_tab = LiasseFiscaleTab(self.inner, conn)
+
+        self.inner.add(self.grand_livre_tab, text="Grand livre")
+        self.inner.add(self.balance_tab, text="Balance")
+        self.inner.add(self.bilan_tab, text="Bilan")
+        self.inner.add(self.liasse_tab, text="Liasse fiscale")
+
+        self.inner.bind("<<NotebookTabChanged>>", lambda e: self.refresh())
+
+    def select(self, name):
+        widget = {"grand_livre": self.grand_livre_tab, "balance": self.balance_tab,
+                  "bilan": self.bilan_tab, "liasse": self.liasse_tab}[name]
+        self.inner.select(widget)
+        self.refresh()
+
+    def refresh(self):
+        self.grand_livre_tab.refresh()
+        self.balance_tab.refresh()
+        self.bilan_tab.refresh()
+
+
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
@@ -21,41 +55,48 @@ class App(tk.Tk):
 
         notebook = ttk.Notebook(self)
         notebook.pack(fill="both", expand=True)
+        self.notebook = notebook
 
         self.saisie_tab = SaisieTab(notebook, self.conn)
         self.opening_tab = OpeningBalancesTab(notebook, self.conn)
-        self.grand_livre_tab = GrandLivreTab(notebook, self.conn)
-        self.balance_tab = BalanceTab(notebook, self.conn)
         self.stocks_tab = StocksTab(notebook, self.conn)
         self.production_tab = ProductionTab(notebook, self.conn)
         self.cr_tab = CompteResultatTab(notebook, self.conn)
-        self.bilan_tab = BilanTab(notebook, self.conn)
         self.tft_tab = TftTab(notebook, self.conn)
-        self.liasse_tab = LiasseFiscaleTab(notebook, self.conn)
+        self.etats_tab = EtatsFinanciersTab(notebook, self.conn)
 
         notebook.add(self.saisie_tab, text="Saisie")
         notebook.add(self.opening_tab, text="Soldes d'ouverture")
-        notebook.add(self.grand_livre_tab, text="Grand livre")
-        notebook.add(self.balance_tab, text="Balance")
         notebook.add(self.stocks_tab, text="Stocks")
         notebook.add(self.production_tab, text="Production")
         notebook.add(self.cr_tab, text="Compte de résultat")
-        notebook.add(self.bilan_tab, text="Bilan")
         notebook.add(self.tft_tab, text="TFT")
-        notebook.add(self.liasse_tab, text="Liasse fiscale")
+        notebook.add(self.etats_tab, text="États financiers")
+
+        # Menu "ÉTATS FINANCIERS" avec accès direct à chacun des 4 sous-onglets
+        menubar = tk.Menu(self)
+        etats_menu = tk.Menu(menubar, tearoff=0)
+        etats_menu.add_command(label="Grand livre", command=lambda: self.goto_etats("grand_livre"))
+        etats_menu.add_command(label="Balance", command=lambda: self.goto_etats("balance"))
+        etats_menu.add_command(label="Bilan", command=lambda: self.goto_etats("bilan"))
+        etats_menu.add_command(label="Liasse fiscale", command=lambda: self.goto_etats("liasse"))
+        menubar.add_cascade(label="États financiers", menu=etats_menu)
+        self.config(menu=menubar)
 
         # Rafraîchir les onglets de synthèse quand on les affiche
         notebook.bind("<<NotebookTabChanged>>", lambda e: self.refresh_all())
 
+    def goto_etats(self, name):
+        self.notebook.select(self.etats_tab)
+        self.etats_tab.select(name)
+
     def refresh_all(self):
         self.opening_tab.refresh()
-        self.grand_livre_tab.refresh()
-        self.balance_tab.refresh()
         self.stocks_tab.refresh()
         self.production_tab.refresh()
         self.cr_tab.refresh()
-        self.bilan_tab.refresh()
         self.tft_tab.refresh()
+        self.etats_tab.refresh()
 
 
 class SaisieTab(ttk.Frame):
@@ -70,11 +111,11 @@ class SaisieTab(ttk.Frame):
         form = ttk.LabelFrame(self, text="Écriture")
         form.pack(fill="x", padx=8, pady=8)
 
-        labels = ["Date (AAAA-MM-JJ)", "N° Pièce", "Journal", "N° Compte",
+        labels = ["Date (JJ/MM/AAAA)", "N° Pièce", "Journal", "N° Compte",
                   "Tiers", "Libellé", "Débit", "Crédit", "Code flux (EXP/INV/FIN)",
                   "Code analytique (ex: AN-FAB)"]
         self.vars = {k: tk.StringVar() for k in labels}
-        self.vars["Date (AAAA-MM-JJ)"].set(str(date.today()))
+        self.vars["Date (JJ/MM/AAAA)"].set(date.today().strftime("%d/%m/%Y"))
 
         for i, lbl in enumerate(labels):
             r, c = divmod(i, 3)
@@ -169,7 +210,7 @@ class SaisieTab(ttk.Frame):
             messagebox.showerror("Erreur", "Débit et Crédit doivent être des nombres.")
             return None
         return dict(
-            date_str=self.vars["Date (AAAA-MM-JJ)"].get().strip(),
+            date_str=core.to_iso_date(self.vars["Date (JJ/MM/AAAA)"].get().strip()),
             piece=self.vars["N° Pièce"].get().strip(),
             journal=self.vars["Journal"].get().strip(),
             compte=self._extract_compte_code(),
@@ -213,7 +254,7 @@ class SaisieTab(ttk.Frame):
     def clear_form(self):
         self.selected_id = None
         for k, v in self.vars.items():
-            v.set("" if k != "Date (AAAA-MM-JJ)" else str(date.today()))
+            v.set("" if k != "Date (JJ/MM/AAAA)" else date.today().strftime("%d/%m/%Y"))
         self.account_label_var.set("")
 
     def download_template(self):
@@ -261,7 +302,7 @@ class SaisieTab(ttk.Frame):
             return
         values = self.tree.item(sel[0], "values")
         self.selected_id = int(values[0])
-        self.vars["Date (AAAA-MM-JJ)"].set(values[1])
+        self.vars["Date (JJ/MM/AAAA)"].set(values[1])
         self.vars["N° Pièce"].set(values[2])
         self.vars["Journal"].set(values[3])
         self.vars["N° Compte"].set(values[4])
@@ -281,7 +322,7 @@ class SaisieTab(ttk.Frame):
         for e in entries:
             label = core.get_account_label(self.conn, e["compte"])
             self.tree.insert("", "end", values=(
-                e["id"], e["date"], e["piece"] or "", e["journal"] or "", e["compte"], label,
+                e["id"], core.to_display_date(e["date"]), e["piece"] or "", e["journal"] or "", e["compte"], label,
                 e["tiers"] or "", e["libelle"] or "",
                 f"{e['debit']:.2f}" if e["debit"] else "",
                 f"{e['credit']:.2f}" if e["credit"] else "",
@@ -429,7 +470,7 @@ class GrandLivreTab(ttk.Frame):
         self.label_var.set(core.get_account_label(self.conn, compte))
         for r in core.compute_grand_livre(self.conn, compte, self.tiers_var.get().strip() or None):
             self.tree.insert("", "end", values=(
-                r["date"], r["piece"] or "", r["journal"] or "", r["tiers"] or "", r["libelle"] or "",
+                core.to_display_date(r["date"]), r["piece"] or "", r["journal"] or "", r["tiers"] or "", r["libelle"] or "",
                 f"{r['debit']:.2f}" if r["debit"] else "",
                 f"{r['credit']:.2f}" if r["credit"] else "",
                 f"{r['solde_cumule']:,.2f}",

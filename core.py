@@ -365,6 +365,32 @@ def search_accounts(conn, query, limit=50):
     return [dict(r) for r in rows]
 
 
+def to_display_date(iso_str):
+    """AAAA-MM-JJ (stockage) -> JJ/MM/AAAA (affichage)."""
+    if not iso_str:
+        return ""
+    s = str(iso_str).strip()
+    for fmt in ("%Y-%m-%d", "%Y-%m-%d %H:%M:%S"):
+        try:
+            return datetime.strptime(s[:19], fmt).strftime("%d/%m/%Y")
+        except ValueError:
+            continue
+    return s  # déjà dans un autre format ou invalide : renvoyé tel quel
+
+
+def to_iso_date(display_str):
+    """JJ/MM/AAAA (saisie) -> AAAA-MM-JJ (stockage). Accepte aussi AAAA-MM-JJ en entrée."""
+    s = (display_str or "").strip()
+    if not s:
+        return ""
+    for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y", "%d.%m.%Y"):
+        try:
+            return datetime.strptime(s, fmt).strftime("%Y-%m-%d")
+        except ValueError:
+            continue
+    return s  # format non reconnu : renvoyé tel quel (l'appelant peut valider)
+
+
 def get_account_label(conn, code):
     row = conn.execute("SELECT label FROM accounts WHERE code = ?", (code,)).fetchone()
     return row["label"] if row else "Compte introuvable"
@@ -439,11 +465,11 @@ def export_import_template(path):
         c = ws.cell(row=1, column=i, value=label)
         c.font = header_font
         c.fill = header_fill
-    example = ["2024-01-15", "FA-0001", "AC", "601000", "Fournisseur X", "Achat marchandises",
+    example = ["15/01/2024", "FA-0001", "AC", "601000", "Fournisseur X", "Achat marchandises",
                100000, 0, "", ""]
     for i, val in enumerate(example, start=1):
         ws.cell(row=2, column=i, value=val)
-    example2 = ["2024-01-15", "FA-0001", "AC", "401000", "Fournisseur X", "Facture FA-0001",
+    example2 = ["15/01/2024", "FA-0001", "AC", "401000", "Fournisseur X", "Facture FA-0001",
                 0, 100000, "", ""]
     for i, val in enumerate(example2, start=1):
         ws.cell(row=3, column=i, value=val)
@@ -502,7 +528,7 @@ def import_entries_from_xlsx(conn, path):
         elif isinstance(date_val, date):
             date_str = date_val.strftime("%Y-%m-%d")
         else:
-            date_str = str(date_val).strip()
+            date_str = to_iso_date(str(date_val))
 
         compte = get(values, "compte")
         compte = "" if compte is None else str(compte).strip()
@@ -837,7 +863,7 @@ COMPANY_FIELDS = {
     "societe_adresse": "Adresse",
     "societe_ifu": "N° IFU du contribuable",
     "societe_teledeclarant": "N° de télédéclarant (NES)",
-    "exercice_clos_le": "Exercice clos le (AAAA-MM-JJ)",
+    "exercice_clos_le": "Exercice clos le (JJ/MM/AAAA)",
 }
 
 
@@ -1151,7 +1177,18 @@ def export_liasse_fiscale_complete(conn, path, stock_initial=0.0):
         g["D31"] = get_company_value(conn, "societe_teledeclarant")
         exdate = get_company_value(conn, "exercice_clos_le")
         if exdate:
-            g["E17"] = exdate
+            parsed = None
+            for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y", "%d.%m.%Y"):
+                try:
+                    parsed = datetime.strptime(exdate.strip(), fmt)
+                    break
+                except ValueError:
+                    continue
+            if parsed:
+                g["E17"] = parsed
+                g["E17"].number_format = "DD/MM/YYYY"
+            else:
+                g["E17"] = exdate
 
     # ---- BILAN ----
     liasse = compute_liasse_bilan(conn, stock_initial=stock_initial)
@@ -1292,6 +1329,18 @@ def export_liasse_fiscale_complete(conn, path, stock_initial=0.0):
                 if isinstance(cell.value, str) and "GCM" in cell.value.upper():
                     if not my_name or my_name not in cell.value.upper():
                         cell.value = None
+
+    # ---- Uniformise toutes les cellules de type date au format JJ/MM/AAAA ----
+    date_format_markers = ("yy", "mm", "dd", "jj", "aaaa")
+    for name in wb.sheetnames:
+        ws = wb[name]
+        for row in ws.iter_rows():
+            for cell in row:
+                is_date_value = isinstance(cell.value, (datetime, date)) and not isinstance(cell.value, bool)
+                fmt = (cell.number_format or "").lower()
+                looks_like_date_format = fmt not in ("general", "@") and any(m in fmt for m in date_format_markers)
+                if is_date_value or looks_like_date_format:
+                    cell.number_format = "DD/MM/YYYY"
 
     wb.properties.creator = None
     wb.properties.lastModifiedBy = None

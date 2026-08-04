@@ -84,10 +84,19 @@ pip install -r requirements.txt
 python main.py
 ```
 
-## Onglets disponibles
+## Onglets et menus disponibles
 
-Saisie, **Soldes d'ouverture**, Grand livre, Balance, Stocks, Production
-(coûts de fabrication), Compte de résultat, Bilan, TFT, **Liasse fiscale**.
+Onglets : Saisie, Soldes d'ouverture, Stocks, Production (coûts de
+fabrication), Compte de résultat, TFT, **États financiers**.
+
+Un menu **« États financiers »** en haut de la fenêtre donne un accès direct
+à Grand livre / Balance / Bilan / Liasse fiscale (ils sont aussi regroupés
+comme sous-onglets à l'intérieur de l'onglet « États financiers »).
+
+**Dates** : toutes les dates s'affichent et se saisissent au format
+**JJ/MM/AAAA** dans l'application (Saisie, Grand livre) ainsi que dans la
+Liasse fiscale exportée (dates Excel natives, format JJ/MM/AAAA appliqué
+à toutes les cellules de type date du classeur).
 
 - **Soldes d'ouverture** *(nouveau)* : saisissez le solde de report à nouveau
   de chaque compte de bilan au 1er jour de l'exercice (= solde de clôture de
