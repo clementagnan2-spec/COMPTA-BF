@@ -74,11 +74,23 @@ class SaisieTab(ttk.Frame):
         for i, lbl in enumerate(labels):
             r, c = divmod(i, 3)
             ttk.Label(form, text=lbl).grid(row=r * 2, column=c, sticky="w", padx=4, pady=(4, 0))
-            entry = ttk.Entry(form, textvariable=self.vars[lbl], width=24)
-            entry.grid(row=r * 2 + 1, column=c, sticky="we", padx=4, pady=(0, 4))
             if lbl == "N° Compte":
-                entry.bind("<KeyRelease>", self._show_account_label)
-                self.compte_entry = entry
+                widget = ttk.Combobox(form, textvariable=self.vars[lbl], width=22)
+                widget.grid(row=r * 2 + 1, column=c, sticky="we", padx=4, pady=(0, 4))
+                widget.bind("<KeyRelease>", self._on_compte_keyrelease)
+                widget.bind("<<ComboboxSelected>>", self._on_compte_selected)
+                self.compte_combo = widget
+            elif lbl == "Journal":
+                widget = ttk.Combobox(form, textvariable=self.vars[lbl], width=22,
+                                       values=["AC", "VE", "OD", "BQ", "CA"])
+                widget.grid(row=r * 2 + 1, column=c, sticky="we", padx=4, pady=(0, 4))
+            elif lbl == "Code flux (EXP/INV/FIN)":
+                widget = ttk.Combobox(form, textvariable=self.vars[lbl], width=22,
+                                       values=["", "FLUX-EXP", "FLUX-INV", "FLUX-FIN"], state="readonly")
+                widget.grid(row=r * 2 + 1, column=c, sticky="we", padx=4, pady=(0, 4))
+            else:
+                widget = ttk.Entry(form, textvariable=self.vars[lbl], width=24)
+                widget.grid(row=r * 2 + 1, column=c, sticky="we", padx=4, pady=(0, 4))
 
         self.account_label_var = tk.StringVar()
         ttk.Label(form, textvariable=self.account_label_var, foreground="#1F4E78").grid(
@@ -108,8 +120,27 @@ class SaisieTab(ttk.Frame):
         self.totals_var = tk.StringVar()
         ttk.Label(totals, textvariable=self.totals_var, font=("Segoe UI", 10, "bold")).pack(side="left")
 
+    def _extract_compte_code(self):
+        """Le champ affiche soit un code brut, soit 'code — Libellé' choisi dans la liste."""
+        raw = self.vars["N° Compte"].get().strip()
+        if " — " in raw:
+            return raw.split(" — ", 1)[0].strip()
+        return raw
+
+    def _on_compte_keyrelease(self, event=None):
+        if event is not None and event.keysym in ("Up", "Down", "Return", "Tab"):
+            return
+        query = self._extract_compte_code()
+        if len(query) >= 1:
+            matches = core.search_accounts(self.conn, query, limit=30)
+            self.compte_combo["values"] = [f"{m['code']} — {m['label']}" for m in matches]
+        self._show_account_label()
+
+    def _on_compte_selected(self, event=None):
+        self._show_account_label()
+
     def _show_account_label(self, event=None):
-        code = self.vars["N° Compte"].get().strip()
+        code = self._extract_compte_code()
         if code:
             self.account_label_var.set(core.get_account_label(self.conn, code))
         else:
@@ -126,7 +157,7 @@ class SaisieTab(ttk.Frame):
             date_str=self.vars["Date (AAAA-MM-JJ)"].get().strip(),
             piece=self.vars["N° Pièce"].get().strip(),
             journal=self.vars["Journal"].get().strip(),
-            compte=self.vars["N° Compte"].get().strip(),
+            compte=self._extract_compte_code(),
             tiers=self.vars["Tiers"].get().strip(),
             libelle=self.vars["Libellé"].get().strip(),
             debit=debit,
@@ -297,7 +328,10 @@ class GrandLivreTab(ttk.Frame):
         bar.pack(fill="x", padx=8, pady=8)
         ttk.Label(bar, text="N° Compte :").pack(side="left")
         self.compte_var = tk.StringVar()
-        ttk.Entry(bar, textvariable=self.compte_var, width=14).pack(side="left", padx=4)
+        self.compte_combo = ttk.Combobox(bar, textvariable=self.compte_var, width=30)
+        self.compte_combo.pack(side="left", padx=4)
+        self.compte_combo.bind("<KeyRelease>", self._on_compte_keyrelease)
+        self.compte_combo.bind("<<ComboboxSelected>>", lambda e: self.refresh())
         ttk.Label(bar, text="Tiers (optionnel) :").pack(side="left", padx=(12, 0))
         self.tiers_var = tk.StringVar()
         ttk.Entry(bar, textvariable=self.tiers_var, width=18).pack(side="left", padx=4)
@@ -314,10 +348,24 @@ class GrandLivreTab(ttk.Frame):
             self.tree.column(c, width=w, anchor="w")
         self.tree.pack(fill="both", expand=True, padx=8, pady=(0, 8))
 
+    def _extract_compte_code(self):
+        raw = self.compte_var.get().strip()
+        if " — " in raw:
+            return raw.split(" — ", 1)[0].strip()
+        return raw
+
+    def _on_compte_keyrelease(self, event=None):
+        if event is not None and event.keysym in ("Up", "Down", "Return", "Tab"):
+            return
+        query = self._extract_compte_code()
+        if query:
+            matches = core.search_accounts(self.conn, query, limit=30)
+            self.compte_combo["values"] = [f"{m['code']} — {m['label']}" for m in matches]
+
     def refresh(self):
         for row in self.tree.get_children():
             self.tree.delete(row)
-        compte = self.compte_var.get().strip()
+        compte = self._extract_compte_code()
         if not compte:
             self.label_var.set("")
             return

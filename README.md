@@ -46,8 +46,13 @@ git push -u origin main
 ## Utilisation de l'application
 
 - **Saisie** : formulaire d'ajout/modification/suppression d'écritures
-  (Date, Pièce, Journal, Compte, Tiers, Libellé, Débit, Crédit, Code flux).
-  Le libellé du compte s'affiche automatiquement pendant la saisie.
+  (Date, Pièce, Journal, Compte, Tiers, Libellé, Débit, Crédit, Code flux,
+  Code analytique). Le champ **N° Compte** est une liste déroulante avec
+  recherche : tapez un numéro ou un mot du libellé (ex. `clients`, `601`,
+  `banque`) et choisissez le compte dans la liste qui s'affiche. Le
+  **Journal** propose AC/VE/OD/BQ/CA (modifiable librement), et le
+  **Code flux** est une liste fermée EXP/INV/FIN pour éviter les fautes de
+  frappe. Le libellé du compte s'affiche automatiquement pendant la saisie.
 - **Balance** : synthèse Débit/Crédit/Solde par compte, actualisée à la volée.
 - **Compte de résultat** et **Bilan** : calculés automatiquement selon la
   même logique que le classeur Excel (mêmes regroupements de comptes).
