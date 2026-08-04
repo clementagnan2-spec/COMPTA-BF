@@ -1059,6 +1059,13 @@ def export_liasse_fiscale_complete(conn, path, stock_initial=0.0):
 
     if "BILAN" in wb.sheetnames:
         ws = wb["BILAN"]
+        # Efface toutes les valeurs numériques préexistantes du modèle (Brut, Amort,
+        # N-1) sur les lignes de données, pour n'y laisser QUE nos propres calculs.
+        for row in range(11, 41):
+            for col in (6, 7, 8, 9, 13, 14):  # F,G,H,I (actif) / M,N (passif)
+                cell = ws.cell(row=row, column=col)
+                if isinstance(cell.value, (int, float)) and not isinstance(cell.value, bool):
+                    cell.value = None
         ws["C3"] = get_company_value(conn, "societe_nom")
         ws["C4"] = get_company_value(conn, "societe_adresse")
         ws["C5"] = get_company_value(conn, "societe_ifu")
@@ -1084,6 +1091,11 @@ def export_liasse_fiscale_complete(conn, path, stock_initial=0.0):
     cr = compute_liasse_resultat(conn)
     if "RESULTAT" in wb.sheetnames:
         ws = wb["RESULTAT"]
+        for row in range(11, 53):
+            for col in (9, 10):  # I (exercice N), J (N-1)
+                cell = ws.cell(row=row, column=col)
+                if isinstance(cell.value, (int, float)) and not isinstance(cell.value, bool):
+                    cell.value = None
         row_map = {"TA": 11, "RA": 12, "XA": 14, "TB": 15, "TC": 16, "TD": 17, "XB": 18,
                    "TE": 19, "TG": 21, "TH": 22, "RC": 24, "RE": 26, "RG": 28, "RH": 29,
                    "RI": 30, "RJ": 31, "XC": 32, "RK": 33, "XD": 34, "RL": 36, "XE": 37,
@@ -1100,6 +1112,11 @@ def export_liasse_fiscale_complete(conn, path, stock_initial=0.0):
     tft = compute_tft(conn)
     if "TFT" in wb.sheetnames:
         ws = wb["TFT"]
+        for row in range(10, 42):
+            for col in (9, 10):  # I (exercice N), J (N-1)
+                cell = ws.cell(row=row, column=col)
+                if isinstance(cell.value, (int, float)) and not isinstance(cell.value, bool):
+                    cell.value = None
         ws["I10"] = round(tft["ouverture"])
         ws["I10"].font = green
         ws["A44"] = ("Feuille officielle laissée vierge (méthode indirecte avec CAFG non calculée "
