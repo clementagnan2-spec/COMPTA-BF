@@ -73,7 +73,31 @@ python main.py
 ## Onglets disponibles
 
 Saisie, Grand livre, Balance, Stocks, Production (coûts de fabrication),
-Compte de résultat, Bilan, TFT (tableau des flux de trésorerie).
+Compte de résultat, Bilan, TFT (tableau des flux de trésorerie),
+**Liasse fiscale**.
+
+- **Liasse fiscale** : renseignez l'identification de l'entité (dénomination,
+  adresse, N° IFU, exercice clos le...), puis « Exporter la liasse fiscale
+  (.xlsx) ». Le fichier généré reprend la mise en page et les codes
+  officiels SYSCOHADA système normal (COUVERTURE, BILAN avec REF AD/AE/AI...,
+  RESULTAT avec REF TA/RA/XA...), calculés depuis vos écritures.
+
+  **Ce que cet export fait de manière fiable** : les totaux du Bilan (AZ, BK,
+  BT, BZ, CP, DD, DP, DT, DZ) et le Résultat net (XI), calculés directement
+  depuis la partie double de vos écritures — le Bilan s'équilibre toujours.
+
+  **Ce qui est indicatif, à faire vérifier par un expert-comptable avant
+  tout dépôt officiel auprès de la DGI** :
+  - Le détail par ligne du Bilan (AE à AN, CA à CM, DA à DM) : réparti par
+    plage de comptes, y compris une répartition proportionnelle des
+    amortissements entre catégories.
+  - Le TFT : version simplifiée en méthode directe (flux EXP/INV/FIN), pas
+    la méthode indirecte officielle avec CAFG.
+  - Les 39 notes annexes et les ~20 tableaux fiscaux DGI (SUPPL1 à SUPPL20)
+    du modèle fourni **ne sont pas générés** : ils demandent des données que
+    cette application ne suit pas encore (registre des immobilisations par
+    catégorie avec mouvements, balance âgée clients/fournisseurs, effectifs,
+    calcul de l'IS, etc.).
 
 - **Grand livre** : tapez un N° Compte (ex. `411000`) puis « Afficher » pour
   voir le détail chronologique et le solde cumulé.

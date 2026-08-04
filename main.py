@@ -6,7 +6,7 @@ Les données sont stockées localement dans un fichier SQLite
 (%LOCALAPPDATA%\\SaisieComptable\\comptabilite.db sous Windows).
 """
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, filedialog
 from datetime import date
 
 import core
@@ -30,6 +30,7 @@ class App(tk.Tk):
         self.cr_tab = CompteResultatTab(notebook, self.conn)
         self.bilan_tab = BilanTab(notebook, self.conn)
         self.tft_tab = TftTab(notebook, self.conn)
+        self.liasse_tab = LiasseFiscaleTab(notebook, self.conn)
 
         notebook.add(self.saisie_tab, text="Saisie")
         notebook.add(self.grand_livre_tab, text="Grand livre")
@@ -39,6 +40,7 @@ class App(tk.Tk):
         notebook.add(self.cr_tab, text="Compte de résultat")
         notebook.add(self.bilan_tab, text="Bilan")
         notebook.add(self.tft_tab, text="TFT")
+        notebook.add(self.liasse_tab, text="Liasse fiscale")
 
         # Rafraîchir les onglets de synthèse quand on les affiche
         notebook.bind("<<NotebookTabChanged>>", lambda e: self.refresh_all())
@@ -511,6 +513,79 @@ class TftTab(ttk.Frame):
         ]
         self.text.delete("1.0", "end")
         self.text.insert("1.0", "\n".join(lines))
+
+
+class LiasseFiscaleTab(ttk.Frame):
+    def __init__(self, parent, conn):
+        super().__init__(parent)
+        self.conn = conn
+
+        info = ttk.LabelFrame(self, text="Identification de l'entité (SYSCOHADA / DGI)")
+        info.pack(fill="x", padx=8, pady=8)
+
+        self.vars = {}
+        for i, (key, label) in enumerate(core.COMPANY_FIELDS.items()):
+            r, c = divmod(i, 2)
+            ttk.Label(info, text=label + " :").grid(row=r * 2, column=c, sticky="w", padx=4, pady=(4, 0))
+            var = tk.StringVar(value=core.get_company_value(conn, key))
+            ttk.Entry(info, textvariable=var, width=40).grid(row=r * 2 + 1, column=c, sticky="we", padx=4, pady=(0, 6))
+            self.vars[key] = var
+        ttk.Button(info, text="Enregistrer les informations", command=self.save_info).grid(
+            row=6, column=0, sticky="w", padx=4, pady=6)
+
+        params = ttk.LabelFrame(self, text="Paramètres d'export")
+        params.pack(fill="x", padx=8, pady=(0, 8))
+        ttk.Label(params, text="Stock initial total (cf. onglet Stocks) :").grid(row=0, column=0, sticky="w", padx=4, pady=4)
+        self.stock_initial_var = tk.StringVar(value="0")
+        ttk.Entry(params, textvariable=self.stock_initial_var, width=16).grid(row=0, column=1, sticky="w", padx=4)
+        ttk.Label(params, text="Trésorerie d'ouverture (cf. onglet TFT) :").grid(row=0, column=2, sticky="w", padx=(20, 4))
+        self.treso_var = tk.StringVar(value=str(core.get_setting(conn, "treso_ouverture", 0.0)))
+        ttk.Entry(params, textvariable=self.treso_var, width=16).grid(row=0, column=3, sticky="w", padx=4)
+
+        note = ttk.Label(self, wraplength=900, foreground="#595959", text=(
+            "Génère un classeur .xlsx avec les codes officiels SYSCOHADA système normal (COUVERTURE, BILAN, "
+            "RESULTAT, TFT). Les totaux (AZ, BK, BT, BZ, CP, DD, DP, DT, DZ) sont calculés directement depuis "
+            "vos écritures et fiables. Le détail par ligne (AE à AN, CA à CM, DA à DM) est une répartition "
+            "indicative par plage de comptes, le TFT est simplifié (méthode directe, pas la méthode indirecte "
+            "officielle avec CAFG), et les 39 notes annexes / tableaux fiscaux DGI ne sont pas générés — "
+            "cet export est une aide à la préparation, à faire vérifier par un expert-comptable avant tout "
+            "dépôt officiel."
+        ))
+        note.pack(fill="x", padx=8, pady=(0, 8))
+
+        ttk.Button(self, text="Exporter la liasse fiscale (.xlsx)", command=self.export).pack(padx=8, pady=8, anchor="w")
+        self.status_var = tk.StringVar()
+        ttk.Label(self, textvariable=self.status_var, foreground="#1F4E78").pack(padx=8, anchor="w")
+
+    def save_info(self):
+        for key, var in self.vars.items():
+            core.set_company_value(self.conn, key, var.get().strip())
+        self.status_var.set("Informations enregistrées.")
+
+    def export(self):
+        self.save_info()
+        try:
+            stock_initial = float(self.stock_initial_var.get() or 0)
+            treso_ouverture = float(self.treso_var.get() or 0)
+        except ValueError:
+            messagebox.showerror("Erreur", "Stock initial et Trésorerie d'ouverture doivent être des nombres.")
+            return
+        core.set_setting(self.conn, "treso_ouverture", treso_ouverture)
+        path = filedialog.asksaveasfilename(
+            defaultextension=".xlsx",
+            filetypes=[("Classeur Excel", "*.xlsx")],
+            initialfile="Liasse_fiscale.xlsx",
+            title="Enregistrer la liasse fiscale",
+        )
+        if not path:
+            return
+        try:
+            core.export_liasse_fiscale(self.conn, path, stock_initial=stock_initial, treso_ouverture=treso_ouverture)
+        except Exception as exc:
+            messagebox.showerror("Erreur", f"Échec de l'export : {exc}")
+            return
+        self.status_var.set(f"Export réussi : {path}")
+        messagebox.showinfo("Export terminé", f"Liasse fiscale enregistrée :\n{path}")
 
 
 if __name__ == "__main__":

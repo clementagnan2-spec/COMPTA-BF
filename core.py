@@ -41,8 +41,185 @@ COMPTES_DOTATIONS = ["681000", "691000"]
 COMPTES_PRODUITS_FIN = ["771000", "776000"]
 COMPTES_CHARGES_FIN = ["671000", "676000"]
 
+# ---------------------------------------------------------------------------
+# Liasse fiscale — codes SYSCOHADA "système normal" (BILAN / RESULTAT)
+# NB : les totaux (AD, AI, AZ, BK, BT, BZ, CP, DD, DP, DT, DZ) sont fiables
+# (dérivés directement de la partie double). Le détail par ligne (AE..AN,
+# CA/CH/CJ, DA/DJ/DK/DM/DR) est une répartition indicative par plage de
+# comptes — à vérifier avec votre expert-comptable avant tout dépôt officiel.
+# ---------------------------------------------------------------------------
+RANGES_INCORP = {"AE": (211000, 211999), "AF": (212000, 214999),
+                  "AG": (215000, 216999), "AH": (217000, 219999)}
+RANGE_AMORT_INCORP = (281000, 281999)
+RANGES_CORP = {"AJ": [(220000, 229999)], "AK": [(230000, 233999)],
+               "AL": [(234000, 239999)],
+               "AM": [(240000, 244999), (246000, 249999)],
+               "AN": [(245000, 245999)]}
+RANGE_AMORT_CORP = (282000, 297999)
+RANGE_AVANCES_IMMO = (250000, 252999)
+RANGE_TITRES_PARTICIPATION = (260000, 268999)
+RANGE_AUTRES_IMMO_FIN = (270000, 278999)
 
-def default_db_path():
+RANGES_CAPITAUX = {"CA": [(101000, 104999)], "CD": [(105000, 105999)],
+                    "CF_CG": [(110000, 118999)], "CH": [(120000, 129999)],
+                    "CL": [(140000, 148999)], "CM": [(150000, 158999)]}
+RANGE_DETTES_FIN = (160000, 168999)
+RANGE_DETTES_LOCATION = (170000, 178999)
+RANGE_PROVISIONS_RC = (190000, 198999)
+
+RANGE_STOCKS = (300000, 399999)
+RANGE_AVANCES_FOURN = (409000, 409999)
+RANGE_CLIENTS = (411000, 419999)
+RANGE_FOURNISSEURS = (401000, 408999)
+RANGE_DETTES_FISC_SOC = (420000, 449999)
+RANGE_AUTRES_DETTES = (450000, 499999)
+
+
+def _in_ranges(code_int, ranges):
+    if isinstance(ranges, tuple):
+        ranges = [ranges]
+    return any(lo <= code_int <= hi for lo, hi in ranges)
+
+
+def _sum_range(balance, ranges, classe=None):
+    total = 0.0
+    for b in balance:
+        code_int = int(b["code"])
+        if classe and b["classe"] != classe:
+            continue
+        if _in_ranges(code_int, ranges):
+            total += b["solde"]
+    return total
+
+
+def compute_liasse_bilan(conn, stock_initial=0.0):
+    """Bilan au format SYSCOHADA système normal (codes officiels)."""
+    balance = compute_balance(conn, only_with_movement=False)
+    bilan_simple = compute_bilan(conn, stock_initial=stock_initial)
+
+    # --- Détail indicatif Immobilisations incorporelles ---
+    incorp_brut = {k: _sum_range(balance, [rng]) for k, rng in RANGES_INCORP.items()}
+    total_incorp_brut = sum(incorp_brut.values())
+    amort_incorp_total = -_sum_range(balance, [RANGE_AMORT_INCORP])  # positif
+    incorp_net = {}
+    for k, brut in incorp_brut.items():
+        part = (brut / total_incorp_brut * amort_incorp_total) if total_incorp_brut else 0
+        incorp_net[k] = brut - part
+
+    # --- Détail indicatif Immobilisations corporelles ---
+    corp_brut = {k: _sum_range(balance, rngs) for k, rngs in RANGES_CORP.items()}
+    total_corp_brut = sum(corp_brut.values())
+    amort_corp_total = -_sum_range(balance, [RANGE_AMORT_CORP])
+    corp_net = {}
+    for k, brut in corp_brut.items():
+        part = (brut / total_corp_brut * amort_corp_total) if total_corp_brut else 0
+        corp_net[k] = brut - part
+
+    avances_immo = _sum_range(balance, [RANGE_AVANCES_IMMO])
+    titres_participation = _sum_range(balance, [RANGE_TITRES_PARTICIPATION])
+    autres_immo_fin = _sum_range(balance, [RANGE_AUTRES_IMMO_FIN])
+
+    # --- Détail indicatif Capitaux propres ---
+    capitaux_detail = {k: -_sum_range(balance, rngs) for k, rngs in RANGES_CAPITAUX.items()}
+    dettes_financieres = -_sum_range(balance, [RANGE_DETTES_FIN])
+    dettes_location = -_sum_range(balance, [RANGE_DETTES_LOCATION])
+    provisions_rc = -_sum_range(balance, [RANGE_PROVISIONS_RC])
+
+    # --- Détail indicatif Passif circulant ---
+    fournisseurs = -_sum_range(balance, [RANGE_FOURNISSEURS])
+    avances_fourn = -_sum_range(balance, [RANGE_AVANCES_FOURN])
+    dettes_fisc_soc = -_sum_range(balance, [RANGE_DETTES_FISC_SOC])
+    autres_dettes = -_sum_range(balance, [RANGE_AUTRES_DETTES])
+
+    # --- Détail indicatif Actif circulant ---
+    avances_versees = _sum_range(balance, [RANGE_AVANCES_FOURN])
+    clients = _sum_range(balance, [RANGE_CLIENTS])
+
+    return {
+        "totaux": bilan_simple,
+        "actif_detail": {
+            **{k: {"brut": incorp_brut[k], "net": incorp_net[k]} for k in incorp_brut},
+            **{k: {"brut": corp_brut[k], "net": corp_net[k]} for k in corp_brut},
+            "AP": {"brut": avances_immo, "net": avances_immo},
+            "AR": {"brut": titres_participation, "net": titres_participation},
+            "AS": {"brut": autres_immo_fin, "net": autres_immo_fin},
+        },
+        "actif_circulant_detail": {
+            "BH": avances_versees, "BI": clients,
+        },
+        "passif_detail": {
+            **capitaux_detail,
+            "DA": dettes_financieres, "DB": dettes_location, "DC": provisions_rc,
+            "DJ": fournisseurs, "DH_avances": avances_fourn,
+            "DK": dettes_fisc_soc, "DM": autres_dettes,
+        },
+    }
+
+
+def compute_liasse_resultat(conn):
+    """Compte de résultat au format SYSCOHADA système normal (codes officiels)."""
+    balance = compute_balance(conn, only_with_movement=False)
+
+    def net_produit(codes):
+        d, c = _sum_accounts(balance, codes)
+        return c - d
+
+    def net_charge(codes):
+        d, c = _sum_accounts(balance, codes)
+        return d - c
+
+    ta = net_produit(["701000"])
+    ra = net_charge(["601000"])
+    xa = ta - ra  # marge commerciale (simplifiée, sans variation de stock marchandises isolée)
+
+    tb = net_produit(["702000"])
+    tc = net_produit(["705000", "706000"])
+    td = 0.0
+    xb = ta + tb + tc + td
+
+    stock_d, stock_c = _sum_accounts(balance, ["360000"])
+    te = stock_d - stock_c
+    th = net_produit(["758000"])
+    tg = net_produit(["710000"])
+
+    rc = net_charge(["602000"])
+    re = net_charge(["604000", "605000"])
+    rg = net_charge(["610000", "614000"])
+    rh = net_charge(["622000", "624000", "625000", "626000", "627000", "628000",
+                      "631000", "632000", "633000"])
+    ri = net_charge(["641000", "645000"])
+    rj = net_charge(["651000"])
+    xc = xb + (-ra) + te + tg + th + (-rc) + (-re) + (-rg) + (-rh) + (-ri) + (-rj)
+
+    rk = net_charge(["661000", "663000", "664000"])
+    xd = xc - rk
+
+    rl = net_charge(["681000", "691000"])
+    xe = xd - rl
+
+    tk = net_produit(["771000", "776000"])
+    rm = net_charge(["671000", "676000"])
+    xf = tk - rm
+    xg = xe + xf
+
+    xh = 0.0  # Résultat HAO — non tracé dans cette application
+    rq = 0.0  # Participation des travailleurs — non tracée
+    rs = 0.0  # Impôt sur le résultat — non tracé (IS à calculer/saisir séparément)
+    xi = xg + xh + rq + rs
+
+    return {
+        "TA": ta, "RA": ra, "XA": xa,
+        "TB": tb, "TC": tc, "TD": td, "XB": xb,
+        "TE": te, "TG": tg, "TH": th,
+        "RC": rc, "RE": re, "RG": rg, "RH": rh, "RI": ri, "RJ": rj, "XC": xc,
+        "RK": rk, "XD": xd,
+        "RL": rl, "XE": xe,
+        "TK": tk, "RM": rm, "XF": xf, "XG": xg,
+        "XH": xh, "RQ": rq, "RS": rs, "XI": xi,
+    }
+
+
+def compute_tft(conn, treso_ouverture=0.0):
     """Emplacement du fichier de données, à côté de l'exécutable."""
     base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
     folder = os.path.join(base, "SaisieComptable")
@@ -455,6 +632,295 @@ def compute_tft(conn, treso_ouverture=0.0):
         "variation": variation_totale,
         "cloture": cloture,
     }
+
+
+# ---------------------------------------------------------------------------
+# Export de la liasse fiscale (.xlsx), mise en page SYSCOHADA système normal
+# ---------------------------------------------------------------------------
+COMPANY_FIELDS = {
+    "societe_nom": "Dénomination sociale",
+    "societe_sigle": "Sigle usuel",
+    "societe_adresse": "Adresse",
+    "societe_ifu": "N° IFU du contribuable",
+    "societe_teledeclarant": "N° de télédéclarant (NES)",
+    "exercice_clos_le": "Exercice clos le (AAAA-MM-JJ)",
+}
+
+
+def get_company_info(conn):
+    return {k: conn.execute("SELECT value FROM settings WHERE key = ?", (k,)).fetchone()
+            for k in COMPANY_FIELDS}
+
+
+def get_company_value(conn, key, default=""):
+    row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+    return row["value"] if row else default
+
+
+def set_company_value(conn, key, value):
+    conn.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, value))
+    conn.commit()
+
+
+def export_liasse_fiscale(conn, path, stock_initial=0.0, treso_ouverture=0.0):
+    """Génère un classeur .xlsx : COUVERTURE, BILAN, RESULTAT, TFT
+    (mise en page et codes SYSCOHADA système normal)."""
+    import openpyxl
+    from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
+
+    wb = openpyxl.Workbook()
+
+    bold = Font(bold=True)
+    title_font = Font(bold=True, size=13)
+    header_fill = PatternFill("solid", fgColor="D9D9D9")
+    thin = Side(style="thin", color="999999")
+    border = Border(top=thin, bottom=thin, left=thin, right=thin)
+    money_fmt = "#,##0"
+
+    def company_row(ws, row=3):
+        info = {k: get_company_value(conn, k) for k in COMPANY_FIELDS}
+        ws.cell(row=row, column=1, value="Dénomination sociale :")
+        ws.cell(row=row, column=3, value=info["societe_nom"])
+        ws.cell(row=row + 1, column=1, value="Adresse :")
+        ws.cell(row=row + 1, column=3, value=info["societe_adresse"])
+        ws.cell(row=row + 2, column=1, value="N° IFU du contribuable :")
+        ws.cell(row=row + 2, column=3, value=info["societe_ifu"])
+        ws.cell(row=row + 2, column=6, value="Exercice clos le :")
+        ws.cell(row=row + 2, column=7, value=info["exercice_clos_le"])
+        ws.cell(row=row + 3, column=1, value="N° de télédéclarant (NES) :")
+        ws.cell(row=row + 3, column=3, value=info["societe_teledeclarant"])
+        for r in range(row, row + 4):
+            ws.cell(row=r, column=1).font = bold
+
+    # ---- COUVERTURE ----
+    ws = wb.active
+    ws.title = "COUVERTURE"
+    ws["A1"] = "ÉTATS FINANCIERS — SYSTÈME COMPTABLE OHADA (SYSCOHADA), SYSTÈME NORMAL"
+    ws["A1"].font = title_font
+    company_row(ws, row=3)
+    ws["A9"] = ("Généré automatiquement par l'application Saisie Comptable. Les totaux (AZ, BK, BT, BZ, "
+                "CP, DD, DP, DT, DZ) sont calculés directement depuis vos écritures. Le détail par ligne "
+                "(AE à AN, CA à CM, DA à DM) est une répartition indicative par plage de comptes — à faire "
+                "vérifier par un expert-comptable avant tout dépôt officiel auprès de la DGI.")
+    ws["A9"].alignment = Alignment(wrap_text=True)
+    ws.merge_cells("A9:H9")
+    ws.row_dimensions[9].height = 60
+    ws.column_dimensions["A"].width = 30
+    ws.column_dimensions["C"].width = 25
+
+    # ---- BILAN ----
+    liasse = compute_liasse_bilan(conn, stock_initial=stock_initial)
+    bt = liasse["totaux"]
+    ad_net = bt["actif"]["Immobilisations nettes"]
+    stocks_net = bt["actif"]["Stocks"]
+    creances_net = bt["actif"]["Créances et emplois assimilés"]
+    treso_actif_net = bt["actif"]["Trésorerie actif"]
+    total_actif = bt["total_actif"]
+
+    ws = wb.create_sheet("BILAN")
+    ws["A1"] = "BILAN — SYSTÈME NORMAL"
+    ws["A1"].font = title_font
+    company_row(ws, row=3)
+    headers_row = 8
+    ws.cell(row=headers_row, column=1, value="REF").font = bold
+    ws.cell(row=headers_row, column=2, value="ACTIF").font = bold
+    ws.cell(row=headers_row, column=3, value="BRUT").font = bold
+    ws.cell(row=headers_row, column=4, value="AMORT/DEPREC").font = bold
+    ws.cell(row=headers_row, column=5, value="NET").font = bold
+    ws.cell(row=headers_row, column=7, value="REF").font = bold
+    ws.cell(row=headers_row, column=8, value="PASSIF").font = bold
+    ws.cell(row=headers_row, column=9, value="NET").font = bold
+    for c in range(1, 10):
+        ws.cell(row=headers_row, column=c).fill = header_fill
+
+    ad = liasse["actif_detail"]
+    actif_lines = [
+        ("AE", "Frais de développement et de prospection", ad["AE"]),
+        ("AF", "Brevets, licences, logiciels et droits similaires", ad["AF"]),
+        ("AG", "Fonds commercial et droit au bail", ad["AG"]),
+        ("AH", "Autres immobilisations incorporelles", ad["AH"]),
+        ("AJ", "Terrains", ad["AJ"]),
+        ("AK", "Bâtiments", ad["AK"]),
+        ("AL", "Aménagements, agencements et installations", ad["AL"]),
+        ("AM", "Matériel, mobilier et actifs biologiques", ad["AM"]),
+        ("AN", "Matériel de transport", ad["AN"]),
+        ("AP", "Avances et acomptes versés sur immobilisations", ad["AP"]),
+        ("AR", "Titres de participation", ad["AR"]),
+        ("AS", "Autres immobilisations financières", ad["AS"]),
+    ]
+    ac = liasse["actif_circulant_detail"]
+    actif_circ_lines = [
+        ("BH", "Fournisseurs, avances versées", ac["BH"]),
+        ("BI", "Clients", ac["BI"]),
+    ]
+
+    pd_ = liasse["passif_detail"]
+    passif_lines = [
+        ("CA", "Capital", pd_["CA"]),
+        ("CD", "Primes liées au capital social", pd_["CD"]),
+        ("CF_CG", "Réserves", pd_["CF_CG"]),
+        ("CH", "Report à nouveau (+ ou -)", pd_["CH"]),
+        ("CJ", "Résultat net de l'exercice", bt["passif"]["Résultat net de l'exercice"]),
+        ("CL", "Subventions d'investissement", pd_["CL"]),
+        ("CM", "Provisions réglementées", pd_["CM"]),
+        ("CP", "TOTAL CAPITAUX PROPRES ET RESSOURCES ASSIMILEES", None),
+        ("DA", "Emprunts et dettes financières diverses", pd_["DA"]),
+        ("DB", "Dettes de location-acquisition", pd_["DB"]),
+        ("DC", "Provisions pour risques et charges", pd_["DC"]),
+        ("DD", "TOTAL DETTES FINANCIERES ET RESSOURCES ASSIMILEES", None),
+        ("DJ", "Fournisseurs d'exploitation", pd_["DJ"]),
+        ("DH", "Clients, avances reçues / Fournisseurs avances (détail)", pd_["DH_avances"]),
+        ("DK", "Dettes fiscales et sociales", pd_["DK"]),
+        ("DM", "Autres dettes", pd_["DM"]),
+    ]
+
+    r = headers_row + 1
+    for ref, label, val in actif_lines:
+        ws.cell(row=r, column=1, value=ref)
+        ws.cell(row=r, column=2, value=label)
+        ws.cell(row=r, column=5, value=round(val.get("net", val) if isinstance(val, dict) else val))
+        ws.cell(row=r, column=5).number_format = money_fmt
+        r += 1
+    ws.cell(row=r, column=1, value="AZ")
+    ws.cell(row=r, column=2, value="TOTAL ACTIF IMMOBILISE").font = bold
+    ws.cell(row=r, column=5, value=round(ad_net)).font = bold
+    ws.cell(row=r, column=5).number_format = money_fmt
+    r += 2
+    ws.cell(row=r, column=1, value="BB")
+    ws.cell(row=r, column=2, value="STOCKS ET ENCOURS")
+    ws.cell(row=r, column=5, value=round(stocks_net)).number_format = money_fmt
+    r += 1
+    for ref, label, val in actif_circ_lines:
+        ws.cell(row=r, column=1, value=ref)
+        ws.cell(row=r, column=2, value=label)
+        ws.cell(row=r, column=5, value=round(val)).number_format = money_fmt
+        r += 1
+    ws.cell(row=r, column=1, value="BK")
+    ws.cell(row=r, column=2, value="TOTAL ACTIF CIRCULANT").font = bold
+    ws.cell(row=r, column=5, value=round(stocks_net + creances_net)).font = bold
+    ws.cell(row=r, column=5).number_format = money_fmt
+    r += 2
+    ws.cell(row=r, column=1, value="BT")
+    ws.cell(row=r, column=2, value="TOTAL TRESORERIE-ACTIF").font = bold
+    ws.cell(row=r, column=5, value=round(treso_actif_net)).font = bold
+    ws.cell(row=r, column=5).number_format = money_fmt
+    r += 2
+    ws.cell(row=r, column=1, value="BZ")
+    ws.cell(row=r, column=2, value="TOTAL GENERAL ACTIF").font = bold
+    ws.cell(row=r, column=5, value=round(total_actif)).font = bold
+    ws.cell(row=r, column=5).number_format = money_fmt
+    last_actif_row = r
+
+    r2 = headers_row + 1
+    for ref, label, val in passif_lines:
+        ws.cell(row=r2, column=7, value=ref)
+        ws.cell(row=r2, column=8, value=label)
+        if val is not None:
+            ws.cell(row=r2, column=9, value=round(val)).number_format = money_fmt
+        else:
+            ws.cell(row=r2, column=8).font = bold
+        r2 += 1
+    total_passif = bt["total_passif"]
+    ws.cell(row=r2, column=7, value="DZ")
+    ws.cell(row=r2, column=8, value="TOTAL GENERAL PASSIF").font = bold
+    ws.cell(row=r2, column=9, value=round(total_passif)).font = bold
+    ws.cell(row=r2, column=9).number_format = money_fmt
+    r2 += 2
+    ws.cell(row=r2, column=7, value="Écart Actif - Passif :")
+    ws.cell(row=r2, column=9, value=round(total_actif - total_passif)).number_format = money_fmt
+
+    for col, w in zip("ABCDEFGHI", [6, 40, 14, 14, 14, 3, 6, 40, 16]):
+        ws.column_dimensions[col].width = w
+
+    # ---- RESULTAT ----
+    cr = compute_liasse_resultat(conn)
+    ws = wb.create_sheet("RESULTAT")
+    ws["A1"] = "COMPTE DE RÉSULTAT — SYSTÈME NORMAL"
+    ws["A1"].font = title_font
+    company_row(ws, row=3)
+    headers_row = 8
+    for c, h in zip((1, 2, 5), ("REF", "LIBELLES", "EXERCICE N")):
+        ws.cell(row=headers_row, column=c, value=h).font = bold
+        ws.cell(row=headers_row, column=c).fill = header_fill
+
+    resultat_lines = [
+        ("TA", "Ventes de marchandises", cr["TA"]),
+        ("RA", "Achats de marchandises", -cr["RA"]),
+        ("XA", "MARGE COMMERCIALE", cr["XA"]),
+        ("TB", "Ventes de produits fabriqués", cr["TB"]),
+        ("TC", "Travaux, services vendus", cr["TC"]),
+        ("TD", "Produits accessoires", cr["TD"]),
+        ("XB", "CHIFFRE D'AFFAIRES", cr["XB"]),
+        ("TE", "Production stockée (ou déstockage)", cr["TE"]),
+        ("TG", "Subventions d'exploitation", cr["TG"]),
+        ("TH", "Autres produits", cr["TH"]),
+        ("RC", "Achats de matières premières et fournitures liées", -cr["RC"]),
+        ("RE", "Autres achats", -cr["RE"]),
+        ("RG", "Transports", -cr["RG"]),
+        ("RH", "Services extérieurs", -cr["RH"]),
+        ("RI", "Impôts et taxes", -cr["RI"]),
+        ("RJ", "Autres charges", -cr["RJ"]),
+        ("XC", "VALEUR AJOUTEE", cr["XC"]),
+        ("RK", "Charges de personnel", -cr["RK"]),
+        ("XD", "EXCEDENT BRUT D'EXPLOITATION", cr["XD"]),
+        ("RL", "Dotations aux amortissements, provisions et dépréciations", -cr["RL"]),
+        ("XE", "RESULTAT D'EXPLOITATION", cr["XE"]),
+        ("TK", "Revenus financiers et assimilés", cr["TK"]),
+        ("RM", "Frais financiers et charges assimilées", -cr["RM"]),
+        ("XF", "RESULTAT FINANCIER", cr["XF"]),
+        ("XG", "RESULTAT DES ACTIVITES ORDINAIRES", cr["XG"]),
+        ("XH", "RESULTAT HORS ACTIVITES ORDINAIRES (non tracé)", cr["XH"]),
+        ("RQ", "Participation des travailleurs (non tracée)", cr["RQ"]),
+        ("RS", "Impôts sur le résultat (non tracé — IS à saisir séparément)", cr["RS"]),
+        ("XI", "RESULTAT NET", cr["XI"]),
+    ]
+    bold_refs = {"XA", "XB", "XC", "XD", "XE", "XF", "XG", "XI"}
+    r = headers_row + 1
+    for ref, label, val in resultat_lines:
+        ws.cell(row=r, column=1, value=ref)
+        ws.cell(row=r, column=2, value=label)
+        cell = ws.cell(row=r, column=5, value=round(val))
+        cell.number_format = money_fmt
+        if ref in bold_refs:
+            ws.cell(row=r, column=2).font = bold
+            cell.font = bold
+        r += 1
+    for col, w in zip("ABCDE", [6, 55, 3, 3, 16]):
+        ws.column_dimensions[col].width = w
+
+    # ---- TFT (simplifié, méthode directe) ----
+    tft = compute_tft(conn, treso_ouverture=treso_ouverture)
+    ws = wb.create_sheet("TFT")
+    ws["A1"] = "TABLEAU DES FLUX DE TRÉSORERIE — méthode directe simplifiée"
+    ws["A1"].font = title_font
+    ws["A2"] = ("Cette version simplifiée (encaissements/décaissements de trésorerie classés EXP/INV/FIN) "
+                "ne correspond PAS exactement au format officiel SYSCOHADA (méthode indirecte avec CAFG). "
+                "Elle donne une image de la trésorerie mais doit être retravaillée avec un expert-comptable "
+                "pour un dépôt officiel.")
+    ws["A2"].alignment = Alignment(wrap_text=True)
+    ws.merge_cells("A2:E2")
+    ws.row_dimensions[2].height = 45
+    company_row(ws, row=4)
+    tft_lines = [
+        ("Trésorerie d'ouverture", tft["ouverture"]),
+        ("Flux liés aux activités opérationnelles (EXP)", tft["exploitation"]),
+        ("Flux liés aux activités d'investissement (INV)", tft["investissement"]),
+        ("Flux liés aux activités de financement (FIN)", tft["financement"]),
+        ("Flux non classés (à coder)", tft["non_classes"]),
+        ("VARIATION NETTE DE TRESORERIE", tft["variation"]),
+        ("TRESORERIE DE CLOTURE", tft["cloture"]),
+    ]
+    r = 10
+    for label, val in tft_lines:
+        ws.cell(row=r, column=1, value=label)
+        cell = ws.cell(row=r, column=3, value=round(val))
+        cell.number_format = money_fmt
+        r += 1
+    ws.column_dimensions["A"].width = 45
+    ws.column_dimensions["C"].width = 16
+
+    wb.save(path)
+    return path
 
 
 if __name__ == "__main__":
