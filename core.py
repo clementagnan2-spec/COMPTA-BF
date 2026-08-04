@@ -219,7 +219,7 @@ def compute_liasse_resultat(conn):
     }
 
 
-def compute_tft(conn, treso_ouverture=0.0):
+def default_db_path():
     """Emplacement du fichier de données, à côté de l'exécutable."""
     base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
     folder = os.path.join(base, "SaisieComptable")
