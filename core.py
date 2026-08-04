@@ -8,7 +8,7 @@ import json
 import os
 import sys
 import sqlite3
-from datetime import date
+from datetime import date, datetime
 
 
 def _resource_dir():
@@ -406,6 +406,137 @@ def list_entries(conn, order_by="date"):
 def totals_debit_credit(conn):
     row = conn.execute("SELECT COALESCE(SUM(debit),0) d, COALESCE(SUM(credit),0) c FROM entries").fetchone()
     return row["d"], row["c"]
+
+
+# ---------------------------------------------------------------------------
+# Import massif d'écritures depuis un fichier .xlsx
+# ---------------------------------------------------------------------------
+IMPORT_COLUMNS = [
+    ("date", "Date", ["date", "date piece", "date pièce"]),
+    ("piece", "N° Pièce", ["pièce", "piece", "n° pièce", "n° piece", "numero piece", "num piece"]),
+    ("journal", "Journal", ["journal"]),
+    ("compte", "N° Compte", ["compte", "n° compte", "numero compte", "num compte"]),
+    ("tiers", "Tiers", ["tiers"]),
+    ("libelle", "Libellé", ["libellé", "libelle"]),
+    ("debit", "Débit", ["débit", "debit"]),
+    ("credit", "Crédit", ["crédit", "credit"]),
+    ("flux_code", "Code flux", ["code flux", "flux", "code flux trésorerie"]),
+    ("analytic_code", "Code analytique", ["code analytique", "analytique"]),
+]
+
+
+def export_import_template(path):
+    """Génère un modèle .xlsx vierge (bon en-têtes) pour préparer un import massif."""
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Ecritures"
+    header_font = Font(bold=True, color="FFFFFFFF")
+    header_fill = PatternFill("solid", fgColor="1F4E78")
+    for i, (_, label, _) in enumerate(IMPORT_COLUMNS, start=1):
+        c = ws.cell(row=1, column=i, value=label)
+        c.font = header_font
+        c.fill = header_fill
+    example = ["2024-01-15", "FA-0001", "AC", "601000", "Fournisseur X", "Achat marchandises",
+               100000, 0, "", ""]
+    for i, val in enumerate(example, start=1):
+        ws.cell(row=2, column=i, value=val)
+    example2 = ["2024-01-15", "FA-0001", "AC", "401000", "Fournisseur X", "Facture FA-0001",
+                0, 100000, "", ""]
+    for i, val in enumerate(example2, start=1):
+        ws.cell(row=3, column=i, value=val)
+    for i, w in enumerate([12, 14, 10, 12, 20, 30, 14, 14, 14, 16], start=1):
+        ws.column_dimensions[chr(64 + i)].width = w
+    wb.save(path)
+    return path
+
+
+def import_entries_from_xlsx(conn, path):
+    """Importe en masse des écritures depuis un .xlsx. Reconnaît les en-têtes en
+    français (Date, N° Compte, Débit, Crédit, etc. — voir IMPORT_COLUMNS) quel que
+    soit leur ordre. Retourne (nb_importées, liste_avertissements)."""
+    import openpyxl
+
+    wb = openpyxl.load_workbook(path, data_only=True)
+    ws = wb.active
+
+    header_cells = next(ws.iter_rows(min_row=1, max_row=1))
+    headers = [str(c.value).strip().lower() if c.value is not None else "" for c in header_cells]
+
+    colmap = {}
+    for key, _, aliases in IMPORT_COLUMNS:
+        for i, h in enumerate(headers):
+            if h in aliases:
+                colmap[key] = i
+                break
+
+    if "date" not in colmap or "compte" not in colmap:
+        raise ValueError(
+            "Colonnes obligatoires introuvables dans le fichier (« Date » et « N° Compte »). "
+            "Utilisez le bouton « Télécharger un modèle » pour obtenir les bons en-têtes."
+        )
+
+    valid_accounts = {r["code"] for r in conn.execute("SELECT code FROM accounts")}
+    imported = 0
+    warnings = []
+
+    def get(values, key):
+        idx = colmap.get(key)
+        if idx is None or idx >= len(values):
+            return None
+        return values[idx]
+
+    for row_idx, row in enumerate(ws.iter_rows(min_row=2), start=2):
+        values = [c.value for c in row]
+        if all(v in (None, "") for v in values):
+            continue
+
+        date_val = get(values, "date")
+        if date_val in (None, ""):
+            warnings.append(f"Ligne {row_idx} : date manquante, ligne ignorée.")
+            continue
+        if isinstance(date_val, datetime):
+            date_str = date_val.strftime("%Y-%m-%d")
+        elif isinstance(date_val, date):
+            date_str = date_val.strftime("%Y-%m-%d")
+        else:
+            date_str = str(date_val).strip()
+
+        compte = get(values, "compte")
+        compte = "" if compte is None else str(compte).strip()
+        if compte.endswith(".0") and compte.replace(".0", "").isdigit():
+            compte = compte[:-2]
+        if not compte:
+            warnings.append(f"Ligne {row_idx} : N° Compte manquant, ligne ignorée.")
+            continue
+        if compte not in valid_accounts:
+            warnings.append(f"Ligne {row_idx} : compte '{compte}' absent du plan comptable (importée quand même).")
+
+        def to_float(v, label):
+            if v in (None, ""):
+                return 0.0
+            try:
+                return float(v)
+            except (TypeError, ValueError):
+                warnings.append(f"Ligne {row_idx} : {label} invalide ('{v}'), remplacé par 0.")
+                return 0.0
+
+        debit = to_float(get(values, "debit"), "Débit")
+        credit = to_float(get(values, "credit"), "Crédit")
+        piece = get(values, "piece") or ""
+        journal = get(values, "journal") or ""
+        tiers = get(values, "tiers") or ""
+        libelle = get(values, "libelle") or ""
+        flux_code = get(values, "flux_code") or ""
+        analytic_code = get(values, "analytic_code") or ""
+
+        add_entry(conn, date_str, str(piece), str(journal), compte, str(tiers), str(libelle),
+                  debit, credit, str(flux_code), str(analytic_code))
+        imported += 1
+
+    return imported, warnings
 
 
 # ---------------------------------------------------------------------------

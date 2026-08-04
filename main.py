@@ -108,6 +108,16 @@ class SaisieTab(ttk.Frame):
         ttk.Button(btns, text="Supprimer", command=self.delete_entry).pack(side="left", padx=2)
         ttk.Button(btns, text="Effacer le formulaire", command=self.clear_form).pack(side="left", padx=2)
 
+        import_bar = ttk.Frame(self)
+        import_bar.pack(fill="x", padx=8, pady=(0, 4))
+        ttk.Button(import_bar, text="Importer des écritures (.xlsx)", command=self.import_xlsx).pack(side="left", padx=2)
+        ttk.Button(import_bar, text="Télécharger un modèle (.xlsx)", command=self.download_template).pack(side="left", padx=2)
+        ttk.Label(import_bar, text=(
+            "Pour les volumes importants : préparez un fichier avec les colonnes Date, N° Pièce, "
+            "Journal, N° Compte, Tiers, Libellé, Débit, Crédit, Code flux, Code analytique (l'ordre "
+            "n'a pas d'importance), puis importez-le d'un coup."
+        ), foreground="#595959", wraplength=850).pack(side="left", padx=10)
+
         cols = ("id", "date", "piece", "journal", "compte", "libelle_compte",
                 "tiers", "libelle", "debit", "credit", "flux", "analytique")
         self.tree = ttk.Treeview(self, columns=cols, show="headings", height=15)
@@ -205,6 +215,45 @@ class SaisieTab(ttk.Frame):
         for k, v in self.vars.items():
             v.set("" if k != "Date (AAAA-MM-JJ)" else str(date.today()))
         self.account_label_var.set("")
+
+    def download_template(self):
+        path = filedialog.asksaveasfilename(
+            defaultextension=".xlsx",
+            filetypes=[("Classeur Excel", "*.xlsx")],
+            initialfile="Modele_import_ecritures.xlsx",
+            title="Enregistrer le modèle d'import",
+        )
+        if not path:
+            return
+        try:
+            core.export_import_template(path)
+        except Exception as exc:
+            messagebox.showerror("Erreur", f"Échec de la création du modèle : {exc}")
+            return
+        messagebox.showinfo("Modèle créé", f"Modèle enregistré :\n{path}")
+
+    def import_xlsx(self):
+        path = filedialog.askopenfilename(
+            filetypes=[("Classeur Excel", "*.xlsx")],
+            title="Importer des écritures",
+        )
+        if not path:
+            return
+        try:
+            imported, warnings = core.import_entries_from_xlsx(self.conn, path)
+        except Exception as exc:
+            messagebox.showerror("Erreur", f"Échec de l'import : {exc}")
+            return
+        self.refresh()
+        if warnings:
+            preview = "\n".join(warnings[:25])
+            more = f"\n... et {len(warnings) - 25} autre(s)." if len(warnings) > 25 else ""
+            messagebox.showwarning(
+                "Import terminé avec avertissements",
+                f"{imported} écriture(s) importée(s).\n\nAvertissements :\n{preview}{more}",
+            )
+        else:
+            messagebox.showinfo("Import terminé", f"{imported} écriture(s) importée(s) avec succès.")
 
     def _on_select(self, event=None):
         sel = self.tree.selection()

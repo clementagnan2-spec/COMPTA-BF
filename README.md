@@ -53,6 +53,20 @@ git push -u origin main
   **Journal** propose AC/VE/OD/BQ/CA (modifiable librement), et le
   **Code flux** est une liste fermée EXP/INV/FIN pour éviter les fautes de
   frappe. Le libellé du compte s'affiche automatiquement pendant la saisie.
+
+  **Import massif (.xlsx)** *(nouveau)* : pour les volumes d'écritures
+  importants, deux boutons sont disponibles au-dessus du tableau :
+  - **« Télécharger un modèle (.xlsx) »** : génère un fichier vierge avec
+    les bons en-têtes (Date, N° Pièce, Journal, N° Compte, Tiers, Libellé,
+    Débit, Crédit, Code flux, Code analytique) et deux lignes d'exemple.
+  - **« Importer des écritures (.xlsx) »** : sélectionnez votre fichier
+    préparé (l'ordre des colonnes n'a pas d'importance, les en-têtes sont
+    reconnus automatiquement) — toutes les lignes sont ajoutées à la
+    Saisie en une fois. Les dates peuvent être au format texte (AAAA-MM-JJ)
+    ou en dates Excel natives. Les lignes vides sont ignorées ; un compte
+    absent du plan comptable ou un montant non numérique déclenche un
+    avertissement (la ligne est quand même importée, avec le montant
+    invalide remplacé par 0) plutôt que de faire échouer tout l'import.
 - **Balance** : synthèse Débit/Crédit/Solde par compte, actualisée à la volée.
 - **Compte de résultat** et **Bilan** : calculés automatiquement selon la
   même logique que le classeur Excel (mêmes regroupements de comptes).
