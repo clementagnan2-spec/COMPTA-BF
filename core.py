@@ -255,7 +255,10 @@ def init_db(conn):
             debit REAL NOT NULL DEFAULT 0,
             credit REAL NOT NULL DEFAULT 0,
             flux_code TEXT,
-            analytic_code TEXT
+            analytic_code TEXT,
+            budget_code TEXT,
+            donor_code TEXT,
+            quantite REAL NOT NULL DEFAULT 0
         )
     """)
     conn.execute("""
@@ -281,6 +284,12 @@ def _migrate(conn):
     cols = [r["name"] for r in conn.execute("PRAGMA table_info(entries)")]
     if "analytic_code" not in cols:
         conn.execute("ALTER TABLE entries ADD COLUMN analytic_code TEXT")
+    if "budget_code" not in cols:
+        conn.execute("ALTER TABLE entries ADD COLUMN budget_code TEXT")
+    if "donor_code" not in cols:
+        conn.execute("ALTER TABLE entries ADD COLUMN donor_code TEXT")
+    if "quantite" not in cols:
+        conn.execute("ALTER TABLE entries ADD COLUMN quantite REAL NOT NULL DEFAULT 0")
     # Migre l'ancien mécanisme "stock_initial_<compte>" (settings) vers opening_balances
     old_rows = conn.execute("SELECT key, value FROM settings WHERE key LIKE 'stock_initial_%'").fetchall()
     for row in old_rows:
@@ -400,13 +409,13 @@ def get_account_label(conn, code):
 # Écritures (Saisie)
 # ---------------------------------------------------------------------------
 def add_entry(conn, date_str, piece, journal, compte, tiers, libelle, debit, credit,
-              flux_code="", analytic_code=""):
+              flux_code="", analytic_code="", budget_code="", donor_code="", quantite=0):
     conn.execute(
         """INSERT INTO entries (date, piece, journal, compte, tiers, libelle, debit, credit,
-                                 flux_code, analytic_code)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                                 flux_code, analytic_code, budget_code, donor_code, quantite)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (date_str, piece, journal, compte, tiers, libelle, debit or 0, credit or 0,
-         flux_code, analytic_code),
+         flux_code, analytic_code, budget_code, donor_code, quantite or 0),
     )
     conn.commit()
 
@@ -446,8 +455,10 @@ IMPORT_COLUMNS = [
     ("libelle", "Libellé", ["libellé", "libelle"]),
     ("debit", "Débit", ["débit", "debit"]),
     ("credit", "Crédit", ["crédit", "credit"]),
-    ("flux_code", "Code flux", ["code flux", "flux", "code flux trésorerie"]),
+    ("quantite", "Quantité", ["quantité", "quantite", "qté", "qte"]),
     ("analytic_code", "Code analytique", ["code analytique", "analytique"]),
+    ("budget_code", "Code budgétaire", ["code budgétaire", "code budgetaire", "budget"]),
+    ("donor_code", "Code bailleur", ["code bailleur", "bailleur"]),
 ]
 
 
@@ -466,14 +477,14 @@ def export_import_template(path):
         c.font = header_font
         c.fill = header_fill
     example = ["15/01/2024", "FA-0001", "AC", "601000", "Fournisseur X", "Achat marchandises",
-               100000, 0, "", ""]
+               100000, 0, 10, "", "", ""]
     for i, val in enumerate(example, start=1):
         ws.cell(row=2, column=i, value=val)
     example2 = ["15/01/2024", "FA-0001", "AC", "401000", "Fournisseur X", "Facture FA-0001",
-                0, 100000, "", ""]
+                0, 100000, 0, "", "", ""]
     for i, val in enumerate(example2, start=1):
         ws.cell(row=3, column=i, value=val)
-    for i, w in enumerate([12, 14, 10, 12, 20, 30, 14, 14, 14, 16], start=1):
+    for i, w in enumerate([12, 14, 10, 12, 20, 30, 14, 14, 10, 16, 16, 14], start=1):
         ws.column_dimensions[chr(64 + i)].width = w
     wb.save(path)
     return path
@@ -551,15 +562,17 @@ def import_entries_from_xlsx(conn, path):
 
         debit = to_float(get(values, "debit"), "Débit")
         credit = to_float(get(values, "credit"), "Crédit")
+        quantite = to_float(get(values, "quantite"), "Quantité")
         piece = get(values, "piece") or ""
         journal = get(values, "journal") or ""
         tiers = get(values, "tiers") or ""
         libelle = get(values, "libelle") or ""
-        flux_code = get(values, "flux_code") or ""
         analytic_code = get(values, "analytic_code") or ""
+        budget_code = get(values, "budget_code") or ""
+        donor_code = get(values, "donor_code") or ""
 
         add_entry(conn, date_str, str(piece), str(journal), compte, str(tiers), str(libelle),
-                  debit, credit, str(flux_code), str(analytic_code))
+                  debit, credit, "", str(analytic_code), str(budget_code), str(donor_code), quantite)
         imported += 1
 
     return imported, warnings
@@ -759,12 +772,29 @@ def compute_stocks(conn):
                                 "solde_ouverture": 0.0})
         initial = get_opening_balance(conn, code)
         entrees, sorties = b["debit"], b["credit"]
+        qte_row = conn.execute(
+            """SELECT COALESCE(SUM(CASE WHEN debit > 0 THEN quantite ELSE 0 END), 0) AS qte_in,
+                      COALESCE(SUM(CASE WHEN credit > 0 THEN quantite ELSE 0 END), 0) AS qte_out
+               FROM entries WHERE compte = ?""",
+            (code,),
+        ).fetchone()
+        qte_entrees, qte_sorties = qte_row["qte_in"], qte_row["qte_out"]
+        qte_initiale = get_setting(conn, f"stock_qte_initiale_{code}", 0.0)
+        qte_finale = qte_initiale + qte_entrees - qte_sorties
+        stock_final = initial + entrees - sorties
+        cout_unitaire_moyen = (stock_final / qte_finale) if qte_finale else None
         result.append({
             "code": code, "label": b["label"], "stock_initial": initial,
             "entrees": entrees, "sorties": sorties,
-            "stock_final": initial + entrees - sorties,
+            "stock_final": stock_final,
+            "qte_initiale": qte_initiale, "qte_entrees": qte_entrees, "qte_sorties": qte_sorties,
+            "qte_finale": qte_finale, "cout_unitaire_moyen": cout_unitaire_moyen,
         })
     return result
+
+
+def set_stock_qte_initiale(conn, code, value):
+    set_setting(conn, f"stock_qte_initiale_{code}", value)
 
 
 def set_stock_initial(conn, code, value):

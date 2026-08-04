@@ -130,8 +130,8 @@ class SaisieTab(ttk.Frame):
         form.pack(fill="x", padx=8, pady=8)
 
         labels = ["Date (JJ/MM/AAAA)", "N° Pièce", "Journal", "N° Compte",
-                  "Tiers", "Libellé", "Débit", "Crédit", "Code flux (EXP/INV/FIN)",
-                  "Code analytique (ex: AN-FAB)"]
+                  "Tiers", "Libellé", "Débit", "Crédit",
+                  "Code analytique (ex: AN-FAB)", "Code budgétaire", "Code bailleur", "Quantité"]
         self.vars = {k: tk.StringVar() for k in labels}
         self.vars["Date (JJ/MM/AAAA)"].set(date.today().strftime("%d/%m/%Y"))
 
@@ -147,10 +147,6 @@ class SaisieTab(ttk.Frame):
             elif lbl == "Journal":
                 widget = ttk.Combobox(form, textvariable=self.vars[lbl], width=22,
                                        values=["AC", "VE", "OD", "BQ", "CA"])
-                widget.grid(row=r * 2 + 1, column=c, sticky="we", padx=4, pady=(0, 4))
-            elif lbl == "Code flux (EXP/INV/FIN)":
-                widget = ttk.Combobox(form, textvariable=self.vars[lbl], width=22,
-                                       values=["", "FLUX-EXP", "FLUX-INV", "FLUX-FIN"], state="readonly")
                 widget.grid(row=r * 2 + 1, column=c, sticky="we", padx=4, pady=(0, 4))
             else:
                 widget = ttk.Entry(form, textvariable=self.vars[lbl], width=24)
@@ -173,16 +169,16 @@ class SaisieTab(ttk.Frame):
         ttk.Button(import_bar, text="Télécharger un modèle (.xlsx)", command=self.download_template).pack(side="left", padx=2)
         ttk.Label(import_bar, text=(
             "Pour les volumes importants : préparez un fichier avec les colonnes Date, N° Pièce, "
-            "Journal, N° Compte, Tiers, Libellé, Débit, Crédit, Code flux, Code analytique (l'ordre "
-            "n'a pas d'importance), puis importez-le d'un coup."
+            "Journal, N° Compte, Tiers, Libellé, Débit, Crédit, Quantité, Code analytique, Code "
+            "budgétaire, Code bailleur (l'ordre n'a pas d'importance), puis importez-le d'un coup."
         ), foreground="#595959", wraplength=850).pack(side="left", padx=10)
 
         cols = ("id", "date", "piece", "journal", "compte", "libelle_compte",
-                "tiers", "libelle", "debit", "credit", "flux", "analytique")
+                "tiers", "libelle", "debit", "credit", "quantite", "analytique", "budget", "bailleur")
         self.tree = ttk.Treeview(self, columns=cols, show="headings", height=15)
         headers = ["ID", "Date", "Pièce", "Journal", "Compte", "Libellé du compte",
-                   "Tiers", "Libellé écriture", "Débit", "Crédit", "Flux", "Analytique"]
-        widths = [40, 90, 80, 60, 70, 200, 110, 200, 80, 80, 70, 90]
+                   "Tiers", "Libellé écriture", "Débit", "Crédit", "Qté", "Analytique", "Budget", "Bailleur"]
+        widths = [40, 90, 80, 60, 70, 190, 100, 170, 80, 80, 60, 90, 90, 90]
         for c, h, w in zip(cols, headers, widths):
             self.tree.heading(c, text=h)
             self.tree.column(c, width=w, anchor="w")
@@ -224,8 +220,9 @@ class SaisieTab(ttk.Frame):
         try:
             debit = float(self.vars["Débit"].get() or 0)
             credit = float(self.vars["Crédit"].get() or 0)
+            quantite = float(self.vars["Quantité"].get() or 0)
         except ValueError:
-            messagebox.showerror("Erreur", "Débit et Crédit doivent être des nombres.")
+            messagebox.showerror("Erreur", "Débit, Crédit et Quantité doivent être des nombres.")
             return None
         return dict(
             date_str=core.to_iso_date(self.vars["Date (JJ/MM/AAAA)"].get().strip()),
@@ -236,8 +233,10 @@ class SaisieTab(ttk.Frame):
             libelle=self.vars["Libellé"].get().strip(),
             debit=debit,
             credit=credit,
-            flux_code=self.vars["Code flux (EXP/INV/FIN)"].get().strip(),
             analytic_code=self.vars["Code analytique (ex: AN-FAB)"].get().strip(),
+            budget_code=self.vars["Code budgétaire"].get().strip(),
+            donor_code=self.vars["Code bailleur"].get().strip(),
+            quantite=quantite,
         )
 
     def add_entry(self):
@@ -328,8 +327,10 @@ class SaisieTab(ttk.Frame):
         self.vars["Libellé"].set(values[7])
         self.vars["Débit"].set(values[8])
         self.vars["Crédit"].set(values[9])
-        self.vars["Code flux (EXP/INV/FIN)"].set(values[10])
+        self.vars["Quantité"].set(values[10])
         self.vars["Code analytique (ex: AN-FAB)"].set(values[11])
+        self.vars["Code budgétaire"].set(values[12])
+        self.vars["Code bailleur"].set(values[13])
         self._show_account_label()
 
     def refresh(self):
@@ -344,8 +345,10 @@ class SaisieTab(ttk.Frame):
                 e["tiers"] or "", e["libelle"] or "",
                 f"{e['debit']:.2f}" if e["debit"] else "",
                 f"{e['credit']:.2f}" if e["credit"] else "",
-                e["flux_code"] or "",
+                f"{e['quantite']:g}" if e["quantite"] else "",
                 e["analytic_code"] or "",
+                e["budget_code"] or "",
+                e["donor_code"] or "",
             ))
             total_d += e["debit"]
             total_c += e["credit"]
@@ -590,20 +593,30 @@ class StocksTab(ttk.Frame):
     def __init__(self, parent, conn):
         super().__init__(parent)
         self.conn = conn
-        ttk.Label(self, text="Stock initial : cliquez une ligne, modifiez la valeur puis « Enregistrer ».",
-                  foreground="#595959").pack(anchor="w", padx=8, pady=(8, 0))
+        ttk.Label(self, text=(
+            "Stock initial (valeur ou quantité) : cliquez une ligne, modifiez la valeur puis "
+            "« Enregistrer ». La quantité de mouvement provient du champ « Quantité » saisi sur "
+            "chaque écriture (onglet Saisie) — elle permet de calculer un coût unitaire moyen pour "
+            "la valorisation des stocks."
+        ), foreground="#595959", wraplength=1000).pack(anchor="w", padx=8, pady=(8, 0))
 
         edit_bar = ttk.Frame(self)
         edit_bar.pack(fill="x", padx=8, pady=4)
-        ttk.Label(edit_bar, text="Stock initial du compte sélectionné :").pack(side="left")
+        ttk.Label(edit_bar, text="Stock initial (valeur) du compte sélectionné :").pack(side="left")
         self.initial_var = tk.StringVar()
         ttk.Entry(edit_bar, textvariable=self.initial_var, width=14).pack(side="left", padx=4)
-        ttk.Button(edit_bar, text="Enregistrer", command=self.save_initial).pack(side="left", padx=4)
+        ttk.Button(edit_bar, text="Enregistrer la valeur", command=self.save_initial).pack(side="left", padx=4)
+        ttk.Label(edit_bar, text="Quantité initiale :").pack(side="left", padx=(16, 0))
+        self.qte_initial_var = tk.StringVar()
+        ttk.Entry(edit_bar, textvariable=self.qte_initial_var, width=14).pack(side="left", padx=4)
+        ttk.Button(edit_bar, text="Enregistrer la quantité", command=self.save_qte_initial).pack(side="left", padx=4)
 
-        cols = ("code", "label", "initial", "entrees", "sorties", "final")
+        cols = ("code", "label", "initial", "entrees", "sorties", "final",
+                "qte_initiale", "qte_entrees", "qte_sorties", "qte_finale", "cump")
         self.tree = ttk.Treeview(self, columns=cols, show="headings")
-        headers = ["N° Compte", "Libellé", "Stock initial", "Entrées (Débit)", "Sorties (Crédit)", "Stock final"]
-        widths = [90, 260, 110, 120, 120, 110]
+        headers = ["N° Compte", "Libellé", "Stock initial", "Entrées (Débit)", "Sorties (Crédit)", "Stock final",
+                   "Qté initiale", "Qté entrées", "Qté sorties", "Qté finale", "Coût unit. moyen"]
+        widths = [90, 190, 100, 100, 100, 100, 80, 80, 80, 80, 110]
         for c, h, w in zip(cols, headers, widths):
             self.tree.heading(c, text=h)
             self.tree.column(c, width=w, anchor="w")
@@ -619,6 +632,7 @@ class StocksTab(ttk.Frame):
         values = self.tree.item(sel[0], "values")
         self.selected_code = values[0]
         self.initial_var.set(values[2])
+        self.qte_initial_var.set(values[6])
 
     def save_initial(self):
         if not self.selected_code:
@@ -632,13 +646,28 @@ class StocksTab(ttk.Frame):
         core.set_stock_initial(self.conn, self.selected_code, value)
         self.refresh()
 
+    def save_qte_initial(self):
+        if not self.selected_code:
+            messagebox.showinfo("Info", "Sélectionnez d'abord un compte de stock dans le tableau.")
+            return
+        try:
+            value = float(self.qte_initial_var.get() or 0)
+        except ValueError:
+            messagebox.showerror("Erreur", "La quantité initiale doit être un nombre.")
+            return
+        core.set_stock_qte_initiale(self.conn, self.selected_code, value)
+        self.refresh()
+
     def refresh(self):
         for row in self.tree.get_children():
             self.tree.delete(row)
         for s in core.compute_stocks(self.conn):
+            cump = f"{s['cout_unitaire_moyen']:,.2f}" if s["cout_unitaire_moyen"] is not None else "—"
             self.tree.insert("", "end", values=(
                 s["code"], s["label"], f"{s['stock_initial']:,.2f}",
                 f"{s['entrees']:,.2f}", f"{s['sorties']:,.2f}", f"{s['stock_final']:,.2f}",
+                f"{s['qte_initiale']:g}", f"{s['qte_entrees']:g}", f"{s['qte_sorties']:g}",
+                f"{s['qte_finale']:g}", cump,
             ))
 
 

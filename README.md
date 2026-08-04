@@ -101,6 +101,27 @@ principaux (en gras) :
 Cliquer sur un menu ouvre la liste de ses pages ; cliquer sur une page
 l'affiche dans la fenêtre (un seul panneau à la fois).
 
+### Saisie : nouveaux champs (mise à jour)
+
+Le champ « Code flux » a été retiré du formulaire de Saisie. À la place,
+chaque écriture propose désormais : **Code analytique**, **Code
+budgétaire**, **Code bailleur** (texte libre, pour le suivi par projet/
+bailleur de fonds) et **Quantité** (pour la valorisation des stocks — voir
+ci-dessous). Le tableau et l'import massif (.xlsx) ont été mis à jour en
+conséquence.
+
+⚠️ Le TFT (Tableau des flux de trésorerie) utilisait le Code flux pour
+classer les mouvements de trésorerie en EXP/INV/FIN. Ce champ n'étant plus
+saisissable, les nouveaux mouvements apparaîtront tous en « Flux non
+classés ». Dites-moi si vous voulez qu'on prévoie un autre moyen de les
+classer.
+
+**Stocks** (mise à jour) : suivi désormais en **valeur ET en quantité**.
+Renseignez la quantité sur chaque écriture touchant un compte de stock
+(Saisie), et une quantité initiale (bouton dédié dans l'onglet Stocks) —
+l'application calcule alors le **coût unitaire moyen** (valeur du stock
+final / quantité finale) pour chaque compte.
+
 ### Ce qui est pleinement fonctionnel
 
 Saisie, Soldes d'ouverture, Stocks (partagé entre Matières premières et
