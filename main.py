@@ -1009,6 +1009,22 @@ class StocksTab(ttk.Frame):
     def __init__(self, parent, conn):
         super().__init__(parent)
         self.conn = conn
+        inner = ttk.Notebook(self)
+        inner.pack(fill="both", expand=True)
+        self.synthese_tab = StocksSyntheseTab(inner, conn)
+        self.mouvements_tab = StocksMouvementsTab(inner, conn)
+        inner.add(self.synthese_tab, text="Synthèse par compte")
+        inner.add(self.mouvements_tab, text="Mouvements comptables (classe 3)")
+
+    def refresh(self):
+        self.synthese_tab.refresh()
+        self.mouvements_tab.refresh()
+
+
+class StocksSyntheseTab(ttk.Frame):
+    def __init__(self, parent, conn):
+        super().__init__(parent)
+        self.conn = conn
         ttk.Label(self, text=(
             "Stock initial (valeur ou quantité) : cliquez une ligne, modifiez la valeur puis "
             "« Enregistrer ». La quantité de mouvement provient du champ « Quantité » saisi sur "
@@ -1085,6 +1101,68 @@ class StocksTab(ttk.Frame):
                 f"{s['qte_initiale']:g}", f"{s['qte_entrees']:g}", f"{s['qte_sorties']:g}",
                 f"{s['qte_finale']:g}", cump,
             ))
+
+
+class StocksMouvementsTab(ttk.Frame):
+    """Détail de toutes les écritures comptables sur les comptes de stock
+    (classe 3), avec leur origine : générées automatiquement par la
+    Facturation (ventes) ou les Factures frs (achats), ou saisies
+    manuellement dans l'onglet Saisie."""
+
+    def __init__(self, parent, conn):
+        super().__init__(parent)
+        self.conn = conn
+        ttk.Label(self, text=(
+            "Tous les mouvements comptables des comptes de stock (310000, 320000, 331000, 360000) "
+            "de l'exercice en cours, y compris ceux générés automatiquement par la validation d'une "
+            "facture de vente (Commerce → Facturation) ou d'une facture d'achat (Engagements-projets "
+            "→ Factures frs)."
+        ), foreground="#595959", wraplength=1050).pack(anchor="w", padx=8, pady=(8, 4))
+
+        filt = ttk.Frame(self)
+        filt.pack(fill="x", padx=8, pady=4)
+        ttk.Label(filt, text="Filtrer par origine :").pack(side="left")
+        self.origine_var = tk.StringVar(value="Toutes")
+        ttk.Combobox(filt, textvariable=self.origine_var, width=18, state="readonly",
+                     values=["Toutes", "Facturation", "Facture frs", "Saisie manuelle"]).pack(side="left", padx=4)
+        ttk.Button(filt, text="Filtrer", command=self.refresh).pack(side="left", padx=8)
+
+        cols = ("date", "piece", "compte", "compte_label", "libelle", "debit", "credit", "quantite",
+                "qte_cumulee", "valeur_cumulee", "origine")
+        self.tree = ttk.Treeview(self, columns=cols, show="headings")
+        headers = ["Date", "Pièce", "Compte", "Libellé du compte", "Libellé écriture",
+                   "Débit (valeur)", "Crédit (valeur)", "Qté mvt", "Qté cumulée", "Valeur cumulée", "Origine"]
+        widths = [90, 80, 80, 150, 190, 90, 90, 70, 90, 100, 110]
+        for c, h, w in zip(cols, headers, widths):
+            self.tree.heading(c, text=h)
+            self.tree.column(c, width=w, anchor="w")
+        self.tree.tag_configure("auto", foreground="#1F4E78")
+        self.tree.pack(fill="both", expand=True, padx=8, pady=8)
+
+        self.totals_var = tk.StringVar()
+        ttk.Label(self, textvariable=self.totals_var, font=("Segoe UI", 10, "bold")).pack(anchor="w", padx=8, pady=(0, 8))
+        self.refresh()
+
+    def refresh(self):
+        for row in self.tree.get_children():
+            self.tree.delete(row)
+        mouvements = core.compute_mouvements_stocks(self.conn)
+        filtre = self.origine_var.get()
+        total_d = total_c = 0.0
+        for m in mouvements:
+            if filtre != "Toutes" and m["origine"] != filtre:
+                continue
+            tags = ("auto",) if m["origine"] != "Saisie manuelle" else ()
+            self.tree.insert("", "end", tags=tags, values=(
+                core.to_display_date(m["date"]), m["piece"] or "", m["compte"], m["compte_label"],
+                m["libelle"] or "", f"{m['debit']:,.2f}" if m["debit"] else "",
+                f"{m['credit']:,.2f}" if m["credit"] else "", f"{m['quantite']:g}" if m["quantite"] else "",
+                f"{m['qte_cumulee']:g}", f"{m['valeur_cumulee']:,.2f}",
+                m["origine"],
+            ))
+            total_d += m["debit"]
+            total_c += m["credit"]
+        self.totals_var.set(f"TOTAL — Débit : {total_d:,.2f}   Crédit : {total_c:,.2f}")
 
 
 class CoutsFabricationPeriodeTab(ttk.Frame):

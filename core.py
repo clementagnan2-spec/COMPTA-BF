@@ -1784,6 +1784,44 @@ def set_stock_initial(conn, code, value, exercice=None):
     set_opening_balance(conn, code, value, exercice=exercice)
 
 
+def compute_mouvements_stocks(conn, exercice=None):
+    """Détail chronologique de toutes les écritures sur les comptes de stock
+    (classe 3), quelle que soit leur origine — saisie manuelle, ou générées
+    automatiquement par la validation d'une Facture (vente) ou d'une Facture
+    frs (achat). Pour chaque compte, les lignes sont triées par date et un
+    cumul est tenu à la fois en VALEUR (solde du compte) et en QUANTITÉ
+    (comme une fiche de stock), en partant du stock initial de l'exercice."""
+    exercice = exercice or get_current_exercice(conn)
+    date_from, date_to = f"{exercice}-01-01", f"{exercice}-12-31"
+    stocks_synthese = {s["code"]: s for s in compute_stocks(conn, exercice=exercice)}
+
+    result = []
+    for code in COMPTES_STOCK:
+        rows = conn.execute(
+            """SELECT e.*, a.label AS compte_label FROM entries e
+               JOIN accounts a ON a.code = e.compte
+               WHERE e.compte = ? AND e.date >= ? AND e.date <= ?
+               ORDER BY e.date, e.id""",
+            (code, date_from, date_to),
+        ).fetchall()
+        synth = stocks_synthese.get(code, {})
+        valeur_cumulee = synth.get("stock_initial", 0.0)
+        qte_cumulee = synth.get("qte_initiale", 0.0)
+        for r in rows:
+            d = dict(r)
+            libelle = d["libelle"] or ""
+            if libelle.startswith("Entrée stock —") or libelle.startswith("Sortie stock —"):
+                d["origine"] = "Facturation" if libelle.startswith("Sortie stock —") else "Facture frs"
+            else:
+                d["origine"] = "Saisie manuelle"
+            valeur_cumulee += (d["debit"] or 0) - (d["credit"] or 0)
+            qte_cumulee += (d["quantite"] or 0) if (d["debit"] or 0) > 0 else -(d["quantite"] or 0)
+            d["valeur_cumulee"] = valeur_cumulee
+            d["qte_cumulee"] = qte_cumulee
+            result.append(d)
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Production / coûts de fabrication (écritures taguées analytic_code = AN-FAB)
 # ---------------------------------------------------------------------------

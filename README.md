@@ -93,6 +93,31 @@ principaux (en gras) :
 - **SAISIE** : Saisie des écritures, Soldes d'ouverture.
 - **COMMERCE** : Ventes, Clients, Recouvrement, Facturation, Stocks, Marges bénéficiaires.
 
+### Onglet Stocks — mouvements comptables détaillés (nouveau)
+
+L'onglet **Stocks** (menu COMMERCE, aussi accessible depuis PRODUCTION →
+Matières premières/Produits finis) a maintenant deux sous-onglets :
+- **« Synthèse par compte »** : le tableau existant (stock initial, entrées,
+  sorties, stock final, coût unitaire moyen).
+- **« Mouvements comptables (classe 3) »** *(nouveau)* : le détail
+  chronologique de **toutes** les écritures sur les comptes de stock
+  (310000, 320000, 331000, 360000) de l'exercice en cours, avec un filtre
+  par origine :
+  - **Facturation** : sorties de stock générées automatiquement par la
+    validation d'une facture de vente.
+  - **Facture frs** : entrées de stock générées automatiquement par la
+    validation d'une facture d'achat.
+  - **Saisie manuelle** : toute écriture sur un compte de stock passée
+    directement dans l'onglet Saisie.
+
+  Chaque ligne affiche à la fois le **mouvement** (Débit/Crédit en valeur,
+  Qté mvt) et le **cumul** après ce mouvement (**Qté cumulée** et **Valeur
+  cumulée**), en partant du stock initial de l'exercice — comme une vraie
+  fiche de stock. Les lignes générées automatiquement sont affichées en
+  bleu. Testé : une facture d'achat (+20 unités) puis une vente (-10
+  unités) sur un stock initial de 100 unités / 300 000 donnent bien un
+  cumul de 120 puis 110 unités, avec la valeur qui suit correctement.
+
 ### Module Facturation (nouveau)
 
 L'onglet **Facturation** présente directement une facture éditable :
