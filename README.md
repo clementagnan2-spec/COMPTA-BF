@@ -421,6 +421,28 @@ Les 4 écrans de gestion des plans (Plan comptable, Plan analytique, Plan
 budgétaire, Plan bailleurs de fonds) ainsi que les **Exercices comptables**
 sont désormais regroupés dans le menu **PARAMÈTRES**.
 
+### Liasse fiscale : mêmes données que Balance/Bilan/TFT/Situation financière
+
+L'export de la Liasse fiscale utilise désormais **exactement les mêmes
+fonctions de calcul** que les onglets de l'application :
+- **BILAN** et **RESULTAT** : déjà basés sur `compute_liasse_bilan()` et
+  `compute_liasse_resultat()` (comme les onglets Bilan et Compte de
+  résultat) — inchangé, déjà cohérent.
+- **TFT** *(corrigé)* : l'onglet supplémentaire calculé automatiquement
+  utilisait encore l'ancienne méthode directe (`compute_tft`) — remplacé
+  par `compute_tft_indirect()`, la **méthode indirecte avec CAFG**,
+  identique à l'onglet TFT de l'application (renommé « TFT (méthode
+  indirecte - CAFG) » dans le fichier exporté).
+- **Nouvelle feuille « SITUATION FIN. (FR-BFR-TN) »** *(nouveau)* : ajoutée
+  à l'export, avec les mêmes données que l'onglet Situation financière
+  (CAFG, rentabilité, Fonds de Roulement, Besoin en Fonds de Roulement,
+  Trésorerie Nette avec contrôle).
+
+Testé : export complet sans erreur ni avertissement (noms d'onglets
+raccourcis pour respecter la limite Excel de 31 caractères), Bilan
+équilibré (31 000 000 = 31 000 000), TFT et Situation financière remplis
+avec les bonnes valeurs.
+
 ### Corrections TFT + Bilan, et nouveau module Situation financière
 
 **TFT** : ajout des **bandes de couleur par section** qui manquaient (Text

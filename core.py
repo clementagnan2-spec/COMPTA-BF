@@ -3172,8 +3172,9 @@ def export_liasse_fiscale_complete(conn, path, stock_initial=0.0):
             cell = ws.cell(row=row, column=9, value=round(val))
             cell.font = green
 
-    # ---- TFT : ajoute un onglet supplémentaire avec notre calcul simplifié ----
-    tft = compute_tft(conn)
+    # ---- TFT : ajoute un onglet supplémentaire avec notre calcul (méthode
+    #      indirecte — CAFG), les mêmes données que l'onglet TFT de l'application ----
+    tft = compute_tft_indirect(conn)
     if "TFT" in wb.sheetnames:
         ws = wb["TFT"]
         for row in range(10, 42):
@@ -3181,30 +3182,108 @@ def export_liasse_fiscale_complete(conn, path, stock_initial=0.0):
                 cell = ws.cell(row=row, column=col)
                 if isinstance(cell.value, (int, float)) and not isinstance(cell.value, bool):
                     cell.value = None
-        ws["I10"] = round(tft["ouverture"])
+        ws["I10"] = round(tft["treso_ouverture"])
         ws["I10"].font = green
-        ws["A44"] = ("Feuille officielle laissée vierge (méthode indirecte avec CAFG non calculée "
-                     "automatiquement) — voir l'onglet « TFT (simplifie) » pour un calcul indicatif.")
-    ws_simple = wb.create_sheet("TFT (simplifie)")
-    ws_simple["A1"] = "TFT SIMPLIFIÉ (méthode directe, calculé automatiquement)"
-    ws_simple["A1"].font = Font(bold=True, size=12)
-    lines = [
-        ("Trésorerie d'ouverture", tft["ouverture"]),
-        ("Flux liés aux activités opérationnelles (EXP)", tft["exploitation"]),
-        ("Flux liés aux activités d'investissement (INV)", tft["investissement"]),
-        ("Flux liés aux activités de financement (FIN)", tft["financement"]),
-        ("Flux non classés (à coder)", tft["non_classes"]),
-        ("VARIATION NETTE DE TRESORERIE", tft["variation"]),
-        ("TRESORERIE DE CLOTURE", tft["cloture"]),
+        ws["A44"] = ("Feuille officielle laissée vierge (mise en page DGI non mappée automatiquement) "
+                     "— voir l'onglet « TFT (méthode indirecte - CAFG) » pour le calcul complet, "
+                     "identique à celui de l'onglet TFT de l'application.")
+    ws_tft = wb.create_sheet("TFT (méthode indirecte - CAFG)")
+    ws_tft["A1"] = "TABLEAU DE FLUX DE TRÉSORERIE (méthode indirecte — CAFG)"
+    ws_tft["A1"].font = Font(bold=True, size=12)
+    tft_lignes = [
+        ("A - Trésorerie nette au 1er janvier", tft["treso_ouverture"]),
+        ("", None),
+        ("DÉTERMINATION DE LA CAFG", None),
+        ("Excédent Brut d'Exploitation (EBE)", tft["ebe"]),
+        ("+ Revenus financiers", tft["revenus_financiers"]),
+        ("- Frais financiers", tft["frais_financiers"]),
+        ("CAPACITÉ D'AUTOFINANCEMENT GLOBALE (CAFG)", tft["cafg"]),
+        ("- Variation des stocks", tft["variation_stocks"]),
+        ("- Variation des créances", tft["variation_creances"]),
+        ("+ Variation du passif circulant", tft["variation_dettes_circulantes"]),
+        ("FLUX DES ACTIVITÉS OPÉRATIONNELLES (A)", tft["flux_operationnel"]),
+        ("", None),
+        ("FLUX DES ACTIVITÉS D'INVESTISSEMENT", None),
+        ("- Acquisitions immobilisations incorporelles", tft["acquisitions_incorp"]),
+        ("- Acquisitions immobilisations corporelles", tft["acquisitions_corp"]),
+        ("- Acquisitions immobilisations financières", tft["acquisitions_fin"]),
+        ("+ Cessions immobilisations incorporelles", tft["cessions_incorp"]),
+        ("+ Cessions immobilisations corporelles", tft["cessions_corp"]),
+        ("+ Cessions immobilisations financières", tft["cessions_fin"]),
+        ("FLUX DES ACTIVITÉS D'INVESTISSEMENT (B)", tft["flux_investissement"]),
+        ("", None),
+        ("FLUX DES ACTIVITÉS DE FINANCEMENT", None),
+        ("+ Augmentation de capital", tft["augmentation_capital"]),
+        ("+ Subventions d'investissement reçues", tft["subventions_recues"]),
+        ("- Prélèvements sur le capital", tft["prelevements_capital"]),
+        ("- Dividendes versés", tft["dividendes_verses"]),
+        ("+ Emprunts nouveaux", tft["emprunts_nouveaux"]),
+        ("- Remboursements des emprunts", tft["remboursements_emprunts"]),
+        ("FLUX DES ACTIVITÉS DE FINANCEMENT (C)", tft["flux_financement"]),
+        ("", None),
+        ("VARIATION DE LA TRÉSORERIE NETTE (A+B+C)", tft["variation_treso_nette"]),
+        ("TRÉSORERIE NETTE CALCULÉE AU 31/12/N", tft["treso_cloture_calculee"]),
+        ("CONTRÔLE — Trésorerie réelle (Balance, classe 5)", tft["treso_cloture_reelle"]),
+        ("ÉCART", tft["ecart"]),
     ]
-    for i, (label, val) in enumerate(lines):
-        ws_simple.cell(row=3 + i, column=1, value=label)
-        ws_simple.cell(row=3 + i, column=3, value=round(val))
-    ws_simple.column_dimensions["A"].width = 45
+    for i, (label, val) in enumerate(tft_lignes):
+        ws_tft.cell(row=3 + i, column=1, value=label)
+        if val is not None:
+            ws_tft.cell(row=3 + i, column=3, value=round(val))
+    ws_tft.column_dimensions["A"].width = 55
+
+    # ---- SITUATION FINANCIÈRE (FR-BFR-TN) : mêmes données que l'onglet
+    #      correspondant de l'application ----
+    sf = compute_situation_financiere(conn)
+    ws_sf = wb.create_sheet("SITUATION FIN. (FR-BFR-TN)")
+    ws_sf["A1"] = "SITUATION FINANCIÈRE (FR - BFR - TN)"
+    ws_sf["A1"].font = Font(bold=True, size=12)
+    sf_lignes = [
+        ("Résultat net comptable", sf["resultat_net_comptable"]),
+        ("EBE", sf["ebe"]), ("+ Revenus financiers", sf["revenus_financiers"]),
+        ("- Frais financiers", sf["frais_financiers"]),
+        ("CAFG", sf["cafg"]), ("- Dividendes versés", sf["dividendes_verses"]),
+        ("AUTOFINANCEMENT", sf["autofinancement"]),
+        ("Rentabilité économique (%)", sf["rentabilite_economique"]),
+        ("Rentabilité financière (%)", sf["rentabilite_financiere"]),
+        ("", None),
+        ("Capitaux propres et ressources assimilées", sf["capitaux_propres_ressources"]),
+        ("+ Dettes financières", sf["dettes_financieres"]),
+        ("= RESSOURCES STABLES", sf["ressources_stables"]),
+        ("- Actifs immobilisés", sf["actifs_immobilises"]),
+        ("= FONDS DE ROULEMENT (FR)", sf["fonds_de_roulement"]),
+        ("", None),
+        ("+ Actif circulant d'exploitation", sf["actif_circulant_exploitation"]),
+        ("- Passif circulant d'exploitation", sf["passif_circulant_exploitation"]),
+        ("= Besoin de financement d'exploitation", sf["besoin_financement_exploitation"]),
+        ("+ Actif circulant HAO", sf["actif_circulant_hao"]),
+        ("- Passif circulant HAO", sf["passif_circulant_hao"]),
+        ("= Besoin de financement HAO", sf["besoin_financement_hao"]),
+        ("= BESOIN DE FINANCEMENT GLOBAL (BFR)", sf["besoin_financement_global"]),
+        ("", None),
+        ("TRÉSORERIE NETTE (FR - BFR)", sf["tresorerie_nette"]),
+        ("Contrôle — Trésorerie réelle (Balance)", sf["controle_treso_reelle"]),
+        ("Écart", sf["controle_ecart"]),
+        ("", None),
+        ("+ Flux activités opérationnelles", sf["flux_operationnel"]),
+        ("- Flux activités d'investissement", sf["flux_investissement"]),
+        ("+ Flux activités de financement", sf["flux_financement"]),
+        ("VARIATION DE LA TRÉSORERIE NETTE DE LA PÉRIODE", sf["variation_treso_nette"]),
+        ("", None),
+        ("Endettement financier brut", sf["endettement_financier_brut"]),
+        ("- Trésorerie actif", sf["treso_actif"]),
+        ("= ENDETTEMENT FINANCIER NET", sf["endettement_financier_net"]),
+    ]
+    for i, (label, val) in enumerate(sf_lignes):
+        ws_sf.cell(row=3 + i, column=1, value=label)
+        if val is not None:
+            ws_sf.cell(row=3 + i, column=3, value=round(val, 2))
+    ws_sf.column_dimensions["A"].width = 55
 
     # ---- Toutes les autres pages : structure/dimensions conservées, valeurs
     #      chiffrées (issues du modèle) effacées pour éviter toute confusion ----
-    skip = {"GARDE", "BILAN", "RESULTAT", "TFT", "TFT (simplifie)"}
+    skip = {"GARDE", "BILAN", "RESULTAT", "TFT", "TFT (méthode indirecte - CAFG)",
+            "SITUATION FIN. (FR-BFR-TN)"}
     for name in wb.sheetnames:
         if name in skip:
             continue
