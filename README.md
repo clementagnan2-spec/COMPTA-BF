@@ -94,6 +94,30 @@ principaux (en gras) :
 - **COMMERCE** : Ventes, Clients, Stocks, Marges bénéficiaires.
 - **PRODUCTION** : Matières premières, Fabrication, Produits finis.
 - **ENGAGEMENTS-PROJETS** : Achats, Fournisseurs, Contrats.
+
+### Module Engagements-Projets (nouveau, remplace les placeholders)
+
+- **Fournisseurs** : liste auxiliaire (fiche par fournisseur : raison sociale,
+  contact, délais par défaut de paiement et de livraison en jours). Créer /
+  modifier / supprimer, ou **importer en masse (.xlsx)** avec un modèle
+  téléchargeable.
+- **Achats** : soldes des opérations avec chaque fournisseur (Débit − Crédit
+  sur les comptes 401xxx/408xxx qui lui sont tagués), **total par
+  fournisseur**, avec un **filtre de plage de dates** (Du / Au).
+- **Contrats** : journal des commandes passées avec chaque fournisseur. À la
+  création, les échéances de **livraison** et de **paiement** sont calculées
+  automatiquement (date de commande + délais par défaut du fournisseur).
+  Renseignez ensuite les dates réelles de livraison/paiement au fur et à
+  mesure : les **dépassements sont détectés et affichés en rouge**
+  (« EN RETARD (n j) » si la date prévue est dépassée sans qu'une date
+  réelle ait été saisie, ou « Livré/Payé (retard n j) » une fois la date
+  réelle enregistrée après l'échéance).
+
+**Saisie** : un nouveau champ **« Fournisseur »** (liste déroulante avec
+recherche, proposition de création si le code n'existe pas) permet de taguer
+chaque écriture — c'est ce qui alimente automatiquement les modules Achats
+et Contrats.
+
 - **ÉTATS ET RAPPORTS** : Grand livre, Balance, Bilan, Compte de résultat,
   TFT, Liasse fiscale, Tableaux d'exécution budgétaire, Impôts,
   Déclarations sociales, Rapprochements bancaires.
