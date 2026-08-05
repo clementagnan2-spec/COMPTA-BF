@@ -1592,6 +1592,10 @@ class ClientsTab(ttk.Frame):
         self.conn = conn
         ttk.Label(self, text="CLIENTS (LISTE AUXILIAIRE)", font=("Segoe UI", 14, "bold")).pack(
             anchor="w", padx=16, pady=(16, 8))
+        ttk.Label(self, text=(
+            "Ces fiches sont rattachées à la racine 41 (Clients et comptes rattachés) du Plan "
+            "comptable — les écritures qui les taguent doivent utiliser un compte 41xxxx."
+        ), foreground="#595959").pack(anchor="w", padx=16, pady=(0, 4))
 
         form = ttk.Frame(self)
         form.pack(fill="x", padx=16, pady=4)
@@ -1717,6 +1721,10 @@ class FournisseursTab(ttk.Frame):
         self.conn = conn
         ttk.Label(self, text="FOURNISSEURS (LISTE AUXILIAIRE)", font=("Segoe UI", 14, "bold")).pack(
             anchor="w", padx=16, pady=(16, 8))
+        ttk.Label(self, text=(
+            "Ces fiches sont rattachées à la racine 40 (Fournisseurs et comptes rattachés) du Plan "
+            "comptable — les écritures qui les taguent doivent utiliser un compte 40xxxx."
+        ), foreground="#595959").pack(anchor="w", padx=16, pady=(0, 4))
 
         form = ttk.Frame(self)
         form.pack(fill="x", padx=16, pady=4)
@@ -2255,6 +2263,15 @@ class PlanComptableTab(ttk.Frame):
         super().__init__(parent)
         self.conn = conn
         ttk.Label(self, text="PLAN COMPTABLE", font=("Segoe UI", 14, "bold")).pack(anchor="w", padx=16, pady=(16, 4))
+        ttk.Label(self, text=(
+            "Chaque compte est rattaché à une racine : 1 chiffre pour les classes 1, 2, 3, 5, 6, 7, 8, 9 ; "
+            "2 chiffres pour la classe 4 (comptes de tiers), qui se subdivise en 40 (Fournisseurs), "
+            "41 (Clients), 42 (Personnel), 43 (Organismes sociaux), 44 (État), 45 (Organismes "
+            "internationaux), 46 (Associés/Groupe), 47 (Débiteurs/créditeurs divers), 48 "
+            "(Régularisations), 49 (Dépréciations sur tiers). Les fiches auxiliaires créées dans "
+            "l'onglet Fournisseurs sont rattachées à la racine 40, celles de l'onglet Clients à la "
+            "racine 41 — c'est ce qui permet au Bilan de classer correctement les créances et les dettes."
+        ), foreground="#595959", wraplength=1050).pack(anchor="w", padx=16, pady=(0, 8))
 
         search_bar = ttk.Frame(self)
         search_bar.pack(fill="x", padx=16, pady=4)
@@ -2275,10 +2292,10 @@ class PlanComptableTab(ttk.Frame):
         ttk.Button(form, text="Créer / Modifier", command=self.save).grid(row=0, column=4, padx=6)
         ttk.Button(form, text="Supprimer le compte sélectionné", command=self.delete).grid(row=0, column=5, padx=6)
 
-        cols = ("code", "label", "classe")
+        cols = ("code", "label", "classe", "racine", "racine_label")
         self.tree = ttk.Treeview(self, columns=cols, show="headings")
-        headers = ["N° Compte", "Libellé", "Classe"]
-        widths = [110, 500, 70]
+        headers = ["N° Compte", "Libellé", "Classe", "Racine", "Libellé de la racine"]
+        widths = [100, 420, 60, 70, 260]
         for c, h, w in zip(cols, headers, widths):
             self.tree.heading(c, text=h)
             self.tree.column(c, width=w, anchor="w")
@@ -2318,7 +2335,9 @@ class PlanComptableTab(ttk.Frame):
         for row in self.tree.get_children():
             self.tree.delete(row)
         for a in core.search_accounts(self.conn, self.search_var.get(), limit=200):
-            self.tree.insert("", "end", values=(a["code"], a["label"], a["classe"]))
+            racine = core.account_racine(a["code"])
+            racine_label = core.RACINE_LABELS.get(racine, "")
+            self.tree.insert("", "end", values=(a["code"], a["label"], a["classe"], racine, racine_label))
 
 
 class _SimplePlanTab(ttk.Frame):

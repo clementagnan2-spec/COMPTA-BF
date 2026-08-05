@@ -256,6 +256,38 @@ Les 4 écrans de gestion des plans (Plan comptable, Plan analytique, Plan
 budgétaire, Plan bailleurs de fonds) ainsi que les **Exercices comptables**
 sont désormais regroupés dans le menu **PARAMÈTRES**.
 
+### Racines des comptes (nouveau)
+
+Chaque compte du Plan comptable est désormais rattaché à une **racine**,
+visible dans l'onglet Plan comptable (colonnes « Racine » et « Libellé de la
+racine ») :
+- **1 chiffre** pour les classes 1, 2, 3, 5, 6, 7, 8, 9.
+- **2 chiffres pour la classe 4** (comptes de tiers), qui se subdivise en
+  **40** (Fournisseurs et comptes rattachés), **41** (Clients et comptes
+  rattachés), 42 (Personnel), 43 (Organismes sociaux), 44 (État), 45
+  (Organismes internationaux), 46 (Associés/Groupe), 47 (Débiteurs/
+  créditeurs divers), 48 (Régularisations), 49 (Dépréciations sur tiers).
+
+Les fiches auxiliaires créées dans **Fournisseurs** sont rattachées à la
+racine **40**, celles créées dans **Clients** à la racine **41**.
+
+**Tous les calculs liés aux comptes de tiers ont été mis à jour en
+conséquence** :
+- Le **Bilan** classe désormais les comptes de tiers **par racine** plutôt
+  que par simple signe du solde : la racine 41 (Clients) va toujours en
+  Créances, la racine 40 (Fournisseurs) toujours en Dettes circulantes ; les
+  autres racines (42 à 49) restent classées par signe, car leur nature
+  actif/passif dépend réellement du solde.
+- **Achats** et **Ventes** utilisent désormais la racine complète (`40%` et
+  `41%`) au lieu de motifs partiels — un **bug a été corrigé au passage** :
+  l'ancien filtre (401xxx/408xxx pour les fournisseurs, 411xxx pour les
+  clients) ratait des comptes comme 402, 404, 409, 412, 413, 418, 419, qui
+  sont maintenant bien pris en compte.
+
+Testé de bout en bout : Bilan équilibré avec un compte fournisseur débiteur
+(avance, compte 409xxx) et un compte client sur un effet à recevoir (compte
+412xxx), tous deux désormais correctement classés.
+
 ### Gestion des plans (détail des écrans)
 
 Le menu **SAISIE** contient maintenant 4 écrans pour créer/modifier/

@@ -22,6 +22,45 @@ def _resource_dir():
 # (repris de la maquette Excel d'origine).
 # ---------------------------------------------------------------------------
 COMPTES_STOCK = ["310000", "320000", "331000", "360000"]
+
+
+def account_racine(code):
+    """Racine (compte de rattachement) d'un compte : 1 chiffre pour les classes
+    1,2,3,5,6,7,8,9 ; 2 chiffres pour la classe 4 (40 à 49), qui se subdivise
+    par nature de tiers (40=Fournisseurs, 41=Clients, 42=Personnel,
+    43=Organismes sociaux, 44=État, 45=Organismes internationaux,
+    46=Associés/Groupe, 47=Débiteurs/créditeurs divers, 48=Régularisations,
+    49=Dépréciations)."""
+    code = str(code)
+    if not code:
+        return ""
+    return code[:2] if code[0] == "4" else code[:1]
+
+
+RACINE_FOURNISSEURS = "40"
+RACINE_CLIENTS = "41"
+
+RACINE_LABELS = {
+    "1": "Comptes de ressources durables",
+    "2": "Comptes d'actif immobilisé",
+    "3": "Comptes de stocks",
+    "40": "Fournisseurs et comptes rattachés",
+    "41": "Clients et comptes rattachés",
+    "42": "Personnel",
+    "43": "Organismes sociaux",
+    "44": "État et collectivités publiques",
+    "45": "Organismes internationaux",
+    "46": "Associés et groupe",
+    "47": "Débiteurs et créditeurs divers",
+    "48": "Comptes de régularisation",
+    "49": "Dépréciations et provisions sur tiers",
+    "5": "Comptes de trésorerie",
+    "6": "Comptes de charges",
+    "7": "Comptes de produits",
+    "8": "Comptes des autres charges et produits (HAO)",
+    "9": "Comptes analytiques/engagements",
+}
+
 COMPTES_TRESORERIE = ["521000", "531000", "570000", "585000"]
 COMPTES_CAPITAL = ["101000", "118000", "121000"]
 COMPTE_SUBVENTIONS = "141000"
@@ -838,7 +877,7 @@ def import_fournisseurs_from_xlsx(conn, path):
 
 def compute_achats_par_fournisseur(conn, date_from=None, date_to=None):
     """Total Débit/Crédit/Solde par fournisseur, sur les seuls comptes fournisseurs
-    (401xxx/408xxx) tagués avec le code fournisseur — le solde reflète ce qui reste
+    (racine 40, tous les comptes 40xxxx) tagués avec le code fournisseur — le solde reflète ce qui reste
     dû (négatif = nous devons au fournisseur), sur une plage de dates optionnelle."""
     query = """
         SELECT e.fournisseur_code AS code,
@@ -848,7 +887,7 @@ def compute_achats_par_fournisseur(conn, date_from=None, date_to=None):
         FROM entries e
         LEFT JOIN fournisseurs f ON f.code = e.fournisseur_code
         WHERE e.fournisseur_code IS NOT NULL AND e.fournisseur_code != ''
-          AND (e.compte LIKE '401%' OR e.compte LIKE '408%')
+          AND e.compte LIKE '40%'
     """
     params = []
     if date_from:
@@ -1078,7 +1117,8 @@ def import_clients_from_xlsx(conn, path):
 
 
 def compute_ventes_par_client(conn, date_from=None, date_to=None):
-    """Total Débit/Crédit/Solde par client, sur les seuls comptes clients (411xxx)
+    """Total Débit/Crédit/Solde par client, sur les seuls comptes clients
+    (racine 41, tous les comptes 41xxxx)
     tagués avec le code client — solde positif = montant restant dû par le client
     (à recouvrer), sur une plage de dates optionnelle."""
     query = """
@@ -1089,7 +1129,7 @@ def compute_ventes_par_client(conn, date_from=None, date_to=None):
         FROM entries e
         LEFT JOIN clients c ON c.code = e.client_code
         WHERE e.client_code IS NOT NULL AND e.client_code != ''
-          AND e.compte LIKE '411%'
+          AND e.compte LIKE '41%'
     """
     params = []
     if date_from:
@@ -1454,6 +1494,23 @@ def _sum_class(balance, classe, sign=None, field="solde_cloture"):
     return total
 
 
+def _sum_racine(balance, racine, sign=None, field="solde_cloture"):
+    """Somme les soldes des comptes dont la racine (cf. account_racine) correspond,
+    avec un filtre de signe optionnel (utilisé pour les racines « fourre-tout »
+    42 à 49, dont la nature actif/passif dépend du solde effectif)."""
+    total = 0
+    for b in balance:
+        if account_racine(b["code"]) != racine:
+            continue
+        v = b[field]
+        if sign == "pos" and v <= 0:
+            continue
+        if sign == "neg" and v >= 0:
+            continue
+        total += v
+    return total
+
+
 # ---------------------------------------------------------------------------
 # Compte de résultat
 # ---------------------------------------------------------------------------
@@ -1519,7 +1576,19 @@ def compute_bilan(conn, stock_initial=0.0, exercice=None):
 
     stocks = stock_initial + _sum_accounts_cloture(balance, COMPTES_STOCK)
 
-    creances = _sum_class(balance, "4", sign="pos")
+    # Comptes de tiers (classe 4) classés par racine plutôt que par simple signe :
+    # racine 41 (Clients) toujours en créances, racine 40 (Fournisseurs) toujours
+    # en dettes — les autres racines (42 Personnel à 49 Dépréciations) restent
+    # classées par signe du solde, car leur nature actif/passif varie selon le cas.
+    autres_racines_tiers = [str(r) for r in range(42, 50)]
+    creances_clients = _sum_racine(balance, RACINE_CLIENTS)
+    autres_creances = sum(_sum_racine(balance, r, sign="pos") for r in autres_racines_tiers)
+    creances = creances_clients + autres_creances
+
+    dettes_fournisseurs = -_sum_racine(balance, RACINE_FOURNISSEURS)
+    autres_dettes_tiers = sum(-_sum_racine(balance, r, sign="neg") for r in autres_racines_tiers)
+    dettes_circulantes = dettes_fournisseurs + autres_dettes_tiers
+
     treso_actif = _sum_class(balance, "5", sign="pos")
     total_actif = immo_nettes + stocks + creances + treso_actif
 
@@ -1528,7 +1597,6 @@ def compute_bilan(conn, stock_initial=0.0, exercice=None):
     provisions = _sum_accounts_cloture(balance, [COMPTE_PROVISIONS]) * -1
     resultat_net = cr["resultat_net"]
     dettes_financieres = _sum_accounts_cloture(balance, COMPTES_DETTES_FIN) * -1
-    dettes_circulantes = -_sum_class(balance, "4", sign="neg")
     treso_passif = -_sum_class(balance, "5", sign="neg")
     total_passif = (capital + subventions + provisions + resultat_net
                      + dettes_financieres + dettes_circulantes + treso_passif)
