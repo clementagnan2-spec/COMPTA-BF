@@ -1124,7 +1124,7 @@ class StocksMouvementsTab(ttk.Frame):
         ttk.Label(filt, text="Filtrer par origine :").pack(side="left")
         self.origine_var = tk.StringVar(value="Toutes")
         ttk.Combobox(filt, textvariable=self.origine_var, width=18, state="readonly",
-                     values=["Toutes", "Facturation", "Facture frs", "Saisie manuelle"]).pack(side="left", padx=4)
+                     values=["Toutes", "Facturation", "Facture frs", "Saisie directe (auto)", "Saisie manuelle"]).pack(side="left", padx=4)
         ttk.Button(filt, text="Filtrer", command=self.refresh).pack(side="left", padx=8)
 
         cols = ("date", "piece", "compte", "compte_label", "libelle", "debit", "credit", "quantite",

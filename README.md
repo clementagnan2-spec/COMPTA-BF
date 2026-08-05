@@ -93,6 +93,37 @@ principaux (en gras) :
 - **SAISIE** : Saisie des écritures, Soldes d'ouverture.
 - **COMMERCE** : Ventes, Clients, Recouvrement, Facturation, Stocks, Marges bénéficiaires.
 
+### Correction majeure : reconnaissance des sous-comptes détaillés (important)
+
+**Bug signalé et corrigé** : un achat de matières premières saisi directement
+dans l'onglet Saisie sur un **sous-compte détaillé** (ex. `602101 ACHAT
+CLINKER`, au lieu du compte maître `602000`) ne mettait pas le stock à jour,
+et — plus grave — **faussait le calcul du Résultat et du Bilan** (écart non
+nul), car les comptes de résultat/trésorerie/capitaux propres n'étaient
+reconnus que sur leur code exact à 6 chiffres.
+
+**Deux corrections apportées :**
+1. **Mise à jour automatique du stock désormais aussi en Saisie directe** :
+   dès qu'une écriture équilibrée (Compte débiteur/Compte créditeur) touche
+   un compte d'achat (601x/602x) ou de vente (701x/702x) lié à un stock,
+   **avec une quantité renseignée**, l'entrée ou la sortie de stock
+   correspondante est automatiquement comptabilisée — plus besoin de passer
+   par Facturation/Factures frs pour que le stock se mette à jour. Ces
+   écritures apparaissent dans l'onglet Stocks → Mouvements comptables sous
+   l'origine **« Saisie directe (auto) »**.
+2. **Rattachement par racine/préfixe (3 chiffres) partout** : tous les
+   calculs qui agrègent des comptes (Résultat, Bilan, Trésorerie, Production)
+   reconnaissent désormais **tous les sous-comptes** d'une racine donnée
+   (ex. 602101, 602102... sont bien rattachés à 602 ; 521100, 521120...
+   sont bien rattachés à 521), et pas seulement le compte maître à 6 chiffres
+   se terminant par des zéros.
+
+Testé : le scénario exact du bug (achat de 4 500 000 sur le compte 602101,
+quantité 100) met maintenant bien à jour le stock matières premières
+(4 500 000 / 100 unités) **et** le Bilan reste parfaitement équilibré (écart
+= 0) — vérifié aussi après un cycle complet de clôture d'exercice et dans
+l'export de la Liasse fiscale.
+
 ### Onglet Stocks — mouvements comptables détaillés (nouveau)
 
 L'onglet **Stocks** (menu COMMERCE, aussi accessible depuis PRODUCTION →

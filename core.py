@@ -22,6 +22,11 @@ def _resource_dir():
 # (repris de la maquette Excel d'origine).
 # ---------------------------------------------------------------------------
 COMPTES_STOCK = ["310000", "320000", "331000", "360000"]
+# Préfixes (3 chiffres) des mêmes comptes, utilisés uniquement pour agréger le
+# total des stocks au Bilan (capture aussi d'éventuels sous-comptes de stock
+# détaillés) — le suivi détaillé (onglet Stocks) reste lui scopé aux 4 comptes
+# maîtres ci-dessus.
+COMPTES_STOCK_PREFIXES = ["310", "320", "331", "360"]
 
 
 def account_racine(code):
@@ -45,23 +50,34 @@ RACINE_CLIENTS = "41"
 # Un compte de vente lié à des marchandises (classe 31) ou des produits finis
 # (classe 36) déclenche une sortie de stock automatique à la validation de la
 # facture ; un compte de service (ex. 706000) n'impacte aucun stock.
+# Le rattachement se fait par PRÉFIXE (3 chiffres) pour couvrir aussi les
+# sous-comptes détaillés (ex. 701100, 701900... tous rattachés au préfixe 701).
 # ---------------------------------------------------------------------------
 VENTE_STOCK_MAPPING = {
-    "701000": ("marchandise", "310000", "603100"),   # Ventes marchandises -> stock 31, coût 603100
-    "702000": ("produit_fini", "360000", "736000"),  # Ventes produits finis -> stock 36, coût 736000
+    "701": ("marchandise", "310000", "603100"),   # Ventes marchandises -> stock 31, coût 603100
+    "702": ("produit_fini", "360000", "736000"),  # Ventes produits finis -> stock 36, coût 736000
 }
 COMPTE_TVA_VENTES = "443100"  # État, T.V.A. facturée sur ventes
 TVA_TAUX_DEFAUT = 18.0
 
 # Achats (classe 6) -> impact sur les stocks : un achat de marchandises ou de
-# matières premières augmente le stock correspondant à la validation de la
-# facture fournisseur ; un achat de service (ex. 622000) n'impacte aucun stock.
+# matières premières augmente le stock correspondant (par préfixe, ex. 602101
+# "Achat clinker" est bien rattaché au préfixe 602) ; un achat de service
+# (ex. 622000) n'impacte aucun stock.
 ACHAT_STOCK_MAPPING = {
-    "601000": ("marchandise", "310000", "603100"),        # Achats marchandises -> stock 31
-    "602000": ("matiere_premiere", "320000", "603200"),   # Achats matières premières -> stock 32
+    "601": ("marchandise", "310000", "603100"),        # Achats marchandises -> stock 31
+    "602": ("matiere_premiere", "320000", "603200"),   # Achats matières premières -> stock 32
 }
 RETENUE_TAUX_DEFAUT = 0.0
 COMPTE_RETENUE_DEFAUT = "447800"  # État, autres impôts et contributions (retenues à la source)
+
+
+def _match_stock_mapping(compte, mapping):
+    """Retrouve le mapping stock applicable à un compte, par préfixe de 3
+    chiffres (ex. 602101 correspond au préfixe 602)."""
+    if not compte or len(compte) < 3:
+        return None
+    return mapping.get(compte[:3])
 
 RACINE_LABELS = {
     "1": "Comptes de ressources durables",
@@ -84,24 +100,24 @@ RACINE_LABELS = {
     "9": "Comptes analytiques/engagements",
 }
 
-COMPTES_TRESORERIE = ["521000", "531000", "570000", "585000"]
-COMPTES_CAPITAL = ["101000", "118000", "121000"]
-COMPTE_SUBVENTIONS = "141000"
-COMPTE_PROVISIONS = "191000"
-COMPTES_DETTES_FIN = ["162000", "165000"]
-COMPTES_PRODUITS_EXPL = ["701000", "702000", "705000", "706000", "736000"]
-COMPTE_SUBV_EXPL = "710000"
-COMPTE_AUTRES_PRODUITS = "758000"
-COMPTES_ACHATS = ["601000", "602000", "604000", "605000", "603100", "603200"]
-COMPTES_TRANSPORT = ["610000", "614000"]
-COMPTES_SERVICES_EXT = ["622000", "624000", "625000", "626000", "627000", "628000",
-                         "631000", "632000", "633000"]
-COMPTES_IMPOTS = ["641000", "645000"]
-COMPTE_AUTRES_CHARGES = "651000"
-COMPTES_PERSONNEL = ["661000", "663000", "664000"]
-COMPTES_DOTATIONS = ["681000", "691000"]
-COMPTES_PRODUITS_FIN = ["771000", "776000"]
-COMPTES_CHARGES_FIN = ["671000", "676000"]
+COMPTES_TRESORERIE = ["521", "531", "570", "585"]
+COMPTES_CAPITAL = ["101", "118", "121"]
+COMPTE_SUBVENTIONS = "141"
+COMPTE_PROVISIONS = "191"
+COMPTES_DETTES_FIN = ["162", "165"]
+COMPTES_PRODUITS_EXPL = ["701", "702", "705", "706", "736"]
+COMPTE_SUBV_EXPL = "710"
+COMPTE_AUTRES_PRODUITS = "758"
+COMPTES_ACHATS = ["601", "602", "604", "605", "603"]
+COMPTES_TRANSPORT = ["610", "614"]
+COMPTES_SERVICES_EXT = ["622", "624", "625", "626", "627", "628",
+                         "631", "632", "633"]
+COMPTES_IMPOTS = ["641", "645"]
+COMPTE_AUTRES_CHARGES = "651"
+COMPTES_PERSONNEL = ["661", "663", "664"]
+COMPTES_DOTATIONS = ["681", "691"]
+COMPTES_PRODUITS_FIN = ["771", "776"]
+COMPTES_CHARGES_FIN = ["671", "676"]
 
 # ---------------------------------------------------------------------------
 # Liasse fiscale — codes SYSCOHADA "système normal" (BILAN / RESULTAT)
@@ -230,38 +246,38 @@ def compute_liasse_resultat(conn, exercice=None):
         d, c = _sum_accounts(balance, codes)
         return d - c
 
-    ta = net_produit(["701000"])
-    ra = net_charge(["601000"])
-    ra_stock = net_charge(["603100"])  # variation de stock de marchandises
+    ta = net_produit(["701"])
+    ra = net_charge(["601"])
+    ra_stock = net_charge(["603100"])  # variation de stock de marchandises (préfixe précis pour ne pas doubler avec 603200)
     xa = ta - ra - ra_stock  # marge commerciale
 
-    tb = net_produit(["702000"])
-    tc = net_produit(["705000", "706000"])
+    tb = net_produit(["702"])
+    tc = net_produit(["705", "706"])
     td = 0.0
     xb = ta + tb + tc + td
 
-    stock_d, stock_c = _sum_accounts(balance, ["360000"])
+    stock_d, stock_c = _sum_accounts(balance, ["360"])
     te = stock_d - stock_c
-    th = net_produit(["758000"])
-    tg = net_produit(["710000"])
+    th = net_produit(["758"])
+    tg = net_produit(["710"])
 
-    rc = net_charge(["602000", "603200"])
-    re = net_charge(["604000", "605000"])
-    rg = net_charge(["610000", "614000"])
-    rh = net_charge(["622000", "624000", "625000", "626000", "627000", "628000",
-                      "631000", "632000", "633000"])
-    ri = net_charge(["641000", "645000"])
-    rj = net_charge(["651000"])
+    rc = net_charge(["602", "603200"])
+    re = net_charge(["604", "605"])
+    rg = net_charge(["610", "614"])
+    rh = net_charge(["622", "624", "625", "626", "627", "628",
+                      "631", "632", "633"])
+    ri = net_charge(["641", "645"])
+    rj = net_charge(["651"])
     xc = xb + (-ra) + (-ra_stock) + te + tg + th + (-rc) + (-re) + (-rg) + (-rh) + (-ri) + (-rj)
 
-    rk = net_charge(["661000", "663000", "664000"])
+    rk = net_charge(["661", "663", "664"])
     xd = xc - rk
 
-    rl = net_charge(["681000", "691000"])
+    rl = net_charge(["681", "691"])
     xe = xd - rl
 
-    tk = net_produit(["771000", "776000"])
-    rm = net_charge(["671000", "676000"])
+    tk = net_produit(["771", "776"])
+    rm = net_charge(["671", "676"])
     xf = tk - rm
     xg = xe + xf
 
@@ -1340,7 +1356,16 @@ def add_balanced_entry(conn, date_str, piece, journal, compte_debit, compte_cred
     """Crée en une seule opération une écriture équilibrée par construction :
     une ligne au débit d'un compte, une ligne au crédit d'un autre, même montant.
     C'est le principe de la partie double — impossible de créer un déséquilibre
-    en passant par cette fonction."""
+    en passant par cette fonction.
+
+    Si une quantité est renseignée et que le compte débiteur est un compte
+    d'achat lié à un stock (601x marchandises, 602x matières premières), une
+    ENTRÉE de stock est automatiquement comptabilisée à sa suite. De même, si
+    le compte créditeur est un compte de vente lié à un stock (701x
+    marchandises, 702x produits finis), une SORTIE de stock est automatiquement
+    comptabilisée (au coût unitaire moyen réel). Cela s'applique à toute
+    écriture saisie directement dans l'onglet Saisie — pas seulement à celles
+    créées via Facturation / Factures frs."""
     if montant <= 0:
         raise ValueError("Le montant doit être strictement positif.")
     if compte_debit == compte_credit:
@@ -1352,6 +1377,29 @@ def add_balanced_entry(conn, date_str, piece, journal, compte_debit, compte_cred
     add_entry(conn, date_str, piece, journal, compte_credit, tiers, libelle, 0, montant,
               analytic_code=analytic_code, budget_code=budget_code, donor_code=donor_code,
               quantite=quantite, fournisseur_code=fournisseur_code, client_code=client_code)
+
+    if quantite:
+        achat_map = _match_stock_mapping(compte_debit, ACHAT_STOCK_MAPPING)
+        if achat_map and compte_debit not in (achat_map[1], achat_map[2]):
+            _, stock_compte, contre_compte = achat_map
+            add_entry(conn, date_str, piece, journal, stock_compte, "", f"Entrée stock (auto) — {libelle}",
+                      montant, 0, quantite=quantite)
+            add_entry(conn, date_str, piece, journal, contre_compte, "", f"Entrée stock (auto) — {libelle}",
+                      0, montant)
+
+        vente_map = _match_stock_mapping(compte_credit, VENTE_STOCK_MAPPING)
+        if vente_map and compte_credit not in (vente_map[1], vente_map[2]):
+            _, stock_compte, cout_compte = vente_map
+            stocks_by_code = {s["code"]: s for s in compute_stocks(conn, exercice=_exercice_of_date(date_str))}
+            stock = stocks_by_code.get(stock_compte)
+            cout_unitaire = stock["cout_unitaire_moyen"] if stock else None
+            if cout_unitaire is not None:
+                montant_sortie = quantite * cout_unitaire
+                if montant_sortie > 0:
+                    add_entry(conn, date_str, piece, journal, cout_compte, "", f"Sortie stock (auto) — {libelle}",
+                              montant_sortie, 0)
+                    add_entry(conn, date_str, piece, journal, stock_compte, "", f"Sortie stock (auto) — {libelle}",
+                              0, montant_sortie, quantite=quantite)
 
 
 def update_entry(conn, entry_id, **fields):
@@ -1561,16 +1609,22 @@ def compute_balance(conn, only_with_movement=True, include_zero_opening=True, ex
 
 
 def _sum_accounts(balance, codes):
-    by_code = {b["code"]: b for b in balance}
-    debit = sum(by_code[c]["debit"] for c in codes if c in by_code)
-    credit = sum(by_code[c]["credit"] for c in codes if c in by_code)
+    """Somme Débit/Crédit pour tous les comptes dont le code COMMENCE PAR l'un
+    des préfixes donnés (rétro-compatible : un préfixe de 6 chiffres ne
+    matche que le compte exact ; un préfixe de 3 chiffres couvre aussi tous
+    les sous-comptes détaillés, ex. « 602 » couvre 602000, 602101, 602102...)."""
+    debit = credit = 0.0
+    for b in balance:
+        if any(b["code"].startswith(c) for c in codes):
+            debit += b["debit"]
+            credit += b["credit"]
     return debit, credit
 
 
 def _sum_accounts_cloture(balance, codes):
-    """Somme des soldes de CLÔTURE (ouverture + mouvements) pour une liste de comptes."""
-    by_code = {b["code"]: b for b in balance}
-    return sum(by_code[c]["solde_cloture"] for c in codes if c in by_code)
+    """Somme des soldes de CLÔTURE (ouverture + mouvements) pour tous les
+    comptes dont le code commence par l'un des préfixes donnés."""
+    return sum(b["solde_cloture"] for b in balance if any(b["code"].startswith(c) for c in codes))
 
 
 def _sum_class(balance, classe, sign=None, field="solde_cloture"):
@@ -1667,7 +1721,7 @@ def compute_bilan(conn, stock_initial=0.0, exercice=None):
     amortissements = sum(b["solde_cloture"] for b in balance if b["classe"] == "2" and int(b["code"]) >= 280000)
     immo_nettes = immo_brutes + amortissements
 
-    stocks = stock_initial + _sum_accounts_cloture(balance, COMPTES_STOCK)
+    stocks = stock_initial + _sum_accounts_cloture(balance, COMPTES_STOCK_PREFIXES)
 
     # Comptes de tiers (classe 4) classés par racine plutôt que par simple signe :
     # racine 41 (Clients) toujours en créances, racine 40 (Fournisseurs) toujours
@@ -1810,7 +1864,9 @@ def compute_mouvements_stocks(conn, exercice=None):
         for r in rows:
             d = dict(r)
             libelle = d["libelle"] or ""
-            if libelle.startswith("Entrée stock —") or libelle.startswith("Sortie stock —"):
+            if libelle.startswith("Entrée stock (auto) —") or libelle.startswith("Sortie stock (auto) —"):
+                d["origine"] = "Saisie directe (auto)"
+            elif libelle.startswith("Entrée stock —") or libelle.startswith("Sortie stock —"):
                 d["origine"] = "Facturation" if libelle.startswith("Sortie stock —") else "Facture frs"
             else:
                 d["origine"] = "Saisie manuelle"
@@ -1827,9 +1883,9 @@ def compute_mouvements_stocks(conn, exercice=None):
 # ---------------------------------------------------------------------------
 FLUX_FAB = "AN-FAB"
 FAB_POSTES = [
-    ("Matières premières et fournitures consommées", ["602000", "604000"]),
-    ("Main-d'œuvre directe de production", ["661000", "663000", "664000"]),
-    ("Charges indirectes de fabrication", ["624000", "625000", "681000"]),
+    ("Matières premières et fournitures consommées", ["602", "604"]),
+    ("Main-d'œuvre directe de production", ["661", "663", "664"]),
+    ("Charges indirectes de fabrication", ["624", "625", "681"]),
 ]
 
 
@@ -1842,19 +1898,20 @@ def compute_production(conn, exercice=None):
         d, c = _sum_accounts(balance, codes)
         return c - d
 
-    ventes = net_produit(["702000", "705000", "706000"])
-    stock_d, stock_c = _sum_accounts(balance, ["360000"])
+    ventes = net_produit(["702", "705", "706"])
+    stock_d, stock_c = _sum_accounts(balance, ["360"])
     production_stockee = stock_d - stock_c
     valeur_production = ventes + production_stockee
 
     postes = []
     total_cout = 0.0
     for label, codes in FAB_POSTES:
-        placeholders = ",".join("?" * len(codes))
+        like_clause = " OR ".join("compte LIKE ?" for _ in codes)
+        like_params = [f"{c}%" for c in codes]
         row = conn.execute(
             f"SELECT COALESCE(SUM(debit),0) d, COALESCE(SUM(credit),0) c FROM entries "
-            f"WHERE compte IN ({placeholders}) AND analytic_code = ? AND date >= ? AND date <= ?",
-            (*codes, FLUX_FAB, date_from, date_to),
+            f"WHERE ({like_clause}) AND analytic_code = ? AND date >= ? AND date <= ?",
+            (*like_params, FLUX_FAB, date_from, date_to),
         ).fetchone()
         montant = row["d"] - row["c"]
         postes.append({"label": label, "comptes": ", ".join(codes), "montant": montant})
@@ -2052,7 +2109,7 @@ def list_lignes_facture_vente(conn, facture_id):
     for r in rows:
         d = dict(r)
         d["montant_ht"] = (d["quantite"] or 0) * (d["prix_unitaire"] or 0)
-        type_stock, stock_compte, cout_compte = VENTE_STOCK_MAPPING.get(d["compte_vente"], (None, None, None))
+        type_stock, stock_compte, cout_compte = _match_stock_mapping(d["compte_vente"], VENTE_STOCK_MAPPING) or (None, None, None)
         d["type_stock"] = type_stock
         d["stock_compte"] = stock_compte
         result.append(d)
@@ -2111,7 +2168,7 @@ def valider_facture_vente(conn, facture_id, exercice=None):
     for l in lignes:
         if not l["type_stock"]:
             continue
-        _, stock_compte, cout_compte = VENTE_STOCK_MAPPING[l["compte_vente"]]
+        _, stock_compte, cout_compte = _match_stock_mapping(l["compte_vente"], VENTE_STOCK_MAPPING)
         stock = stocks_by_code.get(stock_compte)
         cout_unitaire = stock["cout_unitaire_moyen"] if stock else None
         if cout_unitaire is None:
@@ -2211,7 +2268,7 @@ def list_lignes_facture_achat(conn, facture_id):
     for r in rows:
         d = dict(r)
         d["montant_ht"] = (d["quantite"] or 0) * (d["prix_unitaire"] or 0)
-        type_stock, stock_compte, contre_compte = ACHAT_STOCK_MAPPING.get(d["compte_achat"], (None, None, None))
+        type_stock, stock_compte, contre_compte = _match_stock_mapping(d["compte_achat"], ACHAT_STOCK_MAPPING) or (None, None, None)
         d["type_stock"] = type_stock
         d["stock_compte"] = stock_compte
         result.append(d)
@@ -2271,7 +2328,7 @@ def valider_facture_achat(conn, facture_id, exercice=None):
     for l in lignes:
         if not l["type_stock"]:
             continue
-        _, stock_compte, contre_compte = ACHAT_STOCK_MAPPING[l["compte_achat"]]
+        _, stock_compte, contre_compte = _match_stock_mapping(l["compte_achat"], ACHAT_STOCK_MAPPING)
         montant_entree = l["montant_ht"]
         if montant_entree <= 0:
             continue
@@ -2298,11 +2355,12 @@ def compute_tft(conn, treso_ouverture=None, exercice=None):
     variation_totale = treso_debit - treso_credit
 
     def flux(code):
+        like_clause = " OR ".join("compte LIKE ?" for _ in COMPTES_TRESORERIE)
+        like_params = [f"{p}%" for p in COMPTES_TRESORERIE]
         rows = conn.execute(
-            "SELECT COALESCE(SUM(debit),0) d, COALESCE(SUM(credit),0) c FROM entries "
-            "WHERE compte IN (%s) AND flux_code = ? AND date >= ? AND date <= ?"
-            % ",".join("?" * len(COMPTES_TRESORERIE)),
-            (*COMPTES_TRESORERIE, code, date_from, date_to),
+            f"SELECT COALESCE(SUM(debit),0) d, COALESCE(SUM(credit),0) c FROM entries "
+            f"WHERE ({like_clause}) AND flux_code = ? AND date >= ? AND date <= ?",
+            (*like_params, code, date_from, date_to),
         ).fetchone()
         return rows["d"] - rows["c"]
 
