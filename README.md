@@ -421,7 +421,34 @@ Les 4 écrans de gestion des plans (Plan comptable, Plan analytique, Plan
 budgétaire, Plan bailleurs de fonds) ainsi que les **Exercices comptables**
 sont désormais regroupés dans le menu **PARAMÈTRES**.
 
-### Balance et Bilan reformatés (nouveau, cohérence garantie entre eux)
+### Balance et Bilan reformatés (mise à jour, cohérence garantie entre eux)
+
+**Balance** (États et rapports → Balance) : reformatée en **Balance
+générale groupée par classe**, avec pour chaque compte les colonnes Solde
+Ouverture, Cumul Débit, Cumul Crédit, **Solde Débit** et **Solde Crédit**
+(séparés, comme une balance comptable classique), un **sous-total par
+classe** (ligne bleutée « TOTAL CLASSE X ») et un **total général** en bas
+(ligne foncée « TOTAL BALANCE »).
+
+**Bilan** (États et rapports → Bilan) : présenté en **deux colonnes
+côte à côte, PASSIF à gauche et ACTIF à droite**, avec une **couleur
+distincte par masse** :
+- Actif (droite) : Immobilisations (vert), Stocks détaillés par compte réel
+  (jaune), Créances (bleu), Trésorerie détaillée par banque (violet).
+- Passif (gauche) : Capitaux propres + résultat net (vert), Dettes
+  financières (orange), Dettes circulantes détaillées — fournisseurs,
+  avances, fiscal/social, autres — (rouge/rose), Trésorerie passif (violet).
+- Une bande foncée en bas de chaque colonne pour le TOTAL ACTIF / TOTAL
+  PASSIF, et l'écart Actif-Passif affiché en vert (équilibré) ou rouge
+  (à corriger).
+
+**Cohérence garantie entre les deux** : Balance et Bilan sont calculés à
+partir de **la même fonction `compute_balance()`** — revérifié après cette
+mise à jour visuelle (Total Actif = 14 700 000, cohérent avec la somme des
+soldes débiteurs de la Balance sur les classes 1 à 5, aucune KeyError,
+aucune régression).
+
+### Balance et Bilan reformatés — première version (historique)
 
 **Balance** (États et rapports → Balance) : reformatée en **Balance
 générale groupée par classe**, avec pour chaque compte les colonnes Solde

@@ -847,92 +847,129 @@ class CompteResultatTab(ttk.Frame):
 
 
 class BilanTab(ttk.Frame):
+    """Bilan présenté en deux colonnes (Passif à gauche, Actif à droite),
+    avec une couleur distincte par masse (Immobilisations, Stocks,
+    Créances, Trésorerie, Capitaux propres, Dettes...), comme un bilan
+    comptable classique. Calculé à partir de la même Balance générale que
+    l'onglet Balance — toujours cohérent avec elle."""
+
+    MASSES = {
+        "immo": "#D9EAD3",      # vert clair — Immobilisations
+        "stocks": "#FFF2CC",    # jaune clair — Stocks
+        "creances": "#CFE2F3",  # bleu clair — Créances
+        "treso": "#D9D2E9",     # violet clair — Trésorerie
+        "capital": "#D9EAD3",   # vert clair — Capitaux propres
+        "dettes_fin": "#FCE5CD",   # orange clair — Dettes financières
+        "dettes_circ": "#F4CCCC",  # rouge/rose clair — Dettes circulantes
+        "total": "#1F4E78",     # bandeau total
+    }
+
     def __init__(self, parent, conn):
         super().__init__(parent)
         self.conn = conn
-        self.text = tk.Text(self, font=("Consolas", 10), wrap="none")
-        self.text.pack(fill="both", expand=True, padx=8, pady=8)
+
+        ttk.Label(self, text="BILAN", font=("Segoe UI", 14, "bold")).pack(anchor="w", padx=8, pady=(8, 0))
+        ttk.Label(self, text=(
+            "Calculé à partir de la même Balance générale que l'onglet Balance (États et rapports) "
+            "— les deux sont donc toujours cohérents."
+        ), foreground="#595959").pack(anchor="w", padx=8, pady=(0, 8))
+
+        columns_frame = ttk.Frame(self)
+        columns_frame.pack(fill="both", expand=True, padx=8, pady=(0, 4))
+        columns_frame.columnconfigure(0, weight=1)
+        columns_frame.columnconfigure(1, weight=1)
+
+        ttk.Label(columns_frame, text="PASSIF", font=("Segoe UI", 12, "bold")).grid(row=0, column=0, sticky="w")
+        ttk.Label(columns_frame, text="ACTIF", font=("Segoe UI", 12, "bold")).grid(row=0, column=1, sticky="w")
+
+        cols = ("libelle", "montant")
+        self.tree_passif = ttk.Treeview(columns_frame, columns=cols, show="headings", height=22)
+        self.tree_actif = ttk.Treeview(columns_frame, columns=cols, show="headings", height=22)
+        for tree in (self.tree_passif, self.tree_actif):
+            tree.heading("libelle", text="Libellé")
+            tree.heading("montant", text="Montant")
+            tree.column("libelle", width=280, anchor="w")
+            tree.column("montant", width=140, anchor="e")
+            for key, color in self.MASSES.items():
+                fg = "white" if key == "total" else "black"
+                font = ("Segoe UI", 9, "bold") if key == "total" else ("Segoe UI", 9)
+                tree.tag_configure(key, background=color, foreground=fg, font=font)
+                tree.tag_configure(key + "_header", background=color, foreground=fg, font=("Segoe UI", 9, "bold"))
+        self.tree_passif.grid(row=1, column=0, sticky="nsew", padx=(0, 4))
+        self.tree_actif.grid(row=1, column=1, sticky="nsew", padx=(4, 0))
+        columns_frame.rowconfigure(1, weight=1)
+
+        self.ecart_var = tk.StringVar()
+        ttk.Label(self, textvariable=self.ecart_var, font=("Segoe UI", 10, "bold")).pack(anchor="w", padx=8, pady=8)
         ttk.Button(self, text="Actualiser", command=self.refresh).pack(pady=(0, 8))
         self.refresh()
 
+    @staticmethod
+    def _add_masse(tree, titre, key, lignes, total_label, total_val):
+        """lignes: liste de (libellé, montant) ; masse ignorée si tout est à 0."""
+        if not any(v for _, v in lignes) and not total_val:
+            return
+        tree.insert("", "end", tags=(key + "_header",), values=(titre, ""))
+        for label, val in lignes:
+            if val:
+                tree.insert("", "end", tags=(key,), values=(f"   {label}", f"{val:,.2f}"))
+        tree.insert("", "end", tags=(key,), values=(f"  {total_label}", f"{total_val:,.2f}"))
+        tree.insert("", "end", values=("", ""))  # ligne vide de séparation
+
     def refresh(self):
+        for tree in (self.tree_passif, self.tree_actif):
+            for row in tree.get_children():
+                tree.delete(row)
+
         liasse = core.compute_liasse_bilan(self.conn)
         b = liasse["totaux"]
         ad = liasse["actif_detail"]
         acd = liasse["actif_circulant_detail"]
-        pd = liasse["passif_detail"]
+        pdet = liasse["passif_detail"]
         stocks_detail = core.compute_stocks_detail(self.conn)
-        treso_lignes, treso_total = core.compute_tresorerie_detail(self.conn)
+        treso_lignes, _ = core.compute_tresorerie_detail(self.conn)
 
-        def ligne(label, val, width=55):
-            return f"  {label:<{width}} {val:>16,.2f}"
+        # ---- ACTIF (colonne de droite) ----
+        self._add_masse(self.tree_actif, "IMMOBILISATIONS", "immo",
+                         [(k, v["net"]) for k, v in ad.items()],
+                         "Immobilisations nettes", b["actif"]["Immobilisations nettes"])
+        self._add_masse(self.tree_actif, "STOCKS", "stocks",
+                         [(f"{s['code']} {s['label']}", s["stock_final"]) for s in stocks_detail],
+                         "Total stocks", b["actif"]["Stocks"])
+        self._add_masse(self.tree_actif, "CRÉANCES", "creances",
+                         [("Avances versées sur commandes", acd["BH"]), ("Clients", acd["BI"])],
+                         "Total créances", b["actif"]["Créances et emplois assimilés"])
+        self._add_masse(self.tree_actif, "TRÉSORERIE ACTIF", "treso",
+                         [(f"{t['code']} {t['label']}", t["solde_cloture"]) for t in treso_lignes
+                          if t["solde_cloture"] > 0],
+                         "Total trésorerie actif", b["actif"]["Trésorerie actif"])
+        self.tree_actif.insert("", "end", tags=("total",), values=("TOTAL ACTIF", f"{b['total_actif']:,.2f}"))
 
-        lines = ["BILAN", "=" * 78, ""]
+        # ---- PASSIF (colonne de gauche) ----
+        capitaux_lignes = [(k, v) for k, v in pdet.items()
+                            if k not in ("DA", "DB", "DC", "DJ", "DH_avances", "DK", "DM")]
+        self._add_masse(self.tree_passif, "CAPITAUX PROPRES", "capital",
+                         capitaux_lignes + [("Résultat net de l'exercice", b["passif"]["Résultat net de l'exercice"])],
+                         "Total capitaux propres", b["passif"]["Capital et réserves"] + b["passif"]["Résultat net de l'exercice"])
+        self._add_masse(self.tree_passif, "DETTES FINANCIÈRES", "dettes_fin",
+                         [("Emprunts et dettes financières", pdet["DA"])],
+                         "Total dettes financières", b["passif"]["Dettes financières"])
+        self._add_masse(self.tree_passif, "DETTES CIRCULANTES", "dettes_circ",
+                         [("Fournisseurs et comptes rattachés", pdet["DJ"]),
+                          ("Avances reçues des fournisseurs", pdet["DH_avances"]),
+                          ("Dettes fiscales et sociales", pdet["DK"]),
+                          ("Autres dettes", pdet["DM"])],
+                         "Total dettes circulantes", b["passif"]["Dettes circulantes"])
+        self._add_masse(self.tree_passif, "TRÉSORERIE PASSIF", "treso",
+                         [(f"{t['code']} {t['label']}", -t["solde_cloture"]) for t in treso_lignes
+                          if t["solde_cloture"] < 0],
+                         "Total trésorerie passif", b["passif"]["Trésorerie passif"])
+        self.tree_passif.insert("", "end", tags=("total",), values=("TOTAL PASSIF", f"{b['total_passif']:,.2f}"))
 
-        lines.append("ACTIF")
-        lines.append("-" * 78)
-        lines.append("  Immobilisations (détail — net) :")
-        for k, v in ad.items():
-            if v["net"]:
-                lines.append(ligne(f"    {k}", v["net"], 51))
-        lines.append(ligne("  Immobilisations nettes (total)", b["actif"]["Immobilisations nettes"]))
-        lines.append("")
-        lines.append("  Stocks (détail par compte) :")
-        for s in stocks_detail:
-            if s["stock_final"]:
-                lines.append(ligne(f"    {s['code']} {s['label']}", s["stock_final"], 51))
-        lines.append(ligne("  Stocks (total)", b["actif"]["Stocks"]))
-        lines.append("")
-        lines.append("  Créances et emplois assimilés (détail) :")
-        lines.append(ligne("    Avances versées sur commandes", acd["BH"], 51))
-        lines.append(ligne("    Clients", acd["BI"], 51))
-        lines.append(ligne("  Créances et emplois assimilés (total)", b["actif"]["Créances et emplois assimilés"]))
-        lines.append("")
-        lines.append("  Trésorerie actif (détail par banque/caisse) :")
-        for t in treso_lignes:
-            if t["solde_cloture"] > 0:
-                lines.append(ligne(f"    {t['code']} {t['label']}", t["solde_cloture"], 51))
-        lines.append(ligne("  Trésorerie actif (total)", b["actif"]["Trésorerie actif"]))
-        lines.append("")
-        lines.append(ligne("TOTAL ACTIF", b["total_actif"]))
-        lines.append("")
-
-        lines.append("PASSIF")
-        lines.append("-" * 78)
-        lines.append("  Capitaux propres (détail) :")
-        for k, v in pd.items():
-            if k in ("DA", "DB", "DC", "DJ", "DH_avances", "DK", "DM"):
-                continue
-            if v:
-                lines.append(ligne(f"    {k}", v, 51))
-        lines.append(ligne("  Capital et réserves (total)", b["passif"]["Capital et réserves"]))
-        lines.append("")
-        lines.append(ligne("  Résultat net de l'exercice", b["passif"]["Résultat net de l'exercice"]))
-        lines.append(ligne("  Dettes financières", pd["DA"]))
-        lines.append("")
-        lines.append("  Dettes circulantes (détail) :")
-        lines.append(ligne("    Fournisseurs et comptes rattachés", pd["DJ"], 51))
-        lines.append(ligne("    Avances reçues des fournisseurs", pd["DH_avances"], 51))
-        lines.append(ligne("    Dettes fiscales et sociales", pd["DK"], 51))
-        lines.append(ligne("    Autres dettes", pd["DM"], 51))
-        lines.append(ligne("  Dettes circulantes (total)", b["passif"]["Dettes circulantes"]))
-        lines.append("")
-        lines.append("  Trésorerie passif (détail par banque/caisse) :")
-        for t in treso_lignes:
-            if t["solde_cloture"] < 0:
-                lines.append(ligne(f"    {t['code']} {t['label']}", -t["solde_cloture"], 51))
-        lines.append(ligne("  Trésorerie passif (total)", b["passif"]["Trésorerie passif"]))
-        lines.append("")
-        lines.append(ligne("TOTAL PASSIF", b["total_passif"]))
-        lines.append("")
-        lines.append(f"Écart Actif - Passif : {b['ecart']:,.2f}")
-        lines.append("(doit être proche de 0 ; un écart signale des soldes d'ouverture non saisis)")
-        lines.append("")
-        lines.append("NB : ces chiffres sont calculés à partir de la même Balance générale que")
-        lines.append("l'onglet « Balance » (États et rapports) — les deux sont donc toujours cohérents.")
-
-        self.text.delete("1.0", "end")
-        self.text.insert("1.0", "\n".join(lines))
+        ecart = b["ecart"]
+        couleur = "#B00020" if abs(ecart) >= 1 else "#1F7A1F"
+        self.ecart_var.set(f"Écart Actif - Passif : {ecart:,.2f}"
+                            + (" ✓ équilibré" if abs(ecart) < 1 else " ⚠ à corriger (soldes d'ouverture ?)"))
 
 
 class GrandLivreTab(ttk.Frame):
