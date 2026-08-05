@@ -216,15 +216,21 @@ class SaisieTab(ttk.Frame):
                 widget = ttk.Combobox(form, textvariable=self.vars[lbl], width=22)
                 widget.grid(row=r * 2 + 1, column=c, sticky="we", padx=4, pady=(0, 4))
                 widget.bind("<KeyRelease>", lambda e: self._on_compte_keyrelease("Compte débiteur"))
-                widget.bind("<<ComboboxSelected>>", lambda e: self._show_account_labels())
+                widget.bind("<<ComboboxSelected>>", lambda e: (
+                    self._show_account_labels(), self._validate_compte_field("Compte débiteur")))
                 widget.bind("<FocusOut>", lambda e: self._validate_compte_field("Compte débiteur"))
+                widget.bind("<Return>", lambda e: self._validate_compte_field("Compte débiteur"))
+                widget.bind("<Tab>", lambda e: self._validate_compte_field("Compte débiteur"))
                 self.compte_debit_combo = widget
             elif lbl == "Compte créditeur":
                 widget = ttk.Combobox(form, textvariable=self.vars[lbl], width=22)
                 widget.grid(row=r * 2 + 1, column=c, sticky="we", padx=4, pady=(0, 4))
                 widget.bind("<KeyRelease>", lambda e: self._on_compte_keyrelease("Compte créditeur"))
-                widget.bind("<<ComboboxSelected>>", lambda e: self._show_account_labels())
+                widget.bind("<<ComboboxSelected>>", lambda e: (
+                    self._show_account_labels(), self._validate_compte_field("Compte créditeur")))
                 widget.bind("<FocusOut>", lambda e: self._validate_compte_field("Compte créditeur"))
+                widget.bind("<Return>", lambda e: self._validate_compte_field("Compte créditeur"))
+                widget.bind("<Tab>", lambda e: self._validate_compte_field("Compte créditeur"))
                 self.compte_credit_combo = widget
             elif lbl == "Journal":
                 widget = ttk.Combobox(form, textvariable=self.vars[lbl], width=22,
