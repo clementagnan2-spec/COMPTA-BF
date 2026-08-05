@@ -148,7 +148,40 @@ pièce (le N° Pièce reste rempli après chaque « Ajouter » pour faciliter
 l'enchaînement) — chaque paire est déjà équilibrée, donc la pièce entière
 le reste automatiquement.
 
-### Gestion des plans (nouveau)
+### Exercices comptables et clôture annuelle (nouveau)
+
+Une barre en haut de la fenêtre affiche en permanence l'**exercice
+comptable en cours** (ex. 2025), avec un sélecteur pour basculer entre
+exercices et un bouton **« + Nouvel exercice »**.
+
+Tous les calculs (Saisie, Balance, Bilan, Compte de résultat, TFT, Stocks,
+Production, Liasse fiscale) sont désormais **scopés à l'exercice
+sélectionné** : seules les écritures datées de cet exercice sont prises en
+compte pour les mouvements, et les soldes d'ouverture sont ceux enregistrés
+pour cet exercice précis.
+
+**Clôture annuelle** (menu PARAMÈTRES → Exercices comptables) :
+- calcule le solde de clôture de chaque compte de bilan (classes 1 à 5) de
+  l'exercice sélectionné ;
+- intègre le résultat net de l'exercice dans le compte **121000** (Report à
+  nouveau créditeur) ;
+- reporte ces soldes comme **soldes d'ouverture de l'exercice suivant**
+  (créé automatiquement s'il n'existait pas) ;
+- **verrouille l'exercice clôturé** : impossible d'ajouter, modifier ou
+  supprimer une écriture datée de cet exercice tant qu'il reste clôturé.
+
+Testé avec un cycle complet : exercice 2024 (capital, ventes, achats) →
+clôture → exercice 2025 hérite automatiquement des bons soldes d'ouverture
+(clients, fournisseurs, banque, report à nouveau incluant le résultat 2024)
+et le Bilan reste équilibré, y compris après de nouveaux mouvements en 2025.
+
+### Menu PARAMÈTRES (remplace les plans dans SAISIE)
+
+Les 4 écrans de gestion des plans (Plan comptable, Plan analytique, Plan
+budgétaire, Plan bailleurs de fonds) ainsi que les **Exercices comptables**
+sont désormais regroupés dans le menu **PARAMÈTRES**.
+
+### Gestion des plans (détail des écrans)
 
 Le menu **SAISIE** contient maintenant 4 écrans pour créer/modifier/
 supprimer les référentiels utilisés lors de la saisie : **Plan comptable**,

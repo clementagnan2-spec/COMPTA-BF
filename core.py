@@ -92,10 +92,10 @@ def _sum_range(balance, ranges, classe=None):
     return total
 
 
-def compute_liasse_bilan(conn, stock_initial=0.0):
+def compute_liasse_bilan(conn, stock_initial=0.0, exercice=None):
     """Bilan au format SYSCOHADA système normal (codes officiels)."""
-    balance = compute_balance(conn, only_with_movement=False)
-    bilan_simple = compute_bilan(conn, stock_initial=stock_initial)
+    balance = compute_balance(conn, only_with_movement=False, exercice=exercice)
+    bilan_simple = compute_bilan(conn, stock_initial=stock_initial, exercice=exercice)
 
     # --- Détail indicatif Immobilisations incorporelles ---
     incorp_brut = {k: _sum_range(balance, [rng]) for k, rng in RANGES_INCORP.items()}
@@ -156,9 +156,9 @@ def compute_liasse_bilan(conn, stock_initial=0.0):
     }
 
 
-def compute_liasse_resultat(conn):
+def compute_liasse_resultat(conn, exercice=None):
     """Compte de résultat au format SYSCOHADA système normal (codes officiels)."""
-    balance = compute_balance(conn, only_with_movement=False)
+    balance = compute_balance(conn, only_with_movement=False, exercice=exercice)
 
     def net_produit(codes):
         d, c = _sum_accounts(balance, codes)
@@ -269,8 +269,16 @@ def init_db(conn):
     """)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS opening_balances (
-            code TEXT PRIMARY KEY,
-            solde REAL NOT NULL DEFAULT 0
+            code TEXT NOT NULL,
+            exercice TEXT NOT NULL,
+            solde REAL NOT NULL DEFAULT 0,
+            PRIMARY KEY (code, exercice)
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS exercices (
+            exercice TEXT PRIMARY KEY,
+            cloture INTEGER NOT NULL DEFAULT 0
         )
     """)
     conn.execute("""
@@ -309,7 +317,9 @@ def _migrate(conn):
         conn.execute("ALTER TABLE entries ADD COLUMN donor_code TEXT")
     if "quantite" not in cols:
         conn.execute("ALTER TABLE entries ADD COLUMN quantite REAL NOT NULL DEFAULT 0")
+
     # Migre l'ancien mécanisme "stock_initial_<compte>" (settings) vers opening_balances
+    default_exercice = str(datetime.today().year)
     old_rows = conn.execute("SELECT key, value FROM settings WHERE key LIKE 'stock_initial_%'").fetchall()
     for row in old_rows:
         code = row["key"].replace("stock_initial_", "")
@@ -318,8 +328,28 @@ def _migrate(conn):
         except (TypeError, ValueError):
             val = 0.0
         if val:
-            conn.execute("INSERT OR REPLACE INTO opening_balances (code, solde) VALUES (?, ?)", (code, val))
+            conn.execute("INSERT OR REPLACE INTO opening_balances (code, exercice, solde) VALUES (?, ?, ?)",
+                         (code, default_exercice, val))
         conn.execute("DELETE FROM settings WHERE key = ?", (row["key"],))
+
+    # Migre l'ancienne table opening_balances (sans colonne exercice) vers le nouveau schéma
+    ob_cols = [r["name"] for r in conn.execute("PRAGMA table_info(opening_balances)")]
+    if "exercice" not in ob_cols:
+        conn.execute("ALTER TABLE opening_balances RENAME TO opening_balances_old")
+        conn.execute("""
+            CREATE TABLE opening_balances (
+                code TEXT NOT NULL, exercice TEXT NOT NULL, solde REAL NOT NULL DEFAULT 0,
+                PRIMARY KEY (code, exercice)
+            )
+        """)
+        for row in conn.execute("SELECT code, solde FROM opening_balances_old"):
+            conn.execute("INSERT OR REPLACE INTO opening_balances (code, exercice, solde) VALUES (?, ?, ?)",
+                         (row["code"], default_exercice, row["solde"]))
+        conn.execute("DROP TABLE opening_balances_old")
+
+    if conn.execute("SELECT 1 FROM exercices WHERE exercice = ?", (default_exercice,)).fetchone() is None:
+        # S'assure qu'au moins l'exercice courant existe dans la table
+        conn.execute("INSERT OR IGNORE INTO exercices (exercice, cloture) VALUES (?, 0)", (default_exercice,))
     conn.commit()
 
 
@@ -333,33 +363,114 @@ def set_setting(conn, key, value):
     conn.commit()
 
 
+def get_text_setting(conn, key, default=""):
+    row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+    return row["value"] if row else default
+
+
 # ---------------------------------------------------------------------------
-# Soldes d'ouverture (report à nouveau) — un solde signé par compte, saisi
-# une fois en début d'exercice. Balance de clôture = solde d'ouverture +
-# mouvements de l'exercice (Débit - Crédit).
+# Exercices comptables
 # ---------------------------------------------------------------------------
-def get_opening_balance(conn, code):
-    row = conn.execute("SELECT solde FROM opening_balances WHERE code = ?", (code,)).fetchone()
+def get_current_exercice(conn):
+    ex = get_text_setting(conn, "exercice_courant", "")
+    if ex:
+        return ex
+    ex = str(datetime.today().year)
+    set_setting(conn, "exercice_courant", ex)
+    conn.execute("INSERT OR IGNORE INTO exercices (exercice, cloture) VALUES (?, 0)", (ex,))
+    conn.commit()
+    return ex
+
+
+def set_current_exercice(conn, exercice):
+    conn.execute("INSERT OR IGNORE INTO exercices (exercice, cloture) VALUES (?, 0)", (exercice,))
+    set_setting(conn, "exercice_courant", exercice)
+
+
+def list_exercices(conn):
+    """Tous les exercices connus : ceux créés explicitement + toutes les années
+    présentes dans les écritures, triés."""
+    years_in_entries = {r[0][:4] for r in conn.execute("SELECT DISTINCT date FROM entries") if r[0]}
+    years_known = {r["exercice"] for r in conn.execute("SELECT exercice FROM exercices")}
+    all_years = sorted(years_in_entries | years_known)
+    cloture_map = {r["exercice"]: bool(r["cloture"]) for r in conn.execute("SELECT exercice, cloture FROM exercices")}
+    return [{"exercice": y, "cloture": cloture_map.get(y, False)} for y in all_years]
+
+
+def is_exercice_cloture(conn, exercice):
+    row = conn.execute("SELECT cloture FROM exercices WHERE exercice = ?", (exercice,)).fetchone()
+    return bool(row["cloture"]) if row else False
+
+
+def _exercice_of_date(date_str):
+    return (date_str or "")[:4]
+
+
+def close_exercice(conn, exercice):
+    """Clôture un exercice : calcule les soldes de clôture de tous les comptes de
+    bilan (classes 1 à 5), les reporte comme soldes d'ouverture de l'exercice
+    suivant, y intègre le résultat net de l'exercice clôturé (compte 121000 —
+    report à nouveau), puis marque l'exercice comme clôturé."""
+    if is_exercice_cloture(conn, exercice):
+        raise ValueError(f"L'exercice {exercice} est déjà clôturé.")
+    next_exercice = str(int(exercice) + 1)
+
+    balance = compute_balance(conn, only_with_movement=False, exercice=exercice)
+    cr = compute_compte_resultat(conn, exercice=exercice)
+    resultat_net = cr["resultat_net"]
+
+    for b in balance:
+        if b["classe"] not in ("1", "2", "3", "4", "5"):
+            continue
+        cloture = b["solde_cloture"]
+        if b["code"] == "121000":
+            cloture -= resultat_net  # intègre le résultat net dans le report à nouveau
+        if cloture:
+            conn.execute(
+                "INSERT OR REPLACE INTO opening_balances (code, exercice, solde) VALUES (?, ?, ?)",
+                (b["code"], next_exercice, cloture),
+            )
+
+    conn.execute("INSERT OR REPLACE INTO exercices (exercice, cloture) VALUES (?, 1)", (exercice,))
+    conn.execute("INSERT OR IGNORE INTO exercices (exercice, cloture) VALUES (?, 0)", (next_exercice,))
+    conn.commit()
+    return next_exercice
+
+
+# ---------------------------------------------------------------------------
+# Soldes d'ouverture (report à nouveau) — un solde signé par compte, PAR
+# EXERCICE. Balance de clôture = solde d'ouverture de l'exercice + mouvements
+# de l'exercice (Débit - Crédit) enregistrés à des dates de cet exercice.
+# ---------------------------------------------------------------------------
+def get_opening_balance(conn, code, exercice=None):
+    exercice = exercice or get_current_exercice(conn)
+    row = conn.execute("SELECT solde FROM opening_balances WHERE code = ? AND exercice = ?",
+                        (code, exercice)).fetchone()
     return row["solde"] if row else 0.0
 
 
-def set_opening_balance(conn, code, value):
-    conn.execute("INSERT OR REPLACE INTO opening_balances (code, solde) VALUES (?, ?)", (code, value))
+def set_opening_balance(conn, code, value, exercice=None):
+    exercice = exercice or get_current_exercice(conn)
+    conn.execute("INSERT OR REPLACE INTO opening_balances (code, exercice, solde) VALUES (?, ?, ?)",
+                 (code, exercice, value))
     conn.commit()
 
 
-def list_opening_balances(conn):
+def list_opening_balances(conn, exercice=None):
+    exercice = exercice or get_current_exercice(conn)
     rows = conn.execute("""
         SELECT o.code, a.label, a.classe, o.solde
         FROM opening_balances o JOIN accounts a ON a.code = o.code
-        WHERE o.solde != 0
+        WHERE o.solde != 0 AND o.exercice = ?
         ORDER BY o.code
-    """).fetchall()
+    """, (exercice,)).fetchall()
     return [dict(r) for r in rows]
 
 
-def total_opening_balance(conn):
-    row = conn.execute("SELECT COALESCE(SUM(solde), 0) t FROM opening_balances").fetchone()
+def total_opening_balance(conn, exercice=None):
+    exercice = exercice or get_current_exercice(conn)
+    row = conn.execute("SELECT COALESCE(SUM(solde), 0) t FROM opening_balances WHERE exercice = ?",
+                        (exercice,)).fetchone()
     return row["t"]
 
 
@@ -529,8 +640,18 @@ def get_piece_balance(conn, piece):
 # ---------------------------------------------------------------------------
 # Écritures (Saisie)
 # ---------------------------------------------------------------------------
+def _check_exercice_editable(conn, date_str):
+    exercice = _exercice_of_date(date_str)
+    if exercice and is_exercice_cloture(conn, exercice):
+        raise ValueError(
+            f"L'exercice {exercice} est clôturé : impossible d'ajouter, modifier ou supprimer "
+            f"une écriture datée de cet exercice."
+        )
+
+
 def add_entry(conn, date_str, piece, journal, compte, tiers, libelle, debit, credit,
               flux_code="", analytic_code="", budget_code="", donor_code="", quantite=0):
+    _check_exercice_editable(conn, date_str)
     conn.execute(
         """INSERT INTO entries (date, piece, journal, compte, tiers, libelle, debit, credit,
                                  flux_code, analytic_code, budget_code, donor_code, quantite)
@@ -551,6 +672,7 @@ def add_balanced_entry(conn, date_str, piece, journal, compte_debit, compte_cred
         raise ValueError("Le montant doit être strictement positif.")
     if compte_debit == compte_credit:
         raise ValueError("Le compte débiteur et le compte créditeur doivent être différents.")
+    _check_exercice_editable(conn, date_str)
     add_entry(conn, date_str, piece, journal, compte_debit, tiers, libelle, montant, 0,
               analytic_code=analytic_code, budget_code=budget_code, donor_code=donor_code, quantite=quantite)
     add_entry(conn, date_str, piece, journal, compte_credit, tiers, libelle, 0, montant,
@@ -560,18 +682,33 @@ def add_balanced_entry(conn, date_str, piece, journal, compte_debit, compte_cred
 def update_entry(conn, entry_id, **fields):
     if not fields:
         return
+    row = conn.execute("SELECT date FROM entries WHERE id = ?", (entry_id,)).fetchone()
+    if row:
+        _check_exercice_editable(conn, row["date"])
+    if "date" in fields:
+        _check_exercice_editable(conn, fields["date"])
     cols = ", ".join(f"{k} = ?" for k in fields)
     conn.execute(f"UPDATE entries SET {cols} WHERE id = ?", (*fields.values(), entry_id))
     conn.commit()
 
 
 def delete_entry(conn, entry_id):
+    row = conn.execute("SELECT date FROM entries WHERE id = ?", (entry_id,)).fetchone()
+    if row:
+        _check_exercice_editable(conn, row["date"])
     conn.execute("DELETE FROM entries WHERE id = ?", (entry_id,))
     conn.commit()
 
 
-def list_entries(conn, order_by="date"):
-    rows = conn.execute(f"SELECT * FROM entries ORDER BY {order_by}, id").fetchall()
+def list_entries(conn, order_by="date", exercice=None):
+    if exercice:
+        date_from, date_to = f"{exercice}-01-01", f"{exercice}-12-31"
+        rows = conn.execute(
+            f"SELECT * FROM entries WHERE date >= ? AND date <= ? ORDER BY {order_by}, id",
+            (date_from, date_to),
+        ).fetchall()
+    else:
+        rows = conn.execute(f"SELECT * FROM entries ORDER BY {order_by}, id").fetchall()
     return [dict(r) for r in rows]
 
 
@@ -718,17 +855,20 @@ def import_entries_from_xlsx(conn, path):
 # ---------------------------------------------------------------------------
 # Balance
 # ---------------------------------------------------------------------------
-def compute_balance(conn, only_with_movement=True, include_zero_opening=True):
+def compute_balance(conn, only_with_movement=True, include_zero_opening=True, exercice=None):
+    exercice = exercice or get_current_exercice(conn)
+    date_from, date_to = f"{exercice}-01-01", f"{exercice}-12-31"
     rows = conn.execute("""
         SELECT a.code, a.label, a.classe,
-               COALESCE(SUM(e.debit), 0)  AS debit,
-               COALESCE(SUM(e.credit), 0) AS credit
+               COALESCE(SUM(CASE WHEN e.date BETWEEN ? AND ? THEN e.debit ELSE 0 END), 0)  AS debit,
+               COALESCE(SUM(CASE WHEN e.date BETWEEN ? AND ? THEN e.credit ELSE 0 END), 0) AS credit
         FROM accounts a
         LEFT JOIN entries e ON e.compte = a.code
         GROUP BY a.code, a.label, a.classe
         ORDER BY a.code
-    """).fetchall()
-    openings = {r["code"]: r["solde"] for r in conn.execute("SELECT code, solde FROM opening_balances")}
+    """, (date_from, date_to, date_from, date_to)).fetchall()
+    openings = {r["code"]: r["solde"] for r in conn.execute(
+        "SELECT code, solde FROM opening_balances WHERE exercice = ?", (exercice,))}
     result = []
     for r in rows:
         debit, credit = r["debit"], r["credit"]
@@ -775,8 +915,8 @@ def _sum_class(balance, classe, sign=None, field="solde_cloture"):
 # ---------------------------------------------------------------------------
 # Compte de résultat
 # ---------------------------------------------------------------------------
-def compute_compte_resultat(conn):
-    balance = compute_balance(conn, only_with_movement=False)
+def compute_compte_resultat(conn, exercice=None):
+    balance = compute_balance(conn, only_with_movement=False, exercice=exercice)
 
     def net_produit(codes):
         d, c = _sum_accounts(balance, codes)
@@ -825,11 +965,11 @@ def compute_compte_resultat(conn):
 # ---------------------------------------------------------------------------
 # Bilan
 # ---------------------------------------------------------------------------
-def compute_bilan(conn, stock_initial=0.0):
+def compute_bilan(conn, stock_initial=0.0, exercice=None):
     """stock_initial : conservé pour compatibilité, normalement inutile désormais —
     utilisez la table des soldes d'ouverture (onglet « Soldes d'ouverture »)."""
-    balance = compute_balance(conn, only_with_movement=False)
-    cr = compute_compte_resultat(conn)
+    balance = compute_balance(conn, only_with_movement=False, exercice=exercice)
+    cr = compute_compte_resultat(conn, exercice=exercice)
 
     immo_brutes = sum(b["solde_cloture"] for b in balance if b["classe"] == "2" and int(b["code"]) < 280000)
     amortissements = sum(b["solde_cloture"] for b in balance if b["classe"] == "2" and int(b["code"]) >= 280000)
@@ -875,22 +1015,22 @@ def compute_bilan(conn, stock_initial=0.0):
     }
 
 
-def compute_grand_livre(conn, compte, tiers=None, date_from=None, date_to=None):
-    """Détail chronologique des écritures d'un compte, avec solde cumulé."""
-    query = "SELECT * FROM entries WHERE compte = ?"
-    params = [compte]
+def compute_grand_livre(conn, compte, tiers=None, date_from=None, date_to=None, exercice=None):
+    """Détail chronologique des écritures d'un compte pour un exercice, avec
+    solde cumulé démarrant au solde d'ouverture de l'exercice."""
+    exercice = exercice or get_current_exercice(conn)
+    if date_from is None:
+        date_from = f"{exercice}-01-01"
+    if date_to is None:
+        date_to = f"{exercice}-12-31"
+    query = "SELECT * FROM entries WHERE compte = ? AND date >= ? AND date <= ?"
+    params = [compte, date_from, date_to]
     if tiers:
         query += " AND tiers LIKE ?"
         params.append(f"%{tiers}%")
-    if date_from:
-        query += " AND date >= ?"
-        params.append(date_from)
-    if date_to:
-        query += " AND date <= ?"
-        params.append(date_to)
     query += " ORDER BY date, id"
     rows = [dict(r) for r in conn.execute(query, params).fetchall()]
-    solde = 0.0
+    solde = get_opening_balance(conn, compte, exercice)
     for r in rows:
         solde += r["debit"] - r["credit"]
         r["solde_cumule"] = solde
@@ -900,23 +1040,25 @@ def compute_grand_livre(conn, compte, tiers=None, date_from=None, date_to=None):
 # ---------------------------------------------------------------------------
 # Stocks
 # ---------------------------------------------------------------------------
-def compute_stocks(conn):
-    balance = compute_balance(conn, only_with_movement=False)
+def compute_stocks(conn, exercice=None):
+    exercice = exercice or get_current_exercice(conn)
+    date_from, date_to = f"{exercice}-01-01", f"{exercice}-12-31"
+    balance = compute_balance(conn, only_with_movement=False, exercice=exercice)
     by_code = {b["code"]: b for b in balance}
     result = []
     for code in COMPTES_STOCK:
         b = by_code.get(code, {"label": get_account_label(conn, code), "debit": 0.0, "credit": 0.0,
                                 "solde_ouverture": 0.0})
-        initial = get_opening_balance(conn, code)
+        initial = get_opening_balance(conn, code, exercice)
         entrees, sorties = b["debit"], b["credit"]
         qte_row = conn.execute(
             """SELECT COALESCE(SUM(CASE WHEN debit > 0 THEN quantite ELSE 0 END), 0) AS qte_in,
                       COALESCE(SUM(CASE WHEN credit > 0 THEN quantite ELSE 0 END), 0) AS qte_out
-               FROM entries WHERE compte = ?""",
-            (code,),
+               FROM entries WHERE compte = ? AND date >= ? AND date <= ?""",
+            (code, date_from, date_to),
         ).fetchone()
         qte_entrees, qte_sorties = qte_row["qte_in"], qte_row["qte_out"]
-        qte_initiale = get_setting(conn, f"stock_qte_initiale_{code}", 0.0)
+        qte_initiale = get_setting(conn, f"stock_qte_initiale_{code}_{exercice}", 0.0)
         qte_finale = qte_initiale + qte_entrees - qte_sorties
         stock_final = initial + entrees - sorties
         cout_unitaire_moyen = (stock_final / qte_finale) if qte_finale else None
@@ -930,12 +1072,13 @@ def compute_stocks(conn):
     return result
 
 
-def set_stock_qte_initiale(conn, code, value):
-    set_setting(conn, f"stock_qte_initiale_{code}", value)
+def set_stock_qte_initiale(conn, code, value, exercice=None):
+    exercice = exercice or get_current_exercice(conn)
+    set_setting(conn, f"stock_qte_initiale_{code}_{exercice}", value)
 
 
-def set_stock_initial(conn, code, value):
-    set_opening_balance(conn, code, value)
+def set_stock_initial(conn, code, value, exercice=None):
+    set_opening_balance(conn, code, value, exercice=exercice)
 
 
 # ---------------------------------------------------------------------------
@@ -949,8 +1092,10 @@ FAB_POSTES = [
 ]
 
 
-def compute_production(conn):
-    balance = compute_balance(conn, only_with_movement=False)
+def compute_production(conn, exercice=None):
+    exercice = exercice or get_current_exercice(conn)
+    date_from, date_to = f"{exercice}-01-01", f"{exercice}-12-31"
+    balance = compute_balance(conn, only_with_movement=False, exercice=exercice)
 
     def net_produit(codes):
         d, c = _sum_accounts(balance, codes)
@@ -967,8 +1112,8 @@ def compute_production(conn):
         placeholders = ",".join("?" * len(codes))
         row = conn.execute(
             f"SELECT COALESCE(SUM(debit),0) d, COALESCE(SUM(credit),0) c FROM entries "
-            f"WHERE compte IN ({placeholders}) AND analytic_code = ?",
-            (*codes, FLUX_FAB),
+            f"WHERE compte IN ({placeholders}) AND analytic_code = ? AND date >= ? AND date <= ?",
+            (*codes, FLUX_FAB, date_from, date_to),
         ).fetchone()
         montant = row["d"] - row["c"]
         postes.append({"label": label, "comptes": ", ".join(codes), "montant": montant})
@@ -984,11 +1129,13 @@ def compute_production(conn):
     }
 
 
-def compute_tft(conn, treso_ouverture=None):
+def compute_tft(conn, treso_ouverture=None, exercice=None):
     """treso_ouverture=None : dérivée automatiquement des soldes d'ouverture des
     comptes de trésorerie (521000/531000/570000/585000). Passez une valeur pour
     la forcer manuellement."""
-    balance = compute_balance(conn, only_with_movement=False)
+    exercice = exercice or get_current_exercice(conn)
+    date_from, date_to = f"{exercice}-01-01", f"{exercice}-12-31"
+    balance = compute_balance(conn, only_with_movement=False, exercice=exercice)
     if treso_ouverture is None:
         treso_ouverture = _sum_accounts_cloture(
             [dict(b, solde_cloture=b["solde_ouverture"]) for b in balance], COMPTES_TRESORERIE)
@@ -996,11 +1143,11 @@ def compute_tft(conn, treso_ouverture=None):
     variation_totale = treso_debit - treso_credit
 
     def flux(code):
-        d = c = 0.0
         rows = conn.execute(
             "SELECT COALESCE(SUM(debit),0) d, COALESCE(SUM(credit),0) c FROM entries "
-            "WHERE compte IN (%s) AND flux_code = ?" % ",".join("?" * len(COMPTES_TRESORERIE)),
-            (*COMPTES_TRESORERIE, code),
+            "WHERE compte IN (%s) AND flux_code = ? AND date >= ? AND date <= ?"
+            % ",".join("?" * len(COMPTES_TRESORERIE)),
+            (*COMPTES_TRESORERIE, code, date_from, date_to),
         ).fetchone()
         return rows["d"] - rows["c"]
 

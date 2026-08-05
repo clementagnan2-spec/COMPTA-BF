@@ -17,8 +17,22 @@ class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("Saisie Comptable SYSCOHADA")
-        self.geometry("1200x680")
+        self.geometry("1200x720")
         self.conn = core.get_connection()
+
+        # ---- Barre d'exercice comptable (toujours visible, en haut) ----
+        top_bar = ttk.Frame(self, relief="raised", padding=4)
+        top_bar.pack(fill="x", side="top")
+        ttk.Label(top_bar, text="EXERCICE COMPTABLE :", font=("Segoe UI", 9, "bold")).pack(side="left", padx=(6, 4))
+        self.exercice_var = tk.StringVar(value=core.get_current_exercice(self.conn))
+        self.exercice_combo = ttk.Combobox(top_bar, textvariable=self.exercice_var, width=10, state="readonly")
+        self.exercice_combo.pack(side="left", padx=4)
+        self.exercice_combo.bind("<<ComboboxSelected>>", self._on_exercice_changed)
+        ttk.Button(top_bar, text="+ Nouvel exercice", command=self._new_exercice).pack(side="left", padx=8)
+        self.exercice_status_var = tk.StringVar()
+        ttk.Label(top_bar, textvariable=self.exercice_status_var, foreground="#B00020",
+                  font=("Segoe UI", 9, "bold")).pack(side="left", padx=12)
+        self._refresh_exercice_list()
 
         self.content = ttk.Frame(self)
         self.content.pack(fill="both", expand=True)
@@ -36,6 +50,7 @@ class App(tk.Tk):
         # ---- Instanciation de toutes les pages (une seule fois) ----
         register("saisie", SaisieTab)
         register("ouverture", OpeningBalancesTab)
+        register("exercices", ExercicesTab, self)
         register("plan_comptable", PlanComptableTab)
         register("plan_analytique", PlanAnalytiqueTab)
         register("plan_budgetaire", PlanBudgetaireTab)
@@ -81,10 +96,6 @@ class App(tk.Tk):
         add_top_menu("SAISIE", [
             ("Saisie des écritures", "saisie"),
             ("Soldes d'ouverture", "ouverture"),
-            ("Plan comptable", "plan_comptable"),
-            ("Plan analytique", "plan_analytique"),
-            ("Plan budgétaire", "plan_budgetaire"),
-            ("Plan bailleurs de fonds", "plan_bailleur"),
         ])
         add_top_menu("COMMERCE", [
             ("Ventes", "ventes"),
@@ -114,9 +125,53 @@ class App(tk.Tk):
             ("Déclarations sociales", "declarations_sociales"),
             ("Rapprochements bancaires", "rapprochements"),
         ])
+        add_top_menu("PARAMÈTRES", [
+            ("Exercices comptables (clôture)", "exercices"),
+            ("Plan comptable", "plan_comptable"),
+            ("Plan analytique", "plan_analytique"),
+            ("Plan budgétaire", "plan_budgetaire"),
+            ("Plan bailleurs de fonds", "plan_bailleur"),
+        ])
         self.config(menu=menubar)
 
         self.show("saisie")
+
+    def _refresh_exercice_list(self):
+        exercices = core.list_exercices(self.conn)
+        values = [e["exercice"] + (" (clôturé)" if e["cloture"] else "") for e in exercices]
+        self.exercice_combo["values"] = values
+        current = core.get_current_exercice(self.conn)
+        match = next((v for v in values if v.startswith(current)), current)
+        self.exercice_var.set(match)
+        if core.is_exercice_cloture(self.conn, current):
+            self.exercice_status_var.set("⚠ Cet exercice est clôturé (lecture seule).")
+        else:
+            self.exercice_status_var.set("")
+
+    def _on_exercice_changed(self, event=None):
+        raw = self.exercice_var.get().split(" ")[0]
+        core.set_current_exercice(self.conn, raw)
+        self._refresh_exercice_list()
+        self.refresh_current_page()
+
+    def _new_exercice(self):
+        current = core.get_current_exercice(self.conn)
+        suggestion = str(int(current) + 1)
+        new_ex = simpledialog.askstring("Nouvel exercice", "Année de l'exercice (AAAA) :",
+                                         initialvalue=suggestion, parent=self)
+        if not new_ex:
+            return
+        core.set_current_exercice(self.conn, new_ex.strip())
+        self._refresh_exercice_list()
+        self.refresh_current_page()
+
+    def refresh_current_page(self):
+        for page in self.pages.values():
+            if hasattr(page, "refresh"):
+                try:
+                    page.refresh()
+                except Exception:
+                    pass
 
     def show(self, key):
         page = self.pages[key]
@@ -134,6 +189,15 @@ class SaisieTab(ttk.Frame):
         self._build()
         self.refresh()
 
+    def _default_date(self):
+        """Aujourd'hui si son année correspond à l'exercice courant, sinon le
+        1er janvier de l'exercice courant."""
+        exercice = core.get_current_exercice(self.conn)
+        today = date.today()
+        if str(today.year) == exercice:
+            return today.strftime("%d/%m/%Y")
+        return f"01/01/{exercice}"
+
     def _build(self):
         form = ttk.LabelFrame(self, text="Écriture (partie double : compte débiteur ET compte créditeur obligatoires)")
         form.pack(fill="x", padx=8, pady=8)
@@ -143,7 +207,7 @@ class SaisieTab(ttk.Frame):
                   "Tiers", "Libellé",
                   "Code analytique (ex: AN-FAB)", "Code budgétaire", "Code bailleur", "Quantité"]
         self.vars = {k: tk.StringVar() for k in labels}
-        self.vars["Date (JJ/MM/AAAA)"].set(date.today().strftime("%d/%m/%Y"))
+        self.vars["Date (JJ/MM/AAAA)"].set(self._default_date())
 
         for i, lbl in enumerate(labels):
             r, c = divmod(i, 3)
@@ -443,7 +507,11 @@ class SaisieTab(ttk.Frame):
             donor_code=self._extract_code(self.vars["Code bailleur"].get()),
             quantite=quantite,
         )
-        core.update_entry(self.conn, self.selected_id, **fields)
+        try:
+            core.update_entry(self.conn, self.selected_id, **fields)
+        except ValueError as exc:
+            messagebox.showerror("Erreur", str(exc))
+            return
         self.clear_form()
         self.refresh()
 
@@ -452,7 +520,11 @@ class SaisieTab(ttk.Frame):
             messagebox.showinfo("Info", "Sélectionnez d'abord une ligne dans le tableau.")
             return
         if messagebox.askyesno("Confirmer", "Supprimer cette écriture ?"):
-            core.delete_entry(self.conn, self.selected_id)
+            try:
+                core.delete_entry(self.conn, self.selected_id)
+            except ValueError as exc:
+                messagebox.showerror("Erreur", str(exc))
+                return
             self.clear_form()
             self.refresh()
 
@@ -461,7 +533,7 @@ class SaisieTab(ttk.Frame):
         self.pending_piece = None
         self.balance_var.set("")
         for k, v in self.vars.items():
-            v.set("" if k != "Date (JJ/MM/AAAA)" else date.today().strftime("%d/%m/%Y"))
+            v.set("" if k != "Date (JJ/MM/AAAA)" else self._default_date())
         self.account_label_var.set("")
 
     def download_template(self):
@@ -534,7 +606,7 @@ class SaisieTab(ttk.Frame):
     def refresh(self):
         for row in self.tree.get_children():
             self.tree.delete(row)
-        entries = core.list_entries(self.conn)
+        entries = core.list_entries(self.conn, exercice=core.get_current_exercice(self.conn))
         total_d = total_c = 0.0
         for e in entries:
             label = core.get_account_label(self.conn, e["compte"])
@@ -1155,6 +1227,97 @@ class FournisseursTab(GrandLivreTab):
         super().__init__(parent, conn)
         self.compte_var.set("401000")
         self.refresh()
+
+
+class ExercicesTab(ttk.Frame):
+    """Liste des exercices comptables et clôture annuelle."""
+
+    def __init__(self, parent, conn, app):
+        super().__init__(parent)
+        self.conn = conn
+        self.app = app
+        ttk.Label(self, text="EXERCICES COMPTABLES", font=("Segoe UI", 14, "bold")).pack(anchor="w", padx=16, pady=(16, 4))
+        ttk.Label(self, text=(
+            "La clôture calcule le solde de clôture de chaque compte de bilan (classes 1 à 5) de "
+            "l'exercice sélectionné, l'intègre au résultat net dans le compte 121000 (Report à "
+            "nouveau créditeur), et reporte le tout comme solde d'ouverture de l'exercice suivant. "
+            "Un exercice clôturé passe en lecture seule : impossible d'y ajouter, modifier ou "
+            "supprimer une écriture."
+        ), foreground="#595959", wraplength=1000).pack(anchor="w", padx=16, pady=(0, 8))
+
+        cols = ("exercice", "statut")
+        self.tree = ttk.Treeview(self, columns=cols, show="headings", height=10)
+        self.tree.heading("exercice", text="Exercice")
+        self.tree.heading("statut", text="Statut")
+        self.tree.column("exercice", width=100, anchor="w")
+        self.tree.column("statut", width=150, anchor="w")
+        self.tree.pack(fill="x", padx=16, pady=8)
+        self.tree.bind("<<TreeviewSelect>>", self._on_select)
+
+        self.selected_exercice = None
+        btns = ttk.Frame(self)
+        btns.pack(fill="x", padx=16, pady=4)
+        ttk.Button(btns, text="Basculer sur cet exercice", command=self._switch).pack(side="left", padx=2)
+        ttk.Button(btns, text="Clôturer l'exercice sélectionné", command=self._close).pack(side="left", padx=2)
+
+        self.refresh()
+
+    def _on_select(self, event=None):
+        sel = self.tree.selection()
+        if sel:
+            self.selected_exercice = self.tree.item(sel[0], "values")[0]
+
+    def _switch(self):
+        if not self.selected_exercice:
+            messagebox.showinfo("Info", "Sélectionnez d'abord un exercice.")
+            return
+        core.set_current_exercice(self.conn, self.selected_exercice)
+        self.app._refresh_exercice_list()
+        self.app.refresh_current_page()
+
+    def _close(self):
+        if not self.selected_exercice:
+            messagebox.showinfo("Info", "Sélectionnez d'abord un exercice.")
+            return
+        ex = self.selected_exercice
+        if core.is_exercice_cloture(self.conn, ex):
+            messagebox.showinfo("Info", f"L'exercice {ex} est déjà clôturé.")
+            return
+        bilan = core.compute_bilan(self.conn, exercice=ex)
+        if abs(bilan["ecart"]) >= 1:
+            if not messagebox.askyesno(
+                "Bilan non équilibré",
+                f"Le Bilan de l'exercice {ex} n'est pas équilibré (écart de {bilan['ecart']:,.2f}). "
+                f"Clôturer quand même ?"
+            ):
+                return
+        resultat_net = bilan['passif']["Résultat net de l'exercice"]
+        if not messagebox.askyesno(
+            "Confirmer la clôture",
+            f"Clôturer définitivement l'exercice {ex} ?\n\n"
+            f"Résultat net : {resultat_net:,.2f}\n"
+            f"Cette action reporte les soldes de clôture comme soldes d'ouverture de l'exercice "
+            f"suivant et verrouille l'exercice {ex} en lecture seule."
+        ):
+            return
+        try:
+            next_ex = core.close_exercice(self.conn, ex)
+        except ValueError as exc:
+            messagebox.showerror("Erreur", str(exc))
+            return
+        messagebox.showinfo("Clôture effectuée",
+                             f"Exercice {ex} clôturé. Les soldes d'ouverture de {next_ex} ont été calculés.")
+        core.set_current_exercice(self.conn, next_ex)
+        self.app._refresh_exercice_list()
+        self.app.refresh_current_page()
+        self.refresh()
+
+    def refresh(self):
+        for row in self.tree.get_children():
+            self.tree.delete(row)
+        for e in core.list_exercices(self.conn):
+            statut = "Clôturé" if e["cloture"] else "Ouvert"
+            self.tree.insert("", "end", values=(e["exercice"], statut))
 
 
 class PlanComptableTab(ttk.Frame):
