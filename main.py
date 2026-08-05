@@ -330,51 +330,60 @@ class SaisieTab(ttk.Frame):
 
     def _validate_compte_field(self, field):
         """Force un compte valide : propose de créer le compte ou de choisir dans la liste.
-        Si le compte saisi est une racine de tiers (40 ou 41), impose de choisir le
-        tiers auxiliaire concerné avant de continuer."""
+        Pour TOUT compte commençant par la racine 40 (Fournisseurs) ou 41 (Clients) —
+        qu'il s'agisse de la racine elle-même (40, 41) ou d'un compte de détail
+        (401000, 411000, 412000...) — impose de choisir le tiers auxiliaire concerné."""
         code = self._extract_code(self.vars[field].get())
         if not code:
             return
-        if code == core.RACINE_FOURNISSEURS:
-            self._force_tiers_selection(field, "fournisseur")
-            return
-        if code == core.RACINE_CLIENTS:
-            self._force_tiers_selection(field, "client")
-            return
-        if core.account_exists(self.conn, code):
-            return
-        if messagebox.askyesno(
-            "Compte introuvable",
-            f"Le compte « {code} » n'existe pas dans le Plan comptable.\n\n"
-            f"Voulez-vous le créer maintenant ? (Non pour effacer et choisir un compte existant)"
-        ):
-            label = simpledialog.askstring("Nouveau compte", f"Libellé du compte « {code} » :", parent=self)
-            if not label:
+        if code in (core.RACINE_FOURNISSEURS, core.RACINE_CLIENTS):
+            # Racine seule (40 ou 41) : pas un compte de détail postable, on
+            # bascule sur le compte usuel avant de forcer le choix du tiers.
+            kind = "fournisseur" if code == core.RACINE_FOURNISSEURS else "client"
+            default_compte = "401000" if kind == "fournisseur" else "411000"
+            if not core.account_exists(self.conn, default_compte):
+                default_compte = code
+            self.vars[field].set(default_compte)
+            code = default_compte
+        elif not core.account_exists(self.conn, code):
+            if messagebox.askyesno(
+                "Compte introuvable",
+                f"Le compte « {code} » n'existe pas dans le Plan comptable.\n\n"
+                f"Voulez-vous le créer maintenant ? (Non pour effacer et choisir un compte existant)"
+            ):
+                label = simpledialog.askstring("Nouveau compte", f"Libellé du compte « {code} » :", parent=self)
+                if not label:
+                    self.vars[field].set("")
+                    return
+                core.add_account(self.conn, code, label)
+            else:
                 self.vars[field].set("")
                 return
-            core.add_account(self.conn, code, label)
-        else:
-            self.vars[field].set("")
+
+        racine = core.account_racine(code)
+        if racine == core.RACINE_FOURNISSEURS:
+            self._force_tiers_selection(field, "fournisseur", code)
+        elif racine == core.RACINE_CLIENTS:
+            self._force_tiers_selection(field, "client", code)
         self._show_account_labels()
 
-    def _force_tiers_selection(self, field, kind):
-        """kind = 'fournisseur' ou 'client'. Remplace le compte racine (40/41) par
-        le compte de détail usuel (401000/411000) et impose de choisir le tiers."""
-        default_compte = "401000" if kind == "fournisseur" else "411000"
+    def _force_tiers_selection(self, field, kind, code):
+        """kind = 'fournisseur' ou 'client'. Impose de choisir le tiers auxiliaire
+        pour tout compte de la racine 40/41 (pas seulement la racine elle-même)."""
         tiers_var_key = "Fournisseur" if kind == "fournisseur" else "Client"
-        tiers_label = "fournisseur" if kind == "fournisseur" else "client"
-        if not core.account_exists(self.conn, default_compte):
-            default_compte = core.RACINE_FOURNISSEURS if kind == "fournisseur" else core.RACINE_CLIENTS
-        self.vars[field].set(default_compte)
+        tiers_var = self.vars[tiers_var_key]
+        if self._extract_code(tiers_var.get()):
+            return  # déjà renseigné, rien à faire
         messagebox.showwarning(
             "Sélection du tiers obligatoire",
-            f"Le compte {core.RACINE_FOURNISSEURS if kind == 'fournisseur' else core.RACINE_CLIENTS} "
-            f"est une racine de regroupement — on ne saisit jamais directement dessus.\n\n"
-            f"Le compte {default_compte} a été sélectionné à sa place. Choisissez maintenant "
-            f"le {tiers_label} concerné dans le champ « {tiers_var_key} » ci-dessous "
-            f"(obligatoire pour valider l'écriture)."
+            f"Le compte « {code} » relève de la racine "
+            f"{core.RACINE_FOURNISSEURS if kind == 'fournisseur' else core.RACINE_CLIENTS} "
+            f"({'Fournisseurs' if kind == 'fournisseur' else 'Clients'}).\n\n"
+            f"Choisissez le {kind} concerné dans le champ « {tiers_var_key} » ci-dessous "
+            f"(il doit déjà exister dans le plan auxiliaire, ex. CL0001 — sinon créez-le d'abord "
+            f"dans l'onglet {'Fournisseurs' if kind == 'fournisseur' else 'Clients'}). "
+            f"C'est obligatoire pour valider l'écriture."
         )
-        self._show_account_labels()
         combo = self.fournisseur_combo if kind == "fournisseur" else self.client_combo
         combo.focus_set()
 
