@@ -541,6 +541,22 @@ def add_entry(conn, date_str, piece, journal, compte, tiers, libelle, debit, cre
     conn.commit()
 
 
+def add_balanced_entry(conn, date_str, piece, journal, compte_debit, compte_credit, montant,
+                        tiers, libelle, analytic_code="", budget_code="", donor_code="", quantite=0):
+    """Crée en une seule opération une écriture équilibrée par construction :
+    une ligne au débit d'un compte, une ligne au crédit d'un autre, même montant.
+    C'est le principe de la partie double — impossible de créer un déséquilibre
+    en passant par cette fonction."""
+    if montant <= 0:
+        raise ValueError("Le montant doit être strictement positif.")
+    if compte_debit == compte_credit:
+        raise ValueError("Le compte débiteur et le compte créditeur doivent être différents.")
+    add_entry(conn, date_str, piece, journal, compte_debit, tiers, libelle, montant, 0,
+              analytic_code=analytic_code, budget_code=budget_code, donor_code=donor_code, quantite=quantite)
+    add_entry(conn, date_str, piece, journal, compte_credit, tiers, libelle, 0, montant,
+              analytic_code=analytic_code, budget_code=budget_code, donor_code=donor_code, quantite=quantite)
+
+
 def update_entry(conn, entry_id, **fields):
     if not fields:
         return

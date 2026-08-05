@@ -122,6 +122,32 @@ Renseignez la quantité sur chaque écriture touchant un compte de stock
 l'application calcule alors le **coût unitaire moyen** (valeur du stock
 final / quantité finale) pour chaque compte.
 
+### Partie double vraiment forcée (mise à jour majeure)
+
+Le formulaire de Saisie a changé de logique : au lieu d'une ligne à la fois
+(un compte + Débit ou Crédit), il demande maintenant **ensemble** :
+**Compte débiteur**, **Compte créditeur** et **Montant**. Cliquer sur
+« Ajouter » crée automatiquement les deux lignes en une seule opération —
+**il est structurellement impossible de créer une écriture déséquilibrée**
+par ce formulaire (le compte débiteur doit être différent du compte
+créditeur, le montant doit être positif, sinon le logiciel refuse).
+
+Les deux champs comptes sont des listes déroulantes avec recherche ; si
+vous quittez le champ avec un code qui n'existe pas dans le Plan comptable,
+l'application vous demande de le créer (avec un libellé) avant de continuer
+— impossible d'enregistrer une écriture sur un compte invalide.
+
+**Modifier une ligne existante** : sélectionnez-la dans le tableau (chaque
+ligne du tableau reste une moitié débit ou crédit, comme avant) — le
+formulaire ne pré-remplit alors que le côté concerné ; ne renseignez que ce
+compte-là pour la modifier.
+
+**Pour les écritures à plus de 2 comptes** (ex. une facture avec TVA
+répartie sur 3 lignes) : ajoutez plusieurs paires successives sur la même
+pièce (le N° Pièce reste rempli après chaque « Ajouter » pour faciliter
+l'enchaînement) — chaque paire est déjà équilibrée, donc la pièce entière
+le reste automatiquement.
+
 ### Gestion des plans (nouveau)
 
 Le menu **SAISIE** contient maintenant 4 écrans pour créer/modifier/
@@ -129,16 +155,11 @@ supprimer les référentiels utilisés lors de la saisie : **Plan comptable**,
 **Plan analytique**, **Plan budgétaire** (avec montant prévu), **Plan
 bailleurs de fonds**.
 
-### Équilibrage obligatoire par pièce (nouveau)
+### (Ancien mécanisme remplacé)
 
-Après avoir cliqué **« Ajouter »**, l'application vérifie que la pièce
-comptable en cours est équilibrée (total Débit = total Crédit) :
-- Si elle ne l'est pas, un message s'affiche indiquant le montant manquant
-  et le sens (Débit ou Crédit), le formulaire se pré-remplit avec ce
-  montant, et le focus se place sur le champ **N° Compte** pour saisir le
-  compte de contrepartie. **Impossible de commencer une nouvelle pièce tant
-  que la précédente n'est pas équilibrée.**
-- Une fois équilibrée, le formulaire se réinitialise normalement.
+L'équilibrage « après coup » ligne par ligne a été remplacé par le
+formulaire Compte débiteur / Compte créditeur décrit plus haut, qui
+équilibre chaque écriture dès sa création plutôt que de le vérifier après.
 
 ### Listes déroulantes avec proposition de création (nouveau)
 

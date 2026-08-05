@@ -135,11 +135,12 @@ class SaisieTab(ttk.Frame):
         self.refresh()
 
     def _build(self):
-        form = ttk.LabelFrame(self, text="Écriture")
+        form = ttk.LabelFrame(self, text="Écriture (partie double : compte débiteur ET compte créditeur obligatoires)")
         form.pack(fill="x", padx=8, pady=8)
 
-        labels = ["Date (JJ/MM/AAAA)", "N° Pièce", "Journal", "N° Compte",
-                  "Tiers", "Libellé", "Débit", "Crédit",
+        labels = ["Date (JJ/MM/AAAA)", "N° Pièce", "Journal",
+                  "Compte débiteur", "Compte créditeur", "Montant",
+                  "Tiers", "Libellé",
                   "Code analytique (ex: AN-FAB)", "Code budgétaire", "Code bailleur", "Quantité"]
         self.vars = {k: tk.StringVar() for k in labels}
         self.vars["Date (JJ/MM/AAAA)"].set(date.today().strftime("%d/%m/%Y"))
@@ -147,12 +148,20 @@ class SaisieTab(ttk.Frame):
         for i, lbl in enumerate(labels):
             r, c = divmod(i, 3)
             ttk.Label(form, text=lbl).grid(row=r * 2, column=c, sticky="w", padx=4, pady=(4, 0))
-            if lbl == "N° Compte":
+            if lbl == "Compte débiteur":
                 widget = ttk.Combobox(form, textvariable=self.vars[lbl], width=22)
                 widget.grid(row=r * 2 + 1, column=c, sticky="we", padx=4, pady=(0, 4))
-                widget.bind("<KeyRelease>", self._on_compte_keyrelease)
-                widget.bind("<<ComboboxSelected>>", self._on_compte_selected)
-                self.compte_combo = widget
+                widget.bind("<KeyRelease>", lambda e: self._on_compte_keyrelease("Compte débiteur"))
+                widget.bind("<<ComboboxSelected>>", lambda e: self._show_account_labels())
+                widget.bind("<FocusOut>", lambda e: self._validate_compte_field("Compte débiteur"))
+                self.compte_debit_combo = widget
+            elif lbl == "Compte créditeur":
+                widget = ttk.Combobox(form, textvariable=self.vars[lbl], width=22)
+                widget.grid(row=r * 2 + 1, column=c, sticky="we", padx=4, pady=(0, 4))
+                widget.bind("<KeyRelease>", lambda e: self._on_compte_keyrelease("Compte créditeur"))
+                widget.bind("<<ComboboxSelected>>", lambda e: self._show_account_labels())
+                widget.bind("<FocusOut>", lambda e: self._validate_compte_field("Compte créditeur"))
+                self.compte_credit_combo = widget
             elif lbl == "Journal":
                 widget = ttk.Combobox(form, textvariable=self.vars[lbl], width=22,
                                        values=["AC", "VE", "OD", "BQ", "CA"])
@@ -193,7 +202,7 @@ class SaisieTab(ttk.Frame):
 
         btns = ttk.Frame(form)
         btns.grid(row=9, column=0, columnspan=3, sticky="w", pady=6, padx=4)
-        ttk.Button(btns, text="Ajouter", command=self.add_entry).pack(side="left", padx=2)
+        ttk.Button(btns, text="Ajouter (écriture équilibrée)", command=self.add_entry).pack(side="left", padx=2)
         ttk.Button(btns, text="Enregistrer modification", command=self.update_entry).pack(side="left", padx=2)
         ttk.Button(btns, text="Supprimer", command=self.delete_entry).pack(side="left", padx=2)
         ttk.Button(btns, text="Effacer le formulaire", command=self.clear_form).pack(side="left", padx=2)
@@ -205,7 +214,9 @@ class SaisieTab(ttk.Frame):
         ttk.Label(import_bar, text=(
             "Pour les volumes importants : préparez un fichier avec les colonnes Date, N° Pièce, "
             "Journal, N° Compte, Tiers, Libellé, Débit, Crédit, Quantité, Code analytique, Code "
-            "budgétaire, Code bailleur (l'ordre n'a pas d'importance), puis importez-le d'un coup."
+            "budgétaire, Code bailleur (l'ordre n'a pas d'importance), puis importez-le d'un coup. "
+            "(L'import accepte un compte par ligne comme avant ; c'est le formulaire ci-dessus qui "
+            "impose désormais la paire débit/crédit.)"
         ), foreground="#595959", wraplength=850).pack(side="left", padx=10)
 
         cols = ("id", "date", "piece", "journal", "compte", "libelle_compte",
@@ -225,31 +236,48 @@ class SaisieTab(ttk.Frame):
         self.totals_var = tk.StringVar()
         ttk.Label(totals, textvariable=self.totals_var, font=("Segoe UI", 10, "bold")).pack(side="left")
 
-    def _extract_compte_code(self):
-        """Le champ affiche soit un code brut, soit 'code — Libellé' choisi dans la liste."""
-        raw = self.vars["N° Compte"].get().strip()
-        if " — " in raw:
-            return raw.split(" — ", 1)[0].strip()
-        return raw
+    def _extract_code(self, raw):
+        raw = (raw or "").strip()
+        return raw.split(" — ", 1)[0].strip() if " — " in raw else raw
 
-    def _on_compte_keyrelease(self, event=None):
-        if event is not None and event.keysym in ("Up", "Down", "Return", "Tab"):
-            return
-        query = self._extract_compte_code()
-        if len(query) >= 1:
+    def _on_compte_keyrelease(self, field, event=None):
+        combo = self.compte_debit_combo if field == "Compte débiteur" else self.compte_credit_combo
+        query = self._extract_code(self.vars[field].get())
+        if query:
             matches = core.search_accounts(self.conn, query, limit=30)
-            self.compte_combo["values"] = [f"{m['code']} — {m['label']}" for m in matches]
-        self._show_account_label()
+            combo["values"] = [f"{m['code']} — {m['label']}" for m in matches]
+        self._show_account_labels()
 
-    def _on_compte_selected(self, event=None):
-        self._show_account_label()
-
-    def _show_account_label(self, event=None):
-        code = self._extract_compte_code()
-        if code:
-            self.account_label_var.set(core.get_account_label(self.conn, code))
+    def _validate_compte_field(self, field):
+        """Force un compte valide : propose de créer le compte ou de choisir dans la liste."""
+        code = self._extract_code(self.vars[field].get())
+        if not code:
+            return
+        if core.account_exists(self.conn, code):
+            return
+        if messagebox.askyesno(
+            "Compte introuvable",
+            f"Le compte « {code} » n'existe pas dans le Plan comptable.\n\n"
+            f"Voulez-vous le créer maintenant ? (Non pour effacer et choisir un compte existant)"
+        ):
+            label = simpledialog.askstring("Nouveau compte", f"Libellé du compte « {code} » :", parent=self)
+            if not label:
+                self.vars[field].set("")
+                return
+            core.add_account(self.conn, code, label)
         else:
-            self.account_label_var.set("")
+            self.vars[field].set("")
+        self._show_account_labels()
+
+    def _show_account_labels(self, event=None):
+        d = self._extract_code(self.vars["Compte débiteur"].get())
+        c = self._extract_code(self.vars["Compte créditeur"].get())
+        parts = []
+        if d:
+            parts.append(f"Débit {d} : {core.get_account_label(self.conn, d)}")
+        if c:
+            parts.append(f"Crédit {c} : {core.get_account_label(self.conn, c)}")
+        self.account_label_var.set("   |   ".join(parts))
 
     def _refresh_plan_values(self, plan):
         if plan == "analytique":
@@ -296,79 +324,126 @@ class SaisieTab(ttk.Frame):
 
     def _get_form(self):
         try:
-            debit = float(self.vars["Débit"].get() or 0)
-            credit = float(self.vars["Crédit"].get() or 0)
+            montant = float(self.vars["Montant"].get() or 0)
             quantite = float(self.vars["Quantité"].get() or 0)
         except ValueError:
-            messagebox.showerror("Erreur", "Débit, Crédit et Quantité doivent être des nombres.")
+            messagebox.showerror("Erreur", "Montant et Quantité doivent être des nombres.")
             return None
         return dict(
             date_str=core.to_iso_date(self.vars["Date (JJ/MM/AAAA)"].get().strip()),
             piece=self.vars["N° Pièce"].get().strip(),
             journal=self.vars["Journal"].get().strip(),
-            compte=self._extract_compte_code(),
+            compte_debit=self._extract_code(self.vars["Compte débiteur"].get()),
+            compte_credit=self._extract_code(self.vars["Compte créditeur"].get()),
+            montant=montant,
             tiers=self.vars["Tiers"].get().strip(),
             libelle=self.vars["Libellé"].get().strip(),
-            debit=debit,
-            credit=credit,
             analytic_code=self._extract_code(self.vars["Code analytique (ex: AN-FAB)"].get()),
             budget_code=self._extract_code(self.vars["Code budgétaire"].get()),
             donor_code=self._extract_code(self.vars["Code bailleur"].get()),
             quantite=quantite,
         )
 
-    @staticmethod
-    def _extract_code(raw):
-        raw = (raw or "").strip()
-        return raw.split(" — ", 1)[0].strip() if " — " in raw else raw
-
     def add_entry(self):
         data = self._get_form()
-        if not data or not data["compte"] or not data["date_str"]:
-            messagebox.showwarning("Champs manquants", "Date et N° Compte sont obligatoires.")
+        if not data:
             return
-        piece = data["piece"]
-        if self.pending_piece and piece != self.pending_piece:
+        missing = []
+        if not data["date_str"]:
+            missing.append("Date")
+        if not data["piece"]:
+            missing.append("N° Pièce")
+        if not data["compte_debit"]:
+            missing.append("Compte débiteur")
+        if not data["compte_credit"]:
+            missing.append("Compte créditeur")
+        if not data["montant"] or data["montant"] <= 0:
+            missing.append("Montant (> 0)")
+        if missing:
             messagebox.showwarning(
-                "Pièce non équilibrée",
-                f"La pièce « {self.pending_piece} » n'est pas encore équilibrée (Débit ≠ Crédit).\n\n"
-                f"Ajoutez le(s) compte(s) de contrepartie pour cette pièce avant d'en commencer une nouvelle."
+                "Champs manquants",
+                "Le principe de la partie double impose de renseigner ensemble le compte "
+                "débiteur ET le compte créditeur pour un même montant.\n\n"
+                "Champs manquants : " + ", ".join(missing)
             )
-            self.vars["N° Pièce"].set(self.pending_piece)
             return
-        core.add_entry(self.conn, **data)
-        self.refresh()
-        d, c = core.get_piece_balance(self.conn, piece) if piece else (0, 0)
-        if piece and abs(d - c) >= 0.01:
-            self.pending_piece = piece
-            manque = abs(d - c)
-            cote = "Crédit" if d > c else "Débit"
-            self.balance_var.set(
-                f"⚠ Pièce « {piece} » non équilibrée — Débit {d:,.2f} / Crédit {c:,.2f} "
-                f"— il manque {manque:,.2f} au {cote}. Choisissez le compte de contrepartie ci-dessous."
+        if not core.account_exists(self.conn, data["compte_debit"]):
+            messagebox.showerror("Compte invalide", f"Le compte débiteur « {data['compte_debit']} » "
+                                                      f"n'existe pas dans le Plan comptable. Créez-le d'abord "
+                                                      f"(quittez le champ pour être invité à le créer).")
+            return
+        if not core.account_exists(self.conn, data["compte_credit"]):
+            messagebox.showerror("Compte invalide", f"Le compte créditeur « {data['compte_credit']} » "
+                                                      f"n'existe pas dans le Plan comptable. Créez-le d'abord "
+                                                      f"(quittez le champ pour être invité à le créer).")
+            return
+        try:
+            core.add_balanced_entry(
+                self.conn, data["date_str"], data["piece"], data["journal"],
+                data["compte_debit"], data["compte_credit"], data["montant"],
+                data["tiers"], data["libelle"],
+                analytic_code=data["analytic_code"], budget_code=data["budget_code"],
+                donor_code=data["donor_code"], quantite=data["quantite"],
             )
-            # Prépare la ligne suivante : même pièce/date/journal, montant manquant pré-rempli
-            self.selected_id = None
-            for k in ("N° Compte", "Tiers", "Libellé", "Code analytique (ex: AN-FAB)",
-                      "Code budgétaire", "Code bailleur", "Quantité"):
-                self.vars[k].set("")
-            self.vars["Débit"].set(f"{manque:.2f}" if cote == "Débit" else "")
-            self.vars["Crédit"].set(f"{manque:.2f}" if cote == "Crédit" else "")
-            self.account_label_var.set("")
-            self.compte_combo.focus_set()
-        else:
-            self.pending_piece = None
-            self.balance_var.set("")
-            self.clear_form()
+        except ValueError as exc:
+            messagebox.showerror("Erreur", str(exc))
+            return
+        self.refresh()
+        self.balance_var.set("")
+        piece = self.vars["N° Pièce"].get().strip()
+        for k in ("Compte débiteur", "Compte créditeur", "Montant", "Tiers", "Libellé",
+                  "Code analytique (ex: AN-FAB)", "Code budgétaire", "Code bailleur", "Quantité"):
+            self.vars[k].set("")
+        self.vars["N° Pièce"].set(piece)  # facilite l'ajout d'autres paires sur la même pièce
+        self.account_label_var.set("")
+        self.selected_id = None
+        self.compte_debit_combo.focus_set()
 
     def update_entry(self):
         if self.selected_id is None:
             messagebox.showinfo("Info", "Sélectionnez d'abord une ligne dans le tableau.")
             return
-        data = self._get_form()
-        if not data:
+        debit_code = self._extract_code(self.vars["Compte débiteur"].get())
+        credit_code = self._extract_code(self.vars["Compte créditeur"].get())
+        if debit_code and credit_code:
+            messagebox.showwarning(
+                "Une seule ligne à la fois",
+                "Pour modifier une écriture existante, ne renseignez que le compte du côté "
+                "concerné (Débit OU Crédit), pas les deux — chaque ligne du tableau est une "
+                "moitié d'une écriture en partie double."
+            )
             return
-        core.update_entry(self.conn, self.selected_id, **data)
+        try:
+            montant = float(self.vars["Montant"].get() or 0)
+            quantite = float(self.vars["Quantité"].get() or 0)
+        except ValueError:
+            messagebox.showerror("Erreur", "Montant et Quantité doivent être des nombres.")
+            return
+        if debit_code:
+            if not core.account_exists(self.conn, debit_code):
+                messagebox.showerror("Compte invalide", f"Le compte « {debit_code} » n'existe pas.")
+                return
+            fields = dict(compte=debit_code, debit=montant, credit=0)
+        elif credit_code:
+            if not core.account_exists(self.conn, credit_code):
+                messagebox.showerror("Compte invalide", f"Le compte « {credit_code} » n'existe pas.")
+                return
+            fields = dict(compte=credit_code, debit=0, credit=montant)
+        else:
+            messagebox.showwarning("Champ manquant", "Renseignez le compte (débiteur ou créditeur) de cette ligne.")
+            return
+        fields.update(
+            date=core.to_iso_date(self.vars["Date (JJ/MM/AAAA)"].get().strip()),
+            piece=self.vars["N° Pièce"].get().strip(),
+            journal=self.vars["Journal"].get().strip(),
+            tiers=self.vars["Tiers"].get().strip(),
+            libelle=self.vars["Libellé"].get().strip(),
+            analytic_code=self._extract_code(self.vars["Code analytique (ex: AN-FAB)"].get()),
+            budget_code=self._extract_code(self.vars["Code budgétaire"].get()),
+            donor_code=self._extract_code(self.vars["Code bailleur"].get()),
+            quantite=quantite,
+        )
+        core.update_entry(self.conn, self.selected_id, **fields)
         self.clear_form()
         self.refresh()
 
@@ -437,16 +512,24 @@ class SaisieTab(ttk.Frame):
         self.vars["Date (JJ/MM/AAAA)"].set(values[1])
         self.vars["N° Pièce"].set(values[2])
         self.vars["Journal"].set(values[3])
-        self.vars["N° Compte"].set(values[4])
+        compte = values[4]
+        debit_val = values[8]
+        credit_val = values[9]
+        self.vars["Compte débiteur"].set("")
+        self.vars["Compte créditeur"].set("")
+        if debit_val:
+            self.vars["Compte débiteur"].set(compte)
+            self.vars["Montant"].set(debit_val)
+        else:
+            self.vars["Compte créditeur"].set(compte)
+            self.vars["Montant"].set(credit_val)
         self.vars["Tiers"].set(values[6])
         self.vars["Libellé"].set(values[7])
-        self.vars["Débit"].set(values[8])
-        self.vars["Crédit"].set(values[9])
         self.vars["Quantité"].set(values[10])
         self.vars["Code analytique (ex: AN-FAB)"].set(values[11])
         self.vars["Code budgétaire"].set(values[12])
         self.vars["Code bailleur"].set(values[13])
-        self._show_account_label()
+        self._show_account_labels()
 
     def refresh(self):
         for row in self.tree.get_children():
