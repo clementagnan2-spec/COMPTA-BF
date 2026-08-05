@@ -1613,6 +1613,54 @@ def compute_balance(conn, only_with_movement=True, include_zero_opening=True, ex
     return result
 
 
+def compute_balance_detaillee(conn, exercice=None):
+    """Balance générale groupée par classe, avec un sous-total par classe et
+    un total général — même structure que la Balance PDF de référence
+    (N° compte, Libellé, Cumul Débit, Cumul Crédit, Solde Débit, Solde
+    Crédit). Calculée à partir de la même compute_balance() que le Bilan,
+    donc garantie cohérente avec lui."""
+    balance = sorted(compute_balance(conn, only_with_movement=True, exercice=exercice),
+                      key=lambda b: b["code"])
+    classes = {}
+    for b in balance:
+        classes.setdefault(b["classe"], []).append(b)
+
+    result_classes = []
+    grand = {"cumul_debit": 0.0, "cumul_credit": 0.0, "solde_debit": 0.0, "solde_credit": 0.0}
+    for classe in sorted(classes.keys()):
+        lignes = []
+        sous_total = {"cumul_debit": 0.0, "cumul_credit": 0.0, "solde_debit": 0.0, "solde_credit": 0.0}
+        for b in classes[classe]:
+            solde_cloture = b["solde_cloture"]
+            solde_debit = solde_cloture if solde_cloture > 0 else 0.0
+            solde_credit = -solde_cloture if solde_cloture < 0 else 0.0
+            lignes.append({
+                "code": b["code"], "label": b["label"], "solde_ouverture": b["solde_ouverture"],
+                "cumul_debit": b["debit"], "cumul_credit": b["credit"],
+                "solde_debit": solde_debit, "solde_credit": solde_credit,
+            })
+            sous_total["cumul_debit"] += b["debit"]
+            sous_total["cumul_credit"] += b["credit"]
+            sous_total["solde_debit"] += solde_debit
+            sous_total["solde_credit"] += solde_credit
+        result_classes.append({"classe": classe, "lignes": lignes, "sous_total": sous_total})
+        for k in grand:
+            grand[k] += sous_total[k]
+
+    return {"classes": result_classes, "grand_total": grand}
+
+
+def compute_tresorerie_detail(conn, exercice=None):
+    """Détail de la trésorerie (classe 5) par compte réel — ex. chaque banque
+    séparément (521110 WENDKUNI BANK, 521120 CORIS BANK...) — calculé à
+    partir de la même compute_balance() que le Bilan et la Balance."""
+    balance = compute_balance(conn, only_with_movement=True, exercice=exercice)
+    lignes = [b for b in balance if b["classe"] == "5"]
+    lignes.sort(key=lambda b: b["code"])
+    total = sum(b["solde_cloture"] for b in lignes)
+    return lignes, total
+
+
 def _sum_accounts(balance, codes):
     """Somme Débit/Crédit pour tous les comptes dont le code COMMENCE PAR l'un
     des préfixes donnés (rétro-compatible : un préfixe de 6 chiffres ne

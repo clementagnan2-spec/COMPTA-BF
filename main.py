@@ -776,14 +776,16 @@ class BalanceTab(ttk.Frame):
     def __init__(self, parent, conn):
         super().__init__(parent)
         self.conn = conn
-        cols = ("compte", "libelle", "ouverture", "debit", "credit", "mouvement", "cloture")
+        cols = ("compte", "libelle", "ouverture", "cumul_debit", "cumul_credit", "solde_debit", "solde_credit")
         self.tree = ttk.Treeview(self, columns=cols, show="headings")
-        headers = ["N° Compte", "Libellé du compte", "Solde Ouverture", "Total Débit", "Total Crédit",
-                   "Solde Mouvement", "Solde Clôture"]
-        widths = [90, 280, 110, 100, 100, 110, 110]
+        headers = ["N° Compte", "Libellé du compte", "Solde Ouverture", "Cumul Débit", "Cumul Crédit",
+                   "Solde Débit", "Solde Crédit"]
+        widths = [90, 260, 110, 110, 110, 110, 110]
         for c, h, w in zip(cols, headers, widths):
             self.tree.heading(c, text=h)
             self.tree.column(c, width=w, anchor="w")
+        self.tree.tag_configure("classe_total", background="#DCE6F1", font=("Segoe UI", 9, "bold"))
+        self.tree.tag_configure("grand_total", background="#1F4E78", foreground="white", font=("Segoe UI", 10, "bold"))
         self.tree.pack(fill="both", expand=True, padx=8, pady=8)
         ttk.Button(self, text="Actualiser", command=self.refresh).pack(pady=(0, 8))
         self.refresh()
@@ -791,12 +793,27 @@ class BalanceTab(ttk.Frame):
     def refresh(self):
         for row in self.tree.get_children():
             self.tree.delete(row)
-        for b in core.compute_balance(self.conn):
-            self.tree.insert("", "end", values=(
-                b["code"], b["label"], f"{b['solde_ouverture']:,.2f}",
-                f"{b['debit']:,.2f}", f"{b['credit']:,.2f}",
-                f"{b['solde']:,.2f}", f"{b['solde_cloture']:,.2f}"
+        data = core.compute_balance_detaillee(self.conn)
+        for c in data["classes"]:
+            for l in c["lignes"]:
+                self.tree.insert("", "end", values=(
+                    l["code"], l["label"], f"{l['solde_ouverture']:,.2f}",
+                    f"{l['cumul_debit']:,.2f}", f"{l['cumul_credit']:,.2f}",
+                    f"{l['solde_debit']:,.2f}" if l["solde_debit"] else "",
+                    f"{l['solde_credit']:,.2f}" if l["solde_credit"] else "",
+                ))
+            st = c["sous_total"]
+            self.tree.insert("", "end", tags=("classe_total",), values=(
+                "", f"TOTAL CLASSE {c['classe']}", "",
+                f"{st['cumul_debit']:,.2f}", f"{st['cumul_credit']:,.2f}",
+                f"{st['solde_debit']:,.2f}", f"{st['solde_credit']:,.2f}",
             ))
+        gt = data["grand_total"]
+        self.tree.insert("", "end", tags=("grand_total",), values=(
+            "", "TOTAL BALANCE", "",
+            f"{gt['cumul_debit']:,.2f}", f"{gt['cumul_credit']:,.2f}",
+            f"{gt['solde_debit']:,.2f}", f"{gt['solde_credit']:,.2f}",
+        ))
 
 
 class CompteResultatTab(ttk.Frame):
@@ -833,23 +850,87 @@ class BilanTab(ttk.Frame):
     def __init__(self, parent, conn):
         super().__init__(parent)
         self.conn = conn
-        self.text = tk.Text(self, font=("Consolas", 11), wrap="none")
+        self.text = tk.Text(self, font=("Consolas", 10), wrap="none")
         self.text.pack(fill="both", expand=True, padx=8, pady=8)
         ttk.Button(self, text="Actualiser", command=self.refresh).pack(pady=(0, 8))
         self.refresh()
 
     def refresh(self):
-        b = core.compute_bilan(self.conn)
-        lines = ["BILAN", "=" * 60, "", "ACTIF"]
-        for k, v in b["actif"].items():
-            lines.append(f"  {k:<50} {v:>12,.2f}")
-        lines.append(f"  {'TOTAL ACTIF':<50} {b['total_actif']:>12,.2f}")
-        lines += ["", "PASSIF"]
-        for k, v in b["passif"].items():
-            lines.append(f"  {k:<50} {v:>12,.2f}")
-        lines.append(f"  {'TOTAL PASSIF':<50} {b['total_passif']:>12,.2f}")
-        lines += ["", f"Écart Actif - Passif : {b['ecart']:,.2f}",
-                  "(doit être proche de 0 ; un écart signale des soldes d'ouverture non saisis)"]
+        liasse = core.compute_liasse_bilan(self.conn)
+        b = liasse["totaux"]
+        ad = liasse["actif_detail"]
+        acd = liasse["actif_circulant_detail"]
+        pd = liasse["passif_detail"]
+        stocks_detail = core.compute_stocks_detail(self.conn)
+        treso_lignes, treso_total = core.compute_tresorerie_detail(self.conn)
+
+        def ligne(label, val, width=55):
+            return f"  {label:<{width}} {val:>16,.2f}"
+
+        lines = ["BILAN", "=" * 78, ""]
+
+        lines.append("ACTIF")
+        lines.append("-" * 78)
+        lines.append("  Immobilisations (détail — net) :")
+        for k, v in ad.items():
+            if v["net"]:
+                lines.append(ligne(f"    {k}", v["net"], 51))
+        lines.append(ligne("  Immobilisations nettes (total)", b["actif"]["Immobilisations nettes"]))
+        lines.append("")
+        lines.append("  Stocks (détail par compte) :")
+        for s in stocks_detail:
+            if s["stock_final"]:
+                lines.append(ligne(f"    {s['code']} {s['label']}", s["stock_final"], 51))
+        lines.append(ligne("  Stocks (total)", b["actif"]["Stocks"]))
+        lines.append("")
+        lines.append("  Créances et emplois assimilés (détail) :")
+        lines.append(ligne("    Avances versées sur commandes", acd["BH"], 51))
+        lines.append(ligne("    Clients", acd["BI"], 51))
+        lines.append(ligne("  Créances et emplois assimilés (total)", b["actif"]["Créances et emplois assimilés"]))
+        lines.append("")
+        lines.append("  Trésorerie actif (détail par banque/caisse) :")
+        for t in treso_lignes:
+            if t["solde_cloture"] > 0:
+                lines.append(ligne(f"    {t['code']} {t['label']}", t["solde_cloture"], 51))
+        lines.append(ligne("  Trésorerie actif (total)", b["actif"]["Trésorerie actif"]))
+        lines.append("")
+        lines.append(ligne("TOTAL ACTIF", b["total_actif"]))
+        lines.append("")
+
+        lines.append("PASSIF")
+        lines.append("-" * 78)
+        lines.append("  Capitaux propres (détail) :")
+        for k, v in pd.items():
+            if k in ("DA", "DB", "DC", "DJ", "DH_avances", "DK", "DM"):
+                continue
+            if v:
+                lines.append(ligne(f"    {k}", v, 51))
+        lines.append(ligne("  Capital et réserves (total)", b["passif"]["Capital et réserves"]))
+        lines.append("")
+        lines.append(ligne("  Résultat net de l'exercice", b["passif"]["Résultat net de l'exercice"]))
+        lines.append(ligne("  Dettes financières", pd["DA"]))
+        lines.append("")
+        lines.append("  Dettes circulantes (détail) :")
+        lines.append(ligne("    Fournisseurs et comptes rattachés", pd["DJ"], 51))
+        lines.append(ligne("    Avances reçues des fournisseurs", pd["DH_avances"], 51))
+        lines.append(ligne("    Dettes fiscales et sociales", pd["DK"], 51))
+        lines.append(ligne("    Autres dettes", pd["DM"], 51))
+        lines.append(ligne("  Dettes circulantes (total)", b["passif"]["Dettes circulantes"]))
+        lines.append("")
+        lines.append("  Trésorerie passif (détail par banque/caisse) :")
+        for t in treso_lignes:
+            if t["solde_cloture"] < 0:
+                lines.append(ligne(f"    {t['code']} {t['label']}", -t["solde_cloture"], 51))
+        lines.append(ligne("  Trésorerie passif (total)", b["passif"]["Trésorerie passif"]))
+        lines.append("")
+        lines.append(ligne("TOTAL PASSIF", b["total_passif"]))
+        lines.append("")
+        lines.append(f"Écart Actif - Passif : {b['ecart']:,.2f}")
+        lines.append("(doit être proche de 0 ; un écart signale des soldes d'ouverture non saisis)")
+        lines.append("")
+        lines.append("NB : ces chiffres sont calculés à partir de la même Balance générale que")
+        lines.append("l'onglet « Balance » (États et rapports) — les deux sont donc toujours cohérents.")
+
         self.text.delete("1.0", "end")
         self.text.insert("1.0", "\n".join(lines))
 

@@ -421,6 +421,34 @@ Les 4 écrans de gestion des plans (Plan comptable, Plan analytique, Plan
 budgétaire, Plan bailleurs de fonds) ainsi que les **Exercices comptables**
 sont désormais regroupés dans le menu **PARAMÈTRES**.
 
+### Balance et Bilan reformatés (nouveau, cohérence garantie entre eux)
+
+**Balance** (États et rapports → Balance) : reformatée en **Balance
+générale groupée par classe**, avec pour chaque compte les colonnes Solde
+Ouverture, Cumul Débit, Cumul Crédit, **Solde Débit** et **Solde Crédit**
+(séparés, comme une balance comptable classique), un **sous-total par
+classe** (ligne bleutée « TOTAL CLASSE X ») et un **total général** en bas
+(ligne foncée « TOTAL BALANCE ») — structure proche de votre balance PDF de
+référence.
+
+**Bilan** (États et rapports → Bilan) : largement enrichi avec le détail
+par poste :
+- Immobilisations nettes détaillées par catégorie
+- **Stocks détaillés par compte réel** (ex. 321001 CLINKER), pas seulement
+  le total
+- Créances détaillées (avances versées / clients)
+- **Trésorerie détaillée par banque/caisse** (chaque compte 52x séparément,
+  comme dans votre PDF)
+- Dettes circulantes détaillées (fournisseurs / avances reçues / dettes
+  fiscales et sociales / autres dettes)
+
+**Cohérence garantie entre les deux** : Balance et Bilan sont désormais
+calculés à partir de **la même fonction `compute_balance()`** — testé et
+vérifié : le Total Actif du Bilan correspond exactement à la somme des
+soldes débiteurs de la Balance sur les classes 1 à 5 (14 700 000 = 14 700
+000 dans le scénario testé, avec plusieurs banques et sous-comptes de stock
+détaillés). Aucune régression sur les scénarios précédents.
+
 ### Racines des comptes (nouveau)
 
 Chaque compte du Plan comptable est désormais rattaché à une **racine**,
