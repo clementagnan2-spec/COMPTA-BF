@@ -1651,7 +1651,79 @@ class ProductionTab(ttk.Frame):
         self.periode_tab.refresh()
 
 
-class TftTab(ttk.Frame):
+class TftIndirectTab(ttk.Frame):
+    """TFT selon la méthode indirecte SYSCOHADA (avec CAFG), présenté selon le
+    modèle officiel. Calculé à partir de compute_balance() et
+    compute_liasse_resultat() — donc toujours cohérent avec la Balance et le
+    Bilan. La ligne CONTRÔLE compare la trésorerie calculée à la trésorerie
+    réelle de la Balance : un écart signale un mouvement mal classé."""
+
+    def __init__(self, parent, conn):
+        super().__init__(parent)
+        self.conn = conn
+        self.text = tk.Text(self, font=("Consolas", 10), wrap="none")
+        self.text.pack(fill="both", expand=True, padx=8, pady=8)
+        ttk.Button(self, text="Actualiser", command=self.refresh).pack(pady=(0, 8))
+        self.refresh()
+
+    def refresh(self):
+        t = core.compute_tft_indirect(self.conn)
+
+        def ligne(label, val, width=58):
+            return f"  {label:<{width}} {val:>16,.2f}"
+
+        lines = [
+            "TABLEAU DE FLUX DE TRÉSORERIE (méthode indirecte — CAFG)", "=" * 82, "",
+            ligne("A - Trésorerie nette au 1er janvier", t["treso_ouverture"]), "",
+            "DÉTERMINATION DE LA CAPACITÉ D'AUTOFINANCEMENT GLOBALE (CAFG)", "-" * 82,
+            ligne("Excédent Brut d'Exploitation (EBE)", t["ebe"]),
+            ligne("+ Revenus financiers", t["revenus_financiers"]),
+            ligne("- Frais financiers", t["frais_financiers"]),
+            ligne("CAPACITÉ D'AUTOFINANCEMENT GLOBALE (CAFG)", t["cafg"]), "",
+            ligne("- Variation des stocks", t["variation_stocks"]),
+            ligne("- Variation des créances", t["variation_creances"]),
+            ligne("+ Variation du passif circulant (dettes)", t["variation_dettes_circulantes"]),
+            ligne("FLUX DE TRÉSORERIE DES ACTIVITÉS OPÉRATIONNELLES (A)", t["flux_operationnel"]), "",
+            "FLUX DE TRÉSORERIE DES ACTIVITÉS D'INVESTISSEMENT", "-" * 82,
+            ligne("- Acquisitions d'immobilisations incorporelles", t["acquisitions_incorp"]),
+            ligne("- Acquisitions d'immobilisations corporelles", t["acquisitions_corp"]),
+            ligne("- Acquisitions d'immobilisations financières", t["acquisitions_fin"]),
+            ligne("+ Cessions d'immobilisations incorporelles", t["cessions_incorp"]),
+            ligne("+ Cessions d'immobilisations corporelles", t["cessions_corp"]),
+            ligne("+ Cessions d'immobilisations financières", t["cessions_fin"]),
+            ligne("FLUX DE TRÉSORERIE DES ACTIVITÉS D'INVESTISSEMENT (B)", t["flux_investissement"]), "",
+            "FLUX DE TRÉSORERIE DES ACTIVITÉS DE FINANCEMENT", "-" * 82,
+            ligne("+ Augmentation de capital par apports nouveaux", t["augmentation_capital"]),
+            ligne("+ Subventions d'investissement reçues", t["subventions_recues"]),
+            ligne("- Prélèvements sur le capital", t["prelevements_capital"]),
+            ligne("- Dividendes versés", t["dividendes_verses"]),
+            ligne("  Flux de trésorerie provenant des capitaux propres", t["flux_capitaux_propres"]),
+            ligne("+ Emprunts nouveaux", t["emprunts_nouveaux"]),
+            ligne("- Remboursements des emprunts", t["remboursements_emprunts"]),
+            ligne("  Flux de trésorerie provenant des capitaux étrangers", t["flux_capitaux_etrangers"]),
+            ligne("FLUX DE TRÉSORERIE DES ACTIVITÉS DE FINANCEMENT (C)", t["flux_financement"]), "",
+            "=" * 82,
+            ligne("VARIATION DE LA TRÉSORERIE NETTE (A+B+C)", t["variation_treso_nette"]),
+            ligne("TRÉSORERIE NETTE CALCULÉE AU 31/12/N", t["treso_cloture_calculee"]), "",
+            ligne("CONTRÔLE — Trésorerie réelle (Balance, classe 5)", t["treso_cloture_reelle"]),
+            ligne("ÉCART", t["ecart"]),
+        ]
+        if abs(t["ecart"]) < 1:
+            lines.append("  ✓ La trésorerie calculée correspond exactement à la trésorerie de la Balance.")
+        else:
+            lines.append("  ⚠ Écart : un mouvement de trésorerie n'est peut-être pas correctement classé")
+            lines.append("    (vérifiez les comptes d'immobilisations, capital ou emprunts utilisés).")
+        lines.append("")
+        lines.append("NB : calculé à partir de la même Balance générale que les onglets Balance et Bilan.")
+
+        self.text.delete("1.0", "end")
+        self.text.insert("1.0", "\n".join(lines))
+
+
+class TftDirectTab(ttk.Frame):
+    """Ancienne méthode (directe, par code flux EXP/INV/FIN) — conservée pour
+    référence ; la méthode indirecte (CAFG) est désormais la vue principale."""
+
     def __init__(self, parent, conn):
         super().__init__(parent)
         self.conn = conn
@@ -1707,6 +1779,22 @@ class TftTab(ttk.Frame):
         ]
         self.text.delete("1.0", "end")
         self.text.insert("1.0", "\n".join(lines))
+
+
+class TftTab(ttk.Frame):
+    def __init__(self, parent, conn):
+        super().__init__(parent)
+        self.conn = conn
+        inner = ttk.Notebook(self)
+        inner.pack(fill="both", expand=True)
+        self.indirect_tab = TftIndirectTab(inner, conn)
+        self.direct_tab = TftDirectTab(inner, conn)
+        inner.add(self.indirect_tab, text="TFT (méthode indirecte — CAFG)")
+        inner.add(self.direct_tab, text="TFT (méthode directe — ancien)")
+
+    def refresh(self):
+        self.indirect_tab.refresh()
+        self.direct_tab.refresh()
 
 
 class LiasseFiscaleTab(ttk.Frame):

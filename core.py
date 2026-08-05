@@ -2535,6 +2535,123 @@ def compute_tft(conn, treso_ouverture=None, exercice=None):
     }
 
 
+def compute_tft_indirect(conn, exercice=None):
+    """TFT selon la méthode indirecte SYSCOHADA (avec CAFG), au même format
+    que le modèle officiel : A) trésorerie d'ouverture, détermination de la
+    CAFG, variations du BFR (stocks/créances/dettes circulantes), flux
+    d'investissement (acquisitions/cessions d'immobilisations), flux de
+    financement (capital, subventions, emprunts). Entièrement calculé à
+    partir de compute_balance() et compute_liasse_resultat() — donc toujours
+    cohérent avec la Balance et le Bilan. La ligne CONTRÔLE compare la
+    trésorerie calculée à la trésorerie réelle de la Balance (classe 5) :
+    tout écart signale un mouvement de trésorerie non correctement classé."""
+    exercice = exercice or get_current_exercice(conn)
+    balance = compute_balance(conn, only_with_movement=False, exercice=exercice)
+    cr = compute_liasse_resultat(conn, exercice=exercice)
+
+    # ---- Trésorerie (classe 5 entière, comme la Balance) ----
+    treso_ouverture = sum(b["solde_ouverture"] for b in balance if b["classe"] == "5")
+    treso_cloture_reelle = sum(b["solde_cloture"] for b in balance if b["classe"] == "5")
+
+    # ---- CAFG (à partir des soldes déjà calculés pour le Compte de résultat) ----
+    ebe = cr["XD"]  # Excédent brut d'exploitation = Valeur ajoutée - charges de personnel
+    revenus_financiers = cr["TK"]      # produits financiers (771, 776)
+    frais_financiers = -cr["RM"]       # charges financières (671, 676), en décaissement
+    cafg = ebe + revenus_financiers + frais_financiers
+
+    # ---- Variation du BFR (comparaison ouverture/clôture, cohérente avec le Bilan) ----
+    def _delta_racines(prefixes):
+        ouverture = sum(b["solde_ouverture"] for b in balance if any(b["code"].startswith(p) for p in prefixes))
+        cloture = sum(b["solde_cloture"] for b in balance if any(b["code"].startswith(p) for p in prefixes))
+        return ouverture, cloture
+
+    stock_ouv, stock_clo = _delta_racines(COMPTES_STOCK_PREFIXES)
+    variation_stocks = -(stock_clo - stock_ouv)  # une hausse de stock consomme de la trésorerie
+
+    # Créances : racine 41 (toujours créances) + autres racines de tiers débitrices (42-49)
+    autres_racines_tiers = [str(r) for r in range(42, 50)]
+    creances_ouv = sum(b["solde_ouverture"] for b in balance if account_racine(b["code"]) == RACINE_CLIENTS)
+    creances_clo = sum(b["solde_cloture"] for b in balance if account_racine(b["code"]) == RACINE_CLIENTS)
+    for r in autres_racines_tiers:
+        creances_ouv += sum(b["solde_ouverture"] for b in balance
+                             if account_racine(b["code"]) == r and b["solde_ouverture"] > 0)
+        creances_clo += sum(b["solde_cloture"] for b in balance
+                             if account_racine(b["code"]) == r and b["solde_cloture"] > 0)
+    variation_creances = -(creances_clo - creances_ouv)  # une hausse de créances consomme de la trésorerie
+
+    # Dettes circulantes : racine 40 (toujours dettes) + autres racines créditrices (42-49)
+    dettes_ouv = -sum(b["solde_ouverture"] for b in balance if account_racine(b["code"]) == RACINE_FOURNISSEURS)
+    dettes_clo = -sum(b["solde_cloture"] for b in balance if account_racine(b["code"]) == RACINE_FOURNISSEURS)
+    for r in autres_racines_tiers:
+        dettes_ouv += -sum(b["solde_ouverture"] for b in balance
+                            if account_racine(b["code"]) == r and b["solde_ouverture"] < 0)
+        dettes_clo += -sum(b["solde_cloture"] for b in balance
+                            if account_racine(b["code"]) == r and b["solde_cloture"] < 0)
+    variation_dettes_circulantes = dettes_clo - dettes_ouv  # une hausse de dettes fournit de la trésorerie
+
+    flux_operationnel = cafg + variation_stocks + variation_creances + variation_dettes_circulantes
+
+    # ---- Flux d'investissement (acquisitions = débit de l'exercice sur les comptes d'immobilisations) ----
+    def _debit_classe(prefixes):
+        d, c = _sum_accounts(balance, prefixes)
+        return d, c
+
+    incorp_debit, incorp_credit = _debit_classe(["20", "21"])
+    corp_debit, corp_credit = _debit_classe(["22", "23", "24"])
+    fin_debit, fin_credit = _debit_classe(["26", "27"])
+    acquisitions_incorp = -incorp_debit
+    acquisitions_corp = -corp_debit
+    acquisitions_fin = -fin_debit
+    cessions_incorp = incorp_credit  # rare (compte 21 crédité lors d'une cession/sortie)
+    cessions_corp = corp_credit
+    cessions_fin = fin_credit
+    flux_investissement = (acquisitions_incorp + acquisitions_corp + acquisitions_fin
+                            + cessions_incorp + cessions_corp + cessions_fin)
+
+    # ---- Flux de financement ----
+    capital_debit, capital_credit = _debit_classe(["101", "104", "105"])
+    augmentation_capital = capital_credit
+    prelevements_capital = -capital_debit
+    subv_debit, subv_credit = _debit_classe(["14"])
+    subventions_recues = subv_credit
+    dividendes_verses = 0.0  # non isolé dans le plan comptable par défaut
+    flux_capitaux_propres = augmentation_capital + subventions_recues + prelevements_capital + dividendes_verses
+
+    emprunts_debit, emprunts_credit = _debit_classe(["16", "17"])
+    emprunts_nouveaux = emprunts_credit
+    remboursements_emprunts = -emprunts_debit
+    flux_capitaux_etrangers = emprunts_nouveaux + remboursements_emprunts
+
+    flux_financement = flux_capitaux_propres + flux_capitaux_etrangers
+
+    variation_treso_nette = flux_operationnel + flux_investissement + flux_financement
+    treso_cloture_calculee = treso_ouverture + variation_treso_nette
+    ecart = treso_cloture_calculee - treso_cloture_reelle
+
+    return {
+        "treso_ouverture": treso_ouverture,
+        "ebe": ebe, "revenus_financiers": revenus_financiers, "frais_financiers": frais_financiers,
+        "cafg": cafg,
+        "variation_stocks": variation_stocks, "variation_creances": variation_creances,
+        "variation_dettes_circulantes": variation_dettes_circulantes,
+        "flux_operationnel": flux_operationnel,
+        "acquisitions_incorp": acquisitions_incorp, "acquisitions_corp": acquisitions_corp,
+        "acquisitions_fin": acquisitions_fin,
+        "cessions_incorp": cessions_incorp, "cessions_corp": cessions_corp, "cessions_fin": cessions_fin,
+        "flux_investissement": flux_investissement,
+        "augmentation_capital": augmentation_capital, "subventions_recues": subventions_recues,
+        "prelevements_capital": prelevements_capital, "dividendes_verses": dividendes_verses,
+        "flux_capitaux_propres": flux_capitaux_propres,
+        "emprunts_nouveaux": emprunts_nouveaux, "remboursements_emprunts": remboursements_emprunts,
+        "flux_capitaux_etrangers": flux_capitaux_etrangers,
+        "flux_financement": flux_financement,
+        "variation_treso_nette": variation_treso_nette,
+        "treso_cloture_calculee": treso_cloture_calculee,
+        "treso_cloture_reelle": treso_cloture_reelle,
+        "ecart": ecart,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Export de la liasse fiscale (.xlsx), mise en page SYSCOHADA système normal
 # ---------------------------------------------------------------------------

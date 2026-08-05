@@ -421,6 +421,30 @@ Les 4 écrans de gestion des plans (Plan comptable, Plan analytique, Plan
 budgétaire, Plan bailleurs de fonds) ainsi que les **Exercices comptables**
 sont désormais regroupés dans le menu **PARAMÈTRES**.
 
+### TFT en méthode indirecte — CAFG (nouveau, cohérent avec la Balance)
+
+L'onglet **TFT** contient maintenant deux sous-onglets :
+
+**« TFT (méthode indirecte — CAFG) »** *(nouveau, vue principale)* : suit
+exactement la structure du modèle officiel SYSCOHADA que vous avez fourni —
+trésorerie d'ouverture, détermination de la **Capacité d'Autofinancement
+Globale (CAFG)** à partir de l'EBE, des revenus et frais financiers, puis
+variation du BFR (stocks, créances, dettes circulantes) pour obtenir le
+flux des activités opérationnelles ; flux d'investissement (acquisitions/
+cessions d'immobilisations incorporelles, corporelles, financières) ; flux
+de financement (capital, subventions, emprunts).
+
+Entièrement calculé à partir de **la même `compute_balance()`** que les
+onglets Balance et Bilan — une ligne **CONTRÔLE** compare la trésorerie
+recalculée par la méthode indirecte à la trésorerie réelle de la Balance
+(classe 5) ; l'**écart doit être nul**, ce qui garantit la cohérence entre
+les trois états. Testé avec plusieurs scénarios (vente à crédit, achat de
+stock au comptant, encaissement partiel, remboursement d'emprunt) : écart
+toujours à 0, trésorerie calculée = trésorerie réelle au FCFA près.
+
+**« TFT (méthode directe — ancien) »** : l'ancienne vue (basée sur le code
+flux EXP/INV/FIN), conservée pour référence mais reléguée en second plan.
+
 ### Balance et Bilan reformatés (mise à jour, cohérence garantie entre eux)
 
 **Balance** (États et rapports → Balance) : reformatée en **Balance
