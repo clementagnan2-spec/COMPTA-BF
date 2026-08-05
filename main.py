@@ -329,9 +329,17 @@ class SaisieTab(ttk.Frame):
         self._show_account_labels()
 
     def _validate_compte_field(self, field):
-        """Force un compte valide : propose de créer le compte ou de choisir dans la liste."""
+        """Force un compte valide : propose de créer le compte ou de choisir dans la liste.
+        Si le compte saisi est une racine de tiers (40 ou 41), impose de choisir le
+        tiers auxiliaire concerné avant de continuer."""
         code = self._extract_code(self.vars[field].get())
         if not code:
+            return
+        if code == core.RACINE_FOURNISSEURS:
+            self._force_tiers_selection(field, "fournisseur")
+            return
+        if code == core.RACINE_CLIENTS:
+            self._force_tiers_selection(field, "client")
             return
         if core.account_exists(self.conn, code):
             return
@@ -348,6 +356,27 @@ class SaisieTab(ttk.Frame):
         else:
             self.vars[field].set("")
         self._show_account_labels()
+
+    def _force_tiers_selection(self, field, kind):
+        """kind = 'fournisseur' ou 'client'. Remplace le compte racine (40/41) par
+        le compte de détail usuel (401000/411000) et impose de choisir le tiers."""
+        default_compte = "401000" if kind == "fournisseur" else "411000"
+        tiers_var_key = "Fournisseur" if kind == "fournisseur" else "Client"
+        tiers_label = "fournisseur" if kind == "fournisseur" else "client"
+        if not core.account_exists(self.conn, default_compte):
+            default_compte = core.RACINE_FOURNISSEURS if kind == "fournisseur" else core.RACINE_CLIENTS
+        self.vars[field].set(default_compte)
+        messagebox.showwarning(
+            "Sélection du tiers obligatoire",
+            f"Le compte {core.RACINE_FOURNISSEURS if kind == 'fournisseur' else core.RACINE_CLIENTS} "
+            f"est une racine de regroupement — on ne saisit jamais directement dessus.\n\n"
+            f"Le compte {default_compte} a été sélectionné à sa place. Choisissez maintenant "
+            f"le {tiers_label} concerné dans le champ « {tiers_var_key} » ci-dessous "
+            f"(obligatoire pour valider l'écriture)."
+        )
+        self._show_account_labels()
+        combo = self.fournisseur_combo if kind == "fournisseur" else self.client_combo
+        combo.focus_set()
 
     def _show_account_labels(self, event=None):
         d = self._extract_code(self.vars["Compte débiteur"].get())
@@ -515,6 +544,23 @@ class SaisieTab(ttk.Frame):
                                                       f"n'existe pas dans le Plan comptable. Créez-le d'abord "
                                                       f"(quittez le champ pour être invité à le créer).")
             return
+        for cote, code in (("débiteur", data["compte_debit"]), ("créditeur", data["compte_credit"])):
+            if core.account_racine(code) == core.RACINE_FOURNISSEURS and not data["fournisseur_code"]:
+                messagebox.showwarning(
+                    "Fournisseur obligatoire",
+                    f"Le compte {cote} « {code} » relève de la racine 40 (Fournisseurs) : "
+                    f"le champ « Fournisseur » est obligatoire pour cette écriture."
+                )
+                self.fournisseur_combo.focus_set()
+                return
+            if core.account_racine(code) == core.RACINE_CLIENTS and not data["client_code"]:
+                messagebox.showwarning(
+                    "Client obligatoire",
+                    f"Le compte {cote} « {code} » relève de la racine 41 (Clients) : "
+                    f"le champ « Client » est obligatoire pour cette écriture."
+                )
+                self.client_combo.focus_set()
+                return
         try:
             core.add_balanced_entry(
                 self.conn, data["date_str"], data["piece"], data["journal"],

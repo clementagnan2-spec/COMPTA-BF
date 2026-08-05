@@ -268,8 +268,24 @@ racine ») :
   (Organismes internationaux), 46 (Associés/Groupe), 47 (Débiteurs/
   créditeurs divers), 48 (Régularisations), 49 (Dépréciations sur tiers).
 
+**Les comptes racines existent désormais réellement dans le Plan comptable**
+(1, 2, 3, 5, 6, 7, 8, 9, 40 à 49), avec un libellé entre tirets (ex. « —
+Fournisseurs et comptes rattachés — ») pour les repérer facilement. Grâce au
+tri alphabétique des codes, chaque racine **apparaît en tête de son groupe**
+dans toutes les listes de comptes (ex. le compte « 1 » avant 101000, 101100,
+etc. ; le compte « 40 » avant 400000, 401000, 401100...).
+
 Les fiches auxiliaires créées dans **Fournisseurs** sont rattachées à la
 racine **40**, celles créées dans **Clients** à la racine **41**.
+
+**Sélection du tiers rendue obligatoire (nouveau)** : dans l'onglet Saisie,
+si vous tapez directement le compte racine **40** ou **41** dans « Compte
+débiteur »/« Compte créditeur », l'application vous avertit qu'on ne saisit
+jamais directement sur une racine de regroupement, bascule automatiquement
+sur le compte de détail usuel (401000/411000), et impose de choisir le
+fournisseur ou le client dans le champ correspondant. Plus largement, **toute
+écriture sur un compte de la racine 40 sans fournisseur renseigné (ou de la
+racine 41 sans client renseigné) est bloquée** à l'enregistrement.
 
 **Tous les calculs liés aux comptes de tiers ont été mis à jour en
 conséquence** :
@@ -286,7 +302,9 @@ conséquence** :
 
 Testé de bout en bout : Bilan équilibré avec un compte fournisseur débiteur
 (avance, compte 409xxx) et un compte client sur un effet à recevoir (compte
-412xxx), tous deux désormais correctement classés.
+412xxx), tous deux désormais correctement classés ; comptes racines vérifiés
+existants et correctement triés (« 1 » avant 101000, « 40 » avant 400000-
+409xxx) ; écriture réelle avec fournisseur tagué toujours cohérente.
 
 ### Gestion des plans (détail des écrans)
 

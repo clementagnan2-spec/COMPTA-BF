@@ -410,6 +410,7 @@ def init_db(conn):
     _migrate(conn)
     if conn.execute("SELECT COUNT(*) FROM accounts").fetchone()[0] == 0:
         load_plan_comptable(conn)
+    ensure_racine_accounts(conn)
 
 
 def _migrate(conn):
@@ -594,6 +595,27 @@ def load_plan_comptable(conn, json_path=None):
         "INSERT OR REPLACE INTO accounts (code, label, classe) VALUES (?, ?, ?)",
         [(a["code"], a["label"], a["classe"]) for a in accounts],
     )
+    conn.commit()
+    ensure_racine_accounts(conn)
+
+
+def ensure_racine_accounts(conn):
+    """Insère les comptes racines (1 chiffre pour les classes 1,2,3,5,6,7,8,9 ;
+    2 chiffres 40 à 49 pour la classe 4) s'ils n'existent pas déjà, sans écraser
+    un compte que l'utilisateur aurait éventuellement créé avec ce même code.
+    Grâce au tri alphabétique des codes (ex. '1' < '101000'), ces racines
+    apparaissent en tête de chaque groupe dans les listes de comptes."""
+    racines = []
+    for c in ("1", "2", "3", "5", "6", "7", "8", "9"):
+        racines.append((c, RACINE_LABELS.get(c, f"Classe {c}"), c))
+    for r in range(40, 50):
+        code = str(r)
+        racines.append((code, RACINE_LABELS.get(code, f"Racine {code}"), "4"))
+    for code, label, classe in racines:
+        exists = conn.execute("SELECT 1 FROM accounts WHERE code = ?", (code,)).fetchone()
+        if not exists:
+            conn.execute("INSERT INTO accounts (code, label, classe) VALUES (?, ?, ?)",
+                         (code, f"— {label} —", classe))
     conn.commit()
 
 
