@@ -70,6 +70,7 @@ class App(tk.Tk):
         register("marges", MargesTab)
         register("achats", AchatsTab)
         register("fournisseurs", FournisseursTab)
+        register("factures_frs", FacturesFrsTab)
         register("contrats", ContratsTab)
         register("budget_exec", PlaceholderTab,
                  "Tableaux d'exécution budgétaire",
@@ -113,6 +114,7 @@ class App(tk.Tk):
         add_top_menu("ENGAGEMENTS-PROJETS", [
             ("Achats", "achats"),
             ("Fournisseurs", "fournisseurs"),
+            ("Factures frs", "factures_frs"),
             ("Contrats", "contrats"),
         ])
         add_top_menu("ÉTATS ET RAPPORTS", [
@@ -2368,6 +2370,335 @@ class RecouvrementTab(ttk.Frame):
                 f"{f['montant']:,.2f}", core.to_display_date(f["date_facture"]),
                 core.to_display_date(f["date_echeance_paiement"]), f["statut_paiement"],
             ))
+
+
+class FacturesFrsTab(ttk.Frame):
+    """Factures fournisseurs (achats) : présente directement une facture (entête,
+    lignes d'achat liées à un compte 6x, retenue fiscale à la source paramétrable,
+    pied de page), et sa validation envoie les écritures comptables en Saisie —
+    avec entrée de stock automatique pour les lignes liées aux marchandises (31)
+    ou matières premières (32)."""
+
+    def __init__(self, parent, conn):
+        super().__init__(parent)
+        self.conn = conn
+        self.current_facture_id = None
+
+        top = ttk.Frame(self)
+        top.pack(fill="x", padx=12, pady=8)
+        ttk.Label(top, text="Facture n° :").pack(side="left")
+        self.facture_combo = ttk.Combobox(top, width=40, state="readonly")
+        self.facture_combo.pack(side="left", padx=4)
+        self.facture_combo.bind("<<ComboboxSelected>>", self._on_facture_selected)
+        ttk.Button(top, text="Nouvelle facture", command=self.new_facture).pack(side="left", padx=8)
+        ttk.Button(top, text="Supprimer cette facture", command=self.delete_facture).pack(side="left", padx=2)
+        self.statut_var = tk.StringVar()
+        ttk.Label(top, textvariable=self.statut_var, font=("Segoe UI", 10, "bold")).pack(side="left", padx=16)
+
+        ttk.Label(self, text="En-tête de la facture (modifiable) :").pack(anchor="w", padx=12)
+        self.entete_text = tk.Text(self, height=3, font=("Segoe UI", 10))
+        self.entete_text.pack(fill="x", padx=12, pady=(0, 8))
+
+        info = ttk.Frame(self)
+        info.pack(fill="x", padx=12, pady=4)
+        ttk.Label(info, text="N° Facture :").grid(row=0, column=0, sticky="w", padx=4)
+        self.numero_var = tk.StringVar()
+        ttk.Entry(info, textvariable=self.numero_var, width=16).grid(row=0, column=1, padx=4)
+        ttk.Label(info, text="Date (JJ/MM/AAAA) :").grid(row=0, column=2, sticky="w", padx=(12, 4))
+        self.date_var = tk.StringVar(value=date.today().strftime("%d/%m/%Y"))
+        ttk.Entry(info, textvariable=self.date_var, width=14).grid(row=0, column=3, padx=4)
+        ttk.Label(info, text="Fournisseur (compte 40) :").grid(row=0, column=4, sticky="w", padx=(12, 4))
+        self.fournisseur_var = tk.StringVar()
+        self.fournisseur_combo = ttk.Combobox(info, textvariable=self.fournisseur_var, width=26)
+        self.fournisseur_combo.grid(row=0, column=5, padx=4)
+        self.fournisseur_combo.bind("<KeyRelease>", self._on_fournisseur_keyrelease)
+        self._refresh_fournisseur_values()
+
+        ttk.Label(info, text="Retenue % :").grid(row=1, column=0, sticky="w", padx=4, pady=(6, 0))
+        self.retenue_taux_var = tk.StringVar(
+            value=str(core.get_setting(conn, "retenue_taux_defaut", core.RETENUE_TAUX_DEFAUT)))
+        ttk.Entry(info, textvariable=self.retenue_taux_var, width=6).grid(row=1, column=1, sticky="w", padx=4, pady=(6, 0))
+        ttk.Label(info, text="Compte retenue (classe 44) :").grid(row=1, column=2, sticky="w", padx=(12, 4), pady=(6, 0))
+        self.retenue_compte_var = tk.StringVar(
+            value=core.get_text_setting(conn, "retenue_compte_defaut", core.COMPTE_RETENUE_DEFAUT))
+        self.retenue_compte_combo = ttk.Combobox(info, textvariable=self.retenue_compte_var, width=30)
+        self.retenue_compte_combo.grid(row=1, column=3, columnspan=2, sticky="w", padx=4, pady=(6, 0))
+        self.retenue_compte_combo.bind("<KeyRelease>", self._on_retenue_compte_keyrelease)
+        self._refresh_retenue_compte_values()
+
+        form = ttk.LabelFrame(self, text="Ajouter une ligne (produit/service acheté — compte 6x)")
+        form.pack(fill="x", padx=12, pady=6)
+        ttk.Label(form, text="Compte d'achat :").grid(row=0, column=0, sticky="w", padx=4, pady=4)
+        self.ligne_compte_var = tk.StringVar()
+        self.ligne_compte_combo = ttk.Combobox(form, textvariable=self.ligne_compte_var, width=34)
+        self.ligne_compte_combo.grid(row=0, column=1, padx=4)
+        self.ligne_compte_combo.bind("<KeyRelease>", self._on_ligne_compte_keyrelease)
+        self._refresh_ligne_compte_values()
+        ttk.Label(form, text="Libellé :").grid(row=0, column=2, sticky="w", padx=(12, 4))
+        self.ligne_libelle_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.ligne_libelle_var, width=26).grid(row=0, column=3, padx=4)
+        ttk.Label(form, text="Quantité :").grid(row=1, column=0, sticky="w", padx=4, pady=4)
+        self.ligne_qte_var = tk.StringVar(value="1")
+        ttk.Entry(form, textvariable=self.ligne_qte_var, width=10).grid(row=1, column=1, sticky="w", padx=4)
+        ttk.Label(form, text="Prix unitaire :").grid(row=1, column=2, sticky="w", padx=(12, 4))
+        self.ligne_prix_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.ligne_prix_var, width=14).grid(row=1, column=3, sticky="w", padx=4)
+        ttk.Button(form, text="Ajouter la ligne", command=self.add_ligne).grid(row=1, column=4, padx=12)
+
+        cols = ("id", "compte", "libelle", "type_stock", "qte", "prix", "montant")
+        self.tree = ttk.Treeview(self, columns=cols, show="headings", height=6)
+        headers = ["ID", "Compte", "Libellé", "Impact stock", "Qté", "Prix unit.", "Montant HT"]
+        widths = [40, 90, 220, 110, 70, 100, 110]
+        for c, h, w in zip(cols, headers, widths):
+            self.tree.heading(c, text=h)
+            self.tree.column(c, width=w, anchor="w")
+        self.tree.pack(fill="both", expand=True, padx=12, pady=6)
+        ttk.Button(self, text="Supprimer la ligne sélectionnée", command=self.delete_ligne).pack(anchor="w", padx=12)
+
+        self.totals_var = tk.StringVar()
+        ttk.Label(self, textvariable=self.totals_var, font=("Segoe UI", 11, "bold")).pack(anchor="w", padx=12, pady=(8, 0))
+
+        ttk.Label(self, text="Pied de page de la facture (modifiable) :").pack(anchor="w", padx=12, pady=(8, 0))
+        self.pied_text = tk.Text(self, height=3, font=("Segoe UI", 10))
+        self.pied_text.pack(fill="x", padx=12, pady=(0, 8))
+
+        btns = ttk.Frame(self)
+        btns.pack(fill="x", padx=12, pady=8)
+        ttk.Button(btns, text="Enregistrer (brouillon)", command=self.save_facture).pack(side="left", padx=2)
+        ttk.Button(btns, text="Valider et envoyer en Saisie", command=self.valider).pack(side="left", padx=2)
+
+        self.refresh_factures_list()
+
+    # -- Fournisseur --
+    def _refresh_fournisseur_values(self):
+        items = core.list_fournisseurs(self.conn)
+        self.fournisseur_combo["values"] = [f"{f['code']} — {f['raison_sociale']}" for f in items]
+
+    def _on_fournisseur_keyrelease(self, event=None):
+        query = self._extract_code(self.fournisseur_var.get())
+        if query:
+            items = core.list_fournisseurs(self.conn, query)
+            self.fournisseur_combo["values"] = [f"{f['code']} — {f['raison_sociale']}" for f in items]
+
+    # -- Compte de retenue (classe 44) --
+    def _refresh_retenue_compte_values(self):
+        items = [a for a in core.search_accounts(self.conn, "44", limit=100) if core.account_racine(a["code"]) == "44"]
+        self.retenue_compte_combo["values"] = [f"{a['code']} — {a['label']}" for a in items]
+
+    def _on_retenue_compte_keyrelease(self, event=None):
+        query = self._extract_code(self.retenue_compte_var.get())
+        if query:
+            items = [a for a in core.search_accounts(self.conn, query, limit=50)
+                     if core.account_racine(a["code"]) == "44"]
+            self.retenue_compte_combo["values"] = [f"{a['code']} — {a['label']}" for a in items]
+
+    # -- Compte d'achat (classe 6) --
+    def _refresh_ligne_compte_values(self):
+        items = [a for a in core.search_accounts(self.conn, "6", limit=100) if a["classe"] == "6"]
+        self.ligne_compte_combo["values"] = [f"{a['code']} — {a['label']}" for a in items]
+
+    def _on_ligne_compte_keyrelease(self, event=None):
+        query = self._extract_code(self.ligne_compte_var.get())
+        if query:
+            items = [a for a in core.search_accounts(self.conn, query, limit=50) if a["classe"] == "6"]
+            self.ligne_compte_combo["values"] = [f"{a['code']} — {a['label']}" for a in items]
+
+    @staticmethod
+    def _extract_code(raw):
+        raw = (raw or "").strip()
+        return raw.split(" — ", 1)[0].strip() if " — " in raw else raw
+
+    # -- Gestion des factures --
+    def refresh_factures_list(self):
+        factures = core.list_factures_achat(self.conn)
+        values = [f"{f['numero']} — {f['raison_sociale']} — {f['statut']}" for f in factures]
+        self.facture_combo["values"] = values
+        self._factures_cache = factures
+        if self.current_facture_id is None and factures:
+            self.current_facture_id = factures[0]["id"]
+            self.facture_combo.current(0)
+        self.load_facture()
+
+    def new_facture(self):
+        numero = simpledialog.askstring("Nouvelle facture", "N° de facture :", parent=self)
+        if not numero:
+            return
+        fournisseur_code = self._extract_code(self.fournisseur_var.get())
+        if not fournisseur_code or not core.fournisseur_exists(self.conn, fournisseur_code):
+            messagebox.showinfo("Fournisseur requis", "Choisissez d'abord un fournisseur existant dans le champ Fournisseur.")
+            return
+        date_str = core.to_iso_date(self.date_var.get().strip()) or date.today().strftime("%Y-%m-%d")
+        try:
+            retenue_taux = float(self.retenue_taux_var.get() or 0)
+        except ValueError:
+            retenue_taux = 0
+        retenue_compte = self._extract_code(self.retenue_compte_var.get()) or core.COMPTE_RETENUE_DEFAUT
+        fid = core.create_facture_achat(self.conn, numero, date_str, fournisseur_code,
+                                         retenue_taux=retenue_taux, retenue_compte=retenue_compte)
+        self.current_facture_id = fid
+        self.refresh_factures_list()
+
+    def _on_facture_selected(self, event=None):
+        idx = self.facture_combo.current()
+        if 0 <= idx < len(self._factures_cache):
+            self.current_facture_id = self._factures_cache[idx]["id"]
+        self.load_facture()
+
+    def load_facture(self):
+        for row in self.tree.get_children():
+            self.tree.delete(row)
+        self.entete_text.delete("1.0", "end")
+        self.pied_text.delete("1.0", "end")
+        if not self.current_facture_id:
+            self.statut_var.set("Aucune facture — créez-en une nouvelle.")
+            self.totals_var.set("")
+            return
+        f = core.get_facture_achat(self.conn, self.current_facture_id)
+        if not f:
+            self.current_facture_id = None
+            self.statut_var.set("")
+            return
+        self.numero_var.set(f["numero"])
+        self.date_var.set(core.to_display_date(f["date_facture"]))
+        fournisseur = core.get_fournisseur(self.conn, f["fournisseur_code"])
+        self.fournisseur_var.set(
+            f"{f['fournisseur_code']} — {fournisseur['raison_sociale']}" if fournisseur else f["fournisseur_code"])
+        self.retenue_taux_var.set(str(f["retenue_taux"]))
+        self.retenue_compte_var.set(f["retenue_compte"])
+        self.entete_text.insert("1.0", f["entete"] or "")
+        self.pied_text.insert("1.0", f["pied_page"] or "")
+        statut_label = "VALIDÉE (écritures envoyées en Saisie)" if f["statut"] == "validee" else "Brouillon"
+        self.statut_var.set(f"Statut : {statut_label}")
+
+        lignes = core.list_lignes_facture_achat(self.conn, self.current_facture_id)
+        for l in lignes:
+            impact = {"marchandise": "Stock marchandises (31)", "matiere_premiere": "Stock matières (32)"}.get(
+                l["type_stock"], "Aucun (service)")
+            self.tree.insert("", "end", values=(
+                l["id"], l["compte_achat"], l["libelle"], impact,
+                f"{l['quantite']:g}", f"{l['prix_unitaire']:,.2f}", f"{l['montant_ht']:,.2f}",
+            ))
+        totals = core.compute_facture_achat_totals(self.conn, self.current_facture_id)
+        self.totals_var.set(
+            f"TOTAL HT : {totals['total_ht']:,.2f}    Retenue ({totals['retenue_taux']:g}%) : "
+            f"{totals['retenue_montant']:,.2f}    NET À PAYER : {totals['net_a_payer']:,.2f}"
+        )
+
+    def _ensure_facture(self):
+        if not self.current_facture_id:
+            messagebox.showinfo("Info", "Créez d'abord une nouvelle facture.")
+            return None
+        f = core.get_facture_achat(self.conn, self.current_facture_id)
+        if f and f["statut"] == "validee":
+            messagebox.showwarning("Facture validée", "Cette facture est déjà validée et ne peut plus être modifiée.")
+            return None
+        return f
+
+    def add_ligne(self):
+        f = self._ensure_facture()
+        if not f:
+            return
+        compte = self._extract_code(self.ligne_compte_var.get())
+        if not compte:
+            messagebox.showwarning("Champ manquant", "Choisissez un compte d'achat (classe 6).")
+            return
+        if not core.account_exists(self.conn, compte) or core.account_racine(compte) != "6":
+            messagebox.showerror("Compte invalide", "Le compte d'achat doit être un compte existant de la classe 6.")
+            return
+        libelle = self.ligne_libelle_var.get().strip()
+        if not libelle:
+            messagebox.showwarning("Champ manquant", "Le libellé de la ligne est obligatoire.")
+            return
+        try:
+            qte = float(self.ligne_qte_var.get() or 0)
+            prix = float(self.ligne_prix_var.get() or 0)
+        except ValueError:
+            messagebox.showerror("Erreur", "Quantité et Prix unitaire doivent être des nombres.")
+            return
+        core.add_ligne_facture_achat(self.conn, self.current_facture_id, compte, libelle, qte, prix)
+        self.ligne_libelle_var.set("")
+        self.ligne_qte_var.set("1")
+        self.ligne_prix_var.set("")
+        self.load_facture()
+
+    def delete_ligne(self):
+        f = self._ensure_facture()
+        if not f:
+            return
+        sel = self.tree.selection()
+        if not sel:
+            messagebox.showinfo("Info", "Sélectionnez d'abord une ligne.")
+            return
+        ligne_id = int(self.tree.item(sel[0], "values")[0])
+        core.delete_ligne_facture_achat(self.conn, ligne_id)
+        self.load_facture()
+
+    def save_facture(self):
+        f = self._ensure_facture()
+        if not f:
+            return
+        fournisseur_code = self._extract_code(self.fournisseur_var.get())
+        if not fournisseur_code or not core.fournisseur_exists(self.conn, fournisseur_code):
+            messagebox.showerror("Fournisseur invalide", "Choisissez un fournisseur existant.")
+            return
+        date_str = core.to_iso_date(self.date_var.get().strip())
+        try:
+            retenue_taux = float(self.retenue_taux_var.get() or 0)
+        except ValueError:
+            messagebox.showerror("Erreur", "Le taux de retenue doit être un nombre.")
+            return
+        retenue_compte = self._extract_code(self.retenue_compte_var.get()) or core.COMPTE_RETENUE_DEFAUT
+        core.update_facture_achat(
+            self.conn, self.current_facture_id,
+            numero=self.numero_var.get().strip(), date_facture=date_str, fournisseur_code=fournisseur_code,
+            entete=self.entete_text.get("1.0", "end").strip(),
+            pied_page=self.pied_text.get("1.0", "end").strip(),
+            retenue_taux=retenue_taux, retenue_compte=retenue_compte,
+        )
+        core.set_setting(self.conn, "retenue_taux_defaut", retenue_taux)
+        core.set_setting(self.conn, "retenue_compte_defaut", retenue_compte)
+        messagebox.showinfo("Enregistré", "Facture enregistrée (brouillon).")
+        self.refresh_factures_list()
+
+    def valider(self):
+        f = self._ensure_facture()
+        if not f:
+            return
+        self.save_facture()
+        if messagebox.askyesno(
+            "Confirmer la validation",
+            "Valider cette facture ? Les écritures comptables seront envoyées dans le menu SAISIE "
+            "(débit achats, crédit fournisseur, retenue à la source, et entrée de stock automatique "
+            "pour les lignes marchandises/matières premières). Cette action est définitive."
+        ):
+            try:
+                warnings = core.valider_facture_achat(self.conn, self.current_facture_id)
+            except ValueError as exc:
+                messagebox.showerror("Erreur", str(exc))
+                return
+            msg = "Facture validée et écritures envoyées en Saisie."
+            if warnings:
+                msg += "\n\nAvertissements :\n" + "\n".join(warnings)
+            messagebox.showinfo("Validation terminée", msg)
+            self.refresh_factures_list()
+
+    def delete_facture(self):
+        if not self.current_facture_id:
+            return
+        if messagebox.askyesno("Confirmer", "Supprimer cette facture ?"):
+            try:
+                core.delete_facture_achat(self.conn, self.current_facture_id)
+            except ValueError as exc:
+                messagebox.showerror("Erreur", str(exc))
+                return
+            self.current_facture_id = None
+            self.refresh_factures_list()
+
+    def refresh(self):
+        self._refresh_fournisseur_values()
+        self._refresh_ligne_compte_values()
+        self._refresh_retenue_compte_values()
+        self.refresh_factures_list()
 
 
 class ContratsTab(ttk.Frame):

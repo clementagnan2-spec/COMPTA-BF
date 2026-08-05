@@ -53,6 +53,16 @@ VENTE_STOCK_MAPPING = {
 COMPTE_TVA_VENTES = "443100"  # État, T.V.A. facturée sur ventes
 TVA_TAUX_DEFAUT = 18.0
 
+# Achats (classe 6) -> impact sur les stocks : un achat de marchandises ou de
+# matières premières augmente le stock correspondant à la validation de la
+# facture fournisseur ; un achat de service (ex. 622000) n'impacte aucun stock.
+ACHAT_STOCK_MAPPING = {
+    "601000": ("marchandise", "310000", "603100"),        # Achats marchandises -> stock 31
+    "602000": ("matiere_premiere", "320000", "603200"),   # Achats matières premières -> stock 32
+}
+RETENUE_TAUX_DEFAUT = 0.0
+COMPTE_RETENUE_DEFAUT = "447800"  # État, autres impôts et contributions (retenues à la source)
+
 RACINE_LABELS = {
     "1": "Comptes de ressources durables",
     "2": "Comptes d'actif immobilisé",
@@ -82,7 +92,7 @@ COMPTES_DETTES_FIN = ["162000", "165000"]
 COMPTES_PRODUITS_EXPL = ["701000", "702000", "705000", "706000", "736000"]
 COMPTE_SUBV_EXPL = "710000"
 COMPTE_AUTRES_PRODUITS = "758000"
-COMPTES_ACHATS = ["601000", "602000", "604000", "605000", "603100"]
+COMPTES_ACHATS = ["601000", "602000", "604000", "605000", "603100", "603200"]
 COMPTES_TRANSPORT = ["610000", "614000"]
 COMPTES_SERVICES_EXT = ["622000", "624000", "625000", "626000", "627000", "628000",
                          "631000", "632000", "633000"]
@@ -235,7 +245,7 @@ def compute_liasse_resultat(conn, exercice=None):
     th = net_produit(["758000"])
     tg = net_produit(["710000"])
 
-    rc = net_charge(["602000"])
+    rc = net_charge(["602000", "603200"])
     re = net_charge(["604000", "605000"])
     rg = net_charge(["610000", "614000"])
     rh = net_charge(["622000", "624000", "625000", "626000", "627000", "628000",
@@ -438,6 +448,30 @@ def init_db(conn):
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             facture_id INTEGER NOT NULL,
             compte_vente TEXT NOT NULL,
+            libelle TEXT NOT NULL,
+            quantite REAL NOT NULL DEFAULT 0,
+            prix_unitaire REAL NOT NULL DEFAULT 0
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS factures_achat (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            numero TEXT NOT NULL,
+            date_facture TEXT NOT NULL,
+            fournisseur_code TEXT NOT NULL,
+            entete TEXT,
+            pied_page TEXT,
+            retenue_taux REAL NOT NULL DEFAULT 0,
+            retenue_compte TEXT NOT NULL DEFAULT '447800',
+            statut TEXT NOT NULL DEFAULT 'brouillon',
+            piece TEXT
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS facture_achat_lignes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            facture_id INTEGER NOT NULL,
+            compte_achat TEXT NOT NULL,
             libelle TEXT NOT NULL,
             quantite REAL NOT NULL DEFAULT 0,
             prix_unitaire REAL NOT NULL DEFAULT 0
@@ -2058,6 +2092,157 @@ def valider_facture_vente(conn, facture_id, exercice=None):
                   0, montant_sortie, quantite=l["quantite"])
 
     update_facture_vente(conn, facture_id, statut="validee", piece=piece)
+    return warnings
+
+
+# ---------------------------------------------------------------------------
+# Factures fournisseurs (achats) — présente une facture d'achat (entête +
+# lignes + pied de page), et sa validation envoie automatiquement les
+# écritures comptables dans la Saisie : Débit compte(s) d'achat (60x) pour le
+# HT de chaque ligne, Crédit Fournisseur (401xxx) pour le net à payer, Crédit
+# retenue à la source (44x, paramétrable) le cas échéant. Pour les lignes
+# liées à un stock (marchandises 31 ou matières premières 32), une entrée de
+# stock automatique est comptabilisée (le stock augmente).
+# ---------------------------------------------------------------------------
+def create_facture_achat(conn, numero, date_facture, fournisseur_code, entete="", pied_page="",
+                          retenue_taux=None, retenue_compte=None):
+    if retenue_taux is None:
+        retenue_taux = get_setting(conn, "retenue_taux_defaut", RETENUE_TAUX_DEFAUT)
+    if retenue_compte is None:
+        retenue_compte = get_text_setting(conn, "retenue_compte_defaut", COMPTE_RETENUE_DEFAUT)
+    cur = conn.execute(
+        """INSERT INTO factures_achat
+           (numero, date_facture, fournisseur_code, entete, pied_page, retenue_taux, retenue_compte, statut)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 'brouillon')""",
+        (numero, date_facture, fournisseur_code, entete, pied_page, retenue_taux, retenue_compte),
+    )
+    conn.commit()
+    return cur.lastrowid
+
+
+def update_facture_achat(conn, facture_id, **fields):
+    if not fields:
+        return
+    cols = ", ".join(f"{k} = ?" for k in fields)
+    conn.execute(f"UPDATE factures_achat SET {cols} WHERE id = ?", (*fields.values(), facture_id))
+    conn.commit()
+
+
+def delete_facture_achat(conn, facture_id):
+    facture = get_facture_achat(conn, facture_id)
+    if facture and facture["statut"] == "validee":
+        raise ValueError("Impossible de supprimer une facture déjà validée (écritures envoyées en Saisie).")
+    conn.execute("DELETE FROM facture_achat_lignes WHERE facture_id = ?", (facture_id,))
+    conn.execute("DELETE FROM factures_achat WHERE id = ?", (facture_id,))
+    conn.commit()
+
+
+def get_facture_achat(conn, facture_id):
+    row = conn.execute("SELECT * FROM factures_achat WHERE id = ?", (facture_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def list_factures_achat(conn):
+    rows = conn.execute("""
+        SELECT f.*, COALESCE(fo.raison_sociale, f.fournisseur_code) AS raison_sociale
+        FROM factures_achat f LEFT JOIN fournisseurs fo ON fo.code = f.fournisseur_code
+        ORDER BY f.date_facture DESC, f.id DESC
+    """).fetchall()
+    return [dict(r) for r in rows]
+
+
+def add_ligne_facture_achat(conn, facture_id, compte_achat, libelle, quantite, prix_unitaire):
+    conn.execute(
+        """INSERT INTO facture_achat_lignes (facture_id, compte_achat, libelle, quantite, prix_unitaire)
+           VALUES (?, ?, ?, ?, ?)""",
+        (facture_id, compte_achat, libelle, quantite or 0, prix_unitaire or 0),
+    )
+    conn.commit()
+
+
+def delete_ligne_facture_achat(conn, ligne_id):
+    conn.execute("DELETE FROM facture_achat_lignes WHERE id = ?", (ligne_id,))
+    conn.commit()
+
+
+def list_lignes_facture_achat(conn, facture_id):
+    rows = conn.execute(
+        "SELECT * FROM facture_achat_lignes WHERE facture_id = ? ORDER BY id", (facture_id,)
+    ).fetchall()
+    result = []
+    for r in rows:
+        d = dict(r)
+        d["montant_ht"] = (d["quantite"] or 0) * (d["prix_unitaire"] or 0)
+        type_stock, stock_compte, contre_compte = ACHAT_STOCK_MAPPING.get(d["compte_achat"], (None, None, None))
+        d["type_stock"] = type_stock
+        d["stock_compte"] = stock_compte
+        result.append(d)
+    return result
+
+
+def compute_facture_achat_totals(conn, facture_id):
+    facture = get_facture_achat(conn, facture_id)
+    lignes = list_lignes_facture_achat(conn, facture_id)
+    total_ht = sum(l["montant_ht"] for l in lignes)
+    retenue_taux = facture["retenue_taux"] if facture else 0
+    retenue_montant = total_ht * (retenue_taux or 0) / 100
+    net_a_payer = total_ht - retenue_montant
+    return {"total_ht": total_ht, "retenue_taux": retenue_taux, "retenue_montant": retenue_montant,
+            "net_a_payer": net_a_payer}
+
+
+def valider_facture_achat(conn, facture_id, exercice=None):
+    """Envoie la facture d'achat en Saisie : une écriture équilibrée (Débit achats /
+    Crédit fournisseur + retenue), plus une entrée de stock automatique pour chaque
+    ligne liée à un compte de marchandises (31) ou de matières premières (32).
+    Retourne la liste des avertissements."""
+    facture = get_facture_achat(conn, facture_id)
+    if not facture:
+        raise ValueError("Facture introuvable.")
+    if facture["statut"] == "validee":
+        raise ValueError("Cette facture est déjà validée.")
+    lignes = list_lignes_facture_achat(conn, facture_id)
+    if not lignes:
+        raise ValueError("La facture ne contient aucune ligne.")
+    if not fournisseur_exists(conn, facture["fournisseur_code"]):
+        raise ValueError(f"Le fournisseur « {facture['fournisseur_code']} » n'existe pas.")
+
+    totals = compute_facture_achat_totals(conn, facture_id)
+    date_str = facture["date_facture"]
+    piece = facture["numero"]
+    warnings = []
+
+    # Débit chaque compte d'achat pour le HT de la ligne
+    for l in lignes:
+        add_entry(conn, date_str, piece, "AC", l["compte_achat"], "", l["libelle"],
+                  l["montant_ht"], 0, fournisseur_code=facture["fournisseur_code"], quantite=l["quantite"])
+
+    # Crédit Fournisseur pour le net à payer (HT - retenue)
+    fournisseur = get_fournisseur(conn, facture["fournisseur_code"])
+    tiers_label = fournisseur["raison_sociale"] if fournisseur else facture["fournisseur_code"]
+    add_entry(conn, date_str, piece, "AC", "401000", tiers_label,
+              facture["numero"], 0, totals["net_a_payer"], fournisseur_code=facture["fournisseur_code"])
+
+    # Crédit retenue fiscale à la source, si applicable
+    if totals["retenue_montant"]:
+        add_entry(conn, date_str, piece, "AC", facture["retenue_compte"], "",
+                  f"Retenue {totals['retenue_taux']:g}% facture {piece}",
+                  0, totals["retenue_montant"])
+
+    # Entrée de stock automatique pour les lignes liées aux marchandises/matières premières
+    for l in lignes:
+        if not l["type_stock"]:
+            continue
+        _, stock_compte, contre_compte = ACHAT_STOCK_MAPPING[l["compte_achat"]]
+        montant_entree = l["montant_ht"]
+        if montant_entree <= 0:
+            continue
+        add_entry(conn, date_str, piece, "AC", stock_compte, "", f"Entrée stock — {l['libelle']}",
+                  montant_entree, 0, quantite=l["quantite"])
+        add_entry(conn, date_str, piece, "AC", contre_compte, "", f"Entrée stock — {l['libelle']}",
+                  0, montant_entree)
+
+    update_facture_achat(conn, facture_id, statut="validee", piece=piece)
     return warnings
 
 

@@ -158,7 +158,37 @@ suggéré de 18 900 à 40 % de marge.
 Fabrication (coûts réels de la période via l'axe analytique AN-FAB),
 inchangé et toujours disponible.
 
-- **ENGAGEMENTS-PROJETS** : Achats, Fournisseurs, Contrats.
+- **ENGAGEMENTS-PROJETS** : Achats, Fournisseurs, Factures frs, Contrats.
+
+### Module Factures frs (nouveau)
+
+Le pendant achats du module Facturation. L'onglet **Factures frs** présente
+directement une facture d'achat éditable :
+- **En-tête** et **pied de page modifiables**.
+- **N° Facture**, **Date**, **Fournisseur** (obligatoirement rattaché à un
+  compte racine 40).
+- **Retenue fiscale à la source paramétrable** : taux (%) et **compte de
+  retenue au choix parmi la classe 44** (ex. 447810 « RETENUE 5% OPÉRÉE »),
+  avec valeurs par défaut mémorisées d'une facture à l'autre.
+- **Lignes d'achat** liées à un compte de classe **6** (charges) : compte,
+  libellé, quantité, prix unitaire — montant HT calculé automatiquement.
+
+**Bouton « Valider et envoyer en Saisie »** génère les écritures :
+- Débit chaque **compte d'achat** (6x) pour le HT de sa ligne.
+- Crédit **Fournisseur** (401000) pour le **net à payer** (HT − retenue).
+- Crédit le **compte de retenue** choisi, si un taux est renseigné.
+- **Mise à jour automatique des stocks** : les comptes 601000 (marchandises,
+  stock 310000) et 602000 (matières premières, stock 320000) déclenchent en
+  plus une **entrée de stock** (Débit le compte de stock / Crédit
+  603100 ou 603200) — les comptes de service (ex. 622000 Locations)
+  n'impactent aucun stock. Mapping défini dans `core.ACHAT_STOCK_MAPPING`
+  (extensible).
+
+Une fois validée, une facture est **verrouillée**. Testé de bout en bout
+(service + marchandise + matière première + retenue 5%) : Bilan
+parfaitement équilibré, stocks correctement augmentés, solde fournisseur
+exact, et cohérence vérifiée aussi dans l'export de la Liasse fiscale.
+
 
 ### Module Commerce — Clients / Ventes / Recouvrement (nouveau)
 
