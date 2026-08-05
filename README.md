@@ -91,7 +91,43 @@ entièrement via **la barre de menu** en haut de la fenêtre, avec 5 menus
 principaux (en gras) :
 
 - **SAISIE** : Saisie des écritures, Soldes d'ouverture.
-- **COMMERCE** : Ventes, Clients, Recouvrement, Stocks, Marges bénéficiaires.
+- **COMMERCE** : Ventes, Clients, Recouvrement, Facturation, Stocks, Marges bénéficiaires.
+
+### Module Facturation (nouveau)
+
+L'onglet **Facturation** présente directement une facture éditable :
+- **En-tête modifiable** et **pied de page modifiable** (texte libre).
+- **N° Facture**, **Date**, **Client** (obligatoirement rattaché à un compte
+  racine 41, avec la même recherche/validation que dans le reste de l'app).
+- **Taux de TVA paramétrable** (compte 44 — 443100 « T.V.A. facturée sur
+  ventes »), avec une valeur par défaut mémorisée d'une facture à l'autre.
+- **Lignes de vente** liées à un compte de classe **70** (Ventes) : chaque
+  ligne a un compte, un libellé, une quantité et un prix unitaire ; le
+  montant HT est calculé automatiquement.
+
+**Bouton « Valider et envoyer en Saisie »** : génère automatiquement les
+écritures comptables équilibrées dans l'onglet Saisie :
+- Débit **Client** (411000) pour le montant TTC.
+- Crédit chaque **compte de vente** (70x) pour le HT de sa ligne.
+- Crédit **TVA facturée** (443100) pour la taxe.
+- **Mise à jour automatique des stocks** : les comptes 701000 (marchandises,
+  stock 310000) et 702000 (produits finis, stock 360000) déclenchent en plus
+  une sortie de stock au coût unitaire moyen réel (Débit 603100 ou 736000 /
+  Crédit le compte de stock correspondant) — les comptes de services
+  (ex. 706000) n'impactent aucun stock. Ce mapping compte-de-vente ↔ stock
+  est défini dans `core.VENTE_STOCK_MAPPING` (extensible).
+
+Une fois validée, une facture est **verrouillée** (plus de modification
+possible, cohérent avec le fait que ses écritures existent déjà en Saisie).
+
+**Bug de calcul du Résultat corrigé au passage** : les comptes de variation
+de stock (603100 pour les marchandises, 736000 pour les produits finis)
+n'étaient référencés dans aucune formule du Compte de résultat, ce qui
+créait un écart Actif/Passif après une vente de marchandises ou de produits
+finis. Testé et corrigé : un scénario complet (service + marchandise +
+produit fini + TVA) donne désormais un Bilan parfaitement équilibré et un
+Résultat net exact (vérifié à l'unité près sur plusieurs cas).
+
 - **PRODUCTION** : Matières premières, Fabrication, Produits finis.
 
 ### Module Fabrication — nomenclature et coût de production (nouveau)

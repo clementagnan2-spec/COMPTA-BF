@@ -40,6 +40,19 @@ def account_racine(code):
 RACINE_FOURNISSEURS = "40"
 RACINE_CLIENTS = "41"
 
+# ---------------------------------------------------------------------------
+# Facturation — mapping compte de vente (classe 70) -> impact sur les stocks.
+# Un compte de vente lié à des marchandises (classe 31) ou des produits finis
+# (classe 36) déclenche une sortie de stock automatique à la validation de la
+# facture ; un compte de service (ex. 706000) n'impacte aucun stock.
+# ---------------------------------------------------------------------------
+VENTE_STOCK_MAPPING = {
+    "701000": ("marchandise", "310000", "603100"),   # Ventes marchandises -> stock 31, coût 603100
+    "702000": ("produit_fini", "360000", "736000"),  # Ventes produits finis -> stock 36, coût 736000
+}
+COMPTE_TVA_VENTES = "443100"  # État, T.V.A. facturée sur ventes
+TVA_TAUX_DEFAUT = 18.0
+
 RACINE_LABELS = {
     "1": "Comptes de ressources durables",
     "2": "Comptes d'actif immobilisé",
@@ -66,10 +79,10 @@ COMPTES_CAPITAL = ["101000", "118000", "121000"]
 COMPTE_SUBVENTIONS = "141000"
 COMPTE_PROVISIONS = "191000"
 COMPTES_DETTES_FIN = ["162000", "165000"]
-COMPTES_PRODUITS_EXPL = ["701000", "702000", "705000", "706000"]
+COMPTES_PRODUITS_EXPL = ["701000", "702000", "705000", "706000", "736000"]
 COMPTE_SUBV_EXPL = "710000"
 COMPTE_AUTRES_PRODUITS = "758000"
-COMPTES_ACHATS = ["601000", "602000", "604000", "605000"]
+COMPTES_ACHATS = ["601000", "602000", "604000", "605000", "603100"]
 COMPTES_TRANSPORT = ["610000", "614000"]
 COMPTES_SERVICES_EXT = ["622000", "624000", "625000", "626000", "627000", "628000",
                          "631000", "632000", "633000"]
@@ -209,7 +222,8 @@ def compute_liasse_resultat(conn, exercice=None):
 
     ta = net_produit(["701000"])
     ra = net_charge(["601000"])
-    xa = ta - ra  # marge commerciale (simplifiée, sans variation de stock marchandises isolée)
+    ra_stock = net_charge(["603100"])  # variation de stock de marchandises
+    xa = ta - ra - ra_stock  # marge commerciale
 
     tb = net_produit(["702000"])
     tc = net_produit(["705000", "706000"])
@@ -228,7 +242,7 @@ def compute_liasse_resultat(conn, exercice=None):
                       "631000", "632000", "633000"])
     ri = net_charge(["641000", "645000"])
     rj = net_charge(["651000"])
-    xc = xb + (-ra) + te + tg + th + (-rc) + (-re) + (-rg) + (-rh) + (-ri) + (-rj)
+    xc = xb + (-ra) + (-ra_stock) + te + tg + th + (-rc) + (-re) + (-rg) + (-rh) + (-ri) + (-rj)
 
     rk = net_charge(["661000", "663000", "664000"])
     xd = xc - rk
@@ -404,6 +418,29 @@ def init_db(conn):
             compte TEXT,
             quantite REAL NOT NULL DEFAULT 0,
             cout_unitaire REAL
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS factures_vente (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            numero TEXT NOT NULL,
+            date_facture TEXT NOT NULL,
+            client_code TEXT NOT NULL,
+            entete TEXT,
+            pied_page TEXT,
+            tva_taux REAL NOT NULL DEFAULT 0,
+            statut TEXT NOT NULL DEFAULT 'brouillon',
+            piece TEXT
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS facture_vente_lignes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            facture_id INTEGER NOT NULL,
+            compte_vente TEXT NOT NULL,
+            libelle TEXT NOT NULL,
+            quantite REAL NOT NULL DEFAULT 0,
+            prix_unitaire REAL NOT NULL DEFAULT 0
         )
     """)
     conn.commit()
@@ -1867,6 +1904,161 @@ def compute_cout_production(conn, produit_code, exercice=None):
         "prix_vente_total": prix_vente_total,
         "marge_unitaire": prix_vente_unitaire - cout_unitaire_produit,
     }
+
+
+# ---------------------------------------------------------------------------
+# Facturation clients — présente une facture (entête + lignes + pied de page),
+# et sa validation envoie automatiquement les écritures comptables dans la
+# Saisie : Débit Client (411xxx) pour le TTC, Crédit compte(s) de vente (70x)
+# pour le HT de chaque ligne, Crédit TVA (443100) pour la taxe, et pour les
+# lignes liées à un stock (marchandises 31 ou produits finis 36), une sortie
+# de stock automatique (Débit compte de coût / Crédit compte de stock).
+# ---------------------------------------------------------------------------
+def create_facture_vente(conn, numero, date_facture, client_code, entete="", pied_page="",
+                          tva_taux=None):
+    if tva_taux is None:
+        tva_taux = get_setting(conn, "tva_taux_defaut", TVA_TAUX_DEFAUT)
+    cur = conn.execute(
+        """INSERT INTO factures_vente (numero, date_facture, client_code, entete, pied_page, tva_taux, statut)
+           VALUES (?, ?, ?, ?, ?, ?, 'brouillon')""",
+        (numero, date_facture, client_code, entete, pied_page, tva_taux),
+    )
+    conn.commit()
+    return cur.lastrowid
+
+
+def update_facture_vente(conn, facture_id, **fields):
+    if not fields:
+        return
+    cols = ", ".join(f"{k} = ?" for k in fields)
+    conn.execute(f"UPDATE factures_vente SET {cols} WHERE id = ?", (*fields.values(), facture_id))
+    conn.commit()
+
+
+def delete_facture_vente(conn, facture_id):
+    facture = get_facture_vente(conn, facture_id)
+    if facture and facture["statut"] == "validee":
+        raise ValueError("Impossible de supprimer une facture déjà validée (écritures envoyées en Saisie).")
+    conn.execute("DELETE FROM facture_vente_lignes WHERE facture_id = ?", (facture_id,))
+    conn.execute("DELETE FROM factures_vente WHERE id = ?", (facture_id,))
+    conn.commit()
+
+
+def get_facture_vente(conn, facture_id):
+    row = conn.execute("SELECT * FROM factures_vente WHERE id = ?", (facture_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def list_factures_vente(conn):
+    rows = conn.execute("""
+        SELECT f.*, COALESCE(c.raison_sociale, f.client_code) AS raison_sociale
+        FROM factures_vente f LEFT JOIN clients c ON c.code = f.client_code
+        ORDER BY f.date_facture DESC, f.id DESC
+    """).fetchall()
+    return [dict(r) for r in rows]
+
+
+def add_ligne_facture_vente(conn, facture_id, compte_vente, libelle, quantite, prix_unitaire):
+    conn.execute(
+        """INSERT INTO facture_vente_lignes (facture_id, compte_vente, libelle, quantite, prix_unitaire)
+           VALUES (?, ?, ?, ?, ?)""",
+        (facture_id, compte_vente, libelle, quantite or 0, prix_unitaire or 0),
+    )
+    conn.commit()
+
+
+def delete_ligne_facture_vente(conn, ligne_id):
+    conn.execute("DELETE FROM facture_vente_lignes WHERE id = ?", (ligne_id,))
+    conn.commit()
+
+
+def list_lignes_facture_vente(conn, facture_id):
+    rows = conn.execute(
+        "SELECT * FROM facture_vente_lignes WHERE facture_id = ? ORDER BY id", (facture_id,)
+    ).fetchall()
+    result = []
+    for r in rows:
+        d = dict(r)
+        d["montant_ht"] = (d["quantite"] or 0) * (d["prix_unitaire"] or 0)
+        type_stock, stock_compte, cout_compte = VENTE_STOCK_MAPPING.get(d["compte_vente"], (None, None, None))
+        d["type_stock"] = type_stock
+        d["stock_compte"] = stock_compte
+        result.append(d)
+    return result
+
+
+def compute_facture_totals(conn, facture_id):
+    facture = get_facture_vente(conn, facture_id)
+    lignes = list_lignes_facture_vente(conn, facture_id)
+    total_ht = sum(l["montant_ht"] for l in lignes)
+    tva_taux = facture["tva_taux"] if facture else 0
+    tva_montant = total_ht * (tva_taux or 0) / 100
+    total_ttc = total_ht + tva_montant
+    return {"total_ht": total_ht, "tva_taux": tva_taux, "tva_montant": tva_montant, "total_ttc": total_ttc}
+
+
+def valider_facture_vente(conn, facture_id, exercice=None):
+    """Envoie la facture en Saisie : une écriture équilibrée (Débit Client / Crédit
+    ventes + TVA), plus une sortie de stock automatique pour chaque ligne liée à un
+    compte de marchandises (31) ou de produits finis (36). Retourne la liste des
+    avertissements (ex. coût unitaire de stock inconnu)."""
+    facture = get_facture_vente(conn, facture_id)
+    if not facture:
+        raise ValueError("Facture introuvable.")
+    if facture["statut"] == "validee":
+        raise ValueError("Cette facture est déjà validée.")
+    lignes = list_lignes_facture_vente(conn, facture_id)
+    if not lignes:
+        raise ValueError("La facture ne contient aucune ligne.")
+    if not client_exists(conn, facture["client_code"]):
+        raise ValueError(f"Le client « {facture['client_code']} » n'existe pas.")
+
+    totals = compute_facture_totals(conn, facture_id)
+    date_str = facture["date_facture"]
+    piece = facture["numero"]
+    warnings = []
+
+    # Débit Client pour le TTC
+    client = get_client(conn, facture["client_code"])
+    tiers_label = client["raison_sociale"] if client else facture["client_code"]
+    add_entry(conn, date_str, piece, "VE", "411000", tiers_label,
+              facture["numero"], totals["total_ttc"], 0, client_code=facture["client_code"])
+
+    # Crédit chaque compte de vente pour le HT de la ligne
+    for l in lignes:
+        add_entry(conn, date_str, piece, "VE", l["compte_vente"], "", l["libelle"],
+                  0, l["montant_ht"], client_code=facture["client_code"], quantite=l["quantite"])
+
+    # Crédit TVA facturée
+    if totals["tva_montant"]:
+        add_entry(conn, date_str, piece, "VE", COMPTE_TVA_VENTES, "", f"TVA {totals['tva_taux']:g}% facture {piece}",
+                  0, totals["tva_montant"])
+
+    # Sortie de stock automatique pour les lignes liées aux marchandises/produits finis
+    stocks_by_code = {s["code"]: s for s in compute_stocks(conn, exercice=exercice)}
+    for l in lignes:
+        if not l["type_stock"]:
+            continue
+        _, stock_compte, cout_compte = VENTE_STOCK_MAPPING[l["compte_vente"]]
+        stock = stocks_by_code.get(stock_compte)
+        cout_unitaire = stock["cout_unitaire_moyen"] if stock else None
+        if cout_unitaire is None:
+            warnings.append(
+                f"Ligne « {l['libelle']} » : coût unitaire du stock {stock_compte} inconnu — "
+                f"aucune sortie de stock comptabilisée pour cette ligne (renseignez un stock initial "
+                f"ou des entrées avec quantité dans l'onglet Stocks)."
+            )
+            continue
+        montant_sortie = (l["quantite"] or 0) * cout_unitaire
+        if montant_sortie <= 0:
+            continue
+        add_entry(conn, date_str, piece, "VE", cout_compte, "", f"Sortie stock — {l['libelle']}",
+                  montant_sortie, 0)
+        add_entry(conn, date_str, piece, "VE", stock_compte, "", f"Sortie stock — {l['libelle']}",
+                  0, montant_sortie, quantite=l["quantite"])
+
+    update_facture_vente(conn, facture_id, statut="validee", piece=piece)
+    return warnings
 
 
 def compute_tft(conn, treso_ouverture=None, exercice=None):
