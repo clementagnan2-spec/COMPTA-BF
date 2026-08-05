@@ -26,7 +26,7 @@ COMPTES_STOCK = ["310000", "320000", "331000", "360000"]
 # total des stocks au Bilan (capture aussi d'éventuels sous-comptes de stock
 # détaillés) — le suivi détaillé (onglet Stocks) reste lui scopé aux 4 comptes
 # maîtres ci-dessus.
-COMPTES_STOCK_PREFIXES = ["310", "320", "331", "360"]
+COMPTES_STOCK_PREFIXES = ["31", "32", "33", "36"]
 
 
 def account_racine(code):
@@ -432,7 +432,8 @@ def init_db(conn):
             nom TEXT NOT NULL,
             description TEXT,
             quantite_produite REAL NOT NULL DEFAULT 1,
-            marge_pourcentage REAL NOT NULL DEFAULT 30
+            marge_pourcentage REAL NOT NULL DEFAULT 30,
+            compte_stock TEXT NOT NULL DEFAULT '360000'
         )
     """)
     conn.execute("""
@@ -515,6 +516,10 @@ def _migrate(conn):
         conn.execute("ALTER TABLE entries ADD COLUMN fournisseur_code TEXT")
     if "client_code" not in cols:
         conn.execute("ALTER TABLE entries ADD COLUMN client_code TEXT")
+
+    pf_cols = [r["name"] for r in conn.execute("PRAGMA table_info(produits_finis)")]
+    if pf_cols and "compte_stock" not in pf_cols:
+        conn.execute("ALTER TABLE produits_finis ADD COLUMN compte_stock TEXT NOT NULL DEFAULT '360000'")
 
     # Migre l'ancien mécanisme "stock_initial_<compte>" (settings) vers opening_balances
     default_exercice = str(datetime.today().year)
@@ -1829,6 +1834,45 @@ def compute_stocks(conn, exercice=None):
     return result
 
 
+def compute_stocks_detail(conn, exercice=None, prefixes=None):
+    """Détail du stock pour CHAQUE compte réel de la classe 3 (pas seulement les
+    4 comptes centralisateurs) : tout compte 3xxxxx ayant un mouvement ou un
+    solde d'ouverture sur l'exercice. `prefixes` (ex. ["31"], ["32"], ["36"])
+    restreint optionnellement à une catégorie (marchandises/matières/produits
+    finis)."""
+    exercice = exercice or get_current_exercice(conn)
+    date_from, date_to = f"{exercice}-01-01", f"{exercice}-12-31"
+    balance = compute_balance(conn, only_with_movement=True, exercice=exercice)
+    result = []
+    for b in balance:
+        if b["classe"] != "3":
+            continue
+        if prefixes and not any(b["code"].startswith(p) for p in prefixes):
+            continue
+        code = b["code"]
+        initial = b["solde_ouverture"]
+        entrees, sorties = b["debit"], b["credit"]
+        qte_row = conn.execute(
+            """SELECT COALESCE(SUM(CASE WHEN debit > 0 THEN quantite ELSE 0 END), 0) AS qte_in,
+                      COALESCE(SUM(CASE WHEN credit > 0 THEN quantite ELSE 0 END), 0) AS qte_out
+               FROM entries WHERE compte = ? AND date >= ? AND date <= ?""",
+            (code, date_from, date_to),
+        ).fetchone()
+        qte_entrees, qte_sorties = qte_row["qte_in"], qte_row["qte_out"]
+        qte_initiale = get_setting(conn, f"stock_qte_initiale_{code}_{exercice}", 0.0)
+        qte_finale = qte_initiale + qte_entrees - qte_sorties
+        stock_final = b["solde_cloture"]
+        cout_unitaire_moyen = (stock_final / qte_finale) if qte_finale else None
+        result.append({
+            "code": code, "label": b["label"], "stock_initial": initial,
+            "entrees": entrees, "sorties": sorties, "stock_final": stock_final,
+            "qte_initiale": qte_initiale, "qte_entrees": qte_entrees, "qte_sorties": qte_sorties,
+            "qte_finale": qte_finale, "cout_unitaire_moyen": cout_unitaire_moyen,
+        })
+    result.sort(key=lambda r: r["code"])
+    return result
+
+
 def set_stock_qte_initiale(conn, code, value, exercice=None):
     exercice = exercice or get_current_exercice(conn)
     set_setting(conn, f"stock_qte_initiale_{code}_{exercice}", value)
@@ -1940,11 +1984,14 @@ LIGNE_TYPES = {
 }
 
 
-def add_produit_fini(conn, code, nom, description="", quantite_produite=1, marge_pourcentage=30):
+def add_produit_fini(conn, code, nom, description="", quantite_produite=1, marge_pourcentage=30,
+                      compte_stock="360000"):
     conn.execute(
-        """INSERT OR REPLACE INTO produits_finis (code, nom, description, quantite_produite, marge_pourcentage)
-           VALUES (?, ?, ?, ?, ?)""",
-        (code.strip(), nom.strip(), description, quantite_produite or 1, marge_pourcentage or 0),
+        """INSERT OR REPLACE INTO produits_finis
+           (code, nom, description, quantite_produite, marge_pourcentage, compte_stock)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        (code.strip(), nom.strip(), description, quantite_produite or 1, marge_pourcentage or 0,
+         compte_stock or "360000"),
     )
     conn.commit()
 
@@ -1984,6 +2031,19 @@ def list_recette_lignes(conn, produit_code):
     ).fetchall()]
 
 
+STOCK_VARIATION_PAR_PREFIXE = {
+    "31": "603100",  # Variations des stocks de marchandises
+    "32": "603200",  # Variations des stocks de matières premières
+    "33": "603300",  # Variations des stocks d'autres approvisionnements
+    "36": "736000",  # Variations des stocks de produits finis
+}
+
+
+def _compte_variation_stock(compte_stock):
+    prefix = (compte_stock or "")[:2]
+    return STOCK_VARIATION_PAR_PREFIXE.get(prefix, "603200")
+
+
 def compute_cout_production(conn, produit_code, exercice=None):
     """Calcule le coût de production d'un produit fini à partir de sa recette :
     pour chaque ligne « matière première » liée à un compte de stock, le coût
@@ -1994,7 +2054,7 @@ def compute_cout_production(conn, produit_code, exercice=None):
     if not produit:
         raise ValueError(f"Produit « {produit_code} » introuvable.")
     lignes = list_recette_lignes(conn, produit_code)
-    stocks_by_code = {s["code"]: s for s in compute_stocks(conn, exercice=exercice)}
+    stocks_by_code = {s["code"]: s for s in compute_stocks_detail(conn, exercice=exercice)}
 
     detail = []
     total = 0.0
@@ -2033,6 +2093,52 @@ def compute_cout_production(conn, produit_code, exercice=None):
         "prix_vente_total": prix_vente_total,
         "marge_unitaire": prix_vente_unitaire - cout_unitaire_produit,
     }
+
+
+def valider_fabrication(conn, produit_code, date_str=None, piece=None, exercice=None):
+    """Valide une fabrication à partir de sa recette :
+    - impute comptablement la consommation de chaque matière première (le
+      stock réel utilisé — ex. 321001 CLINKER — diminue en QUANTITÉ et en
+      VALEUR, contrepartie en compte de variation de stock 603xxx) ;
+    - place le produit fini dans son compte de stock (classe 36) en QUANTITÉ
+      et en VALEUR, au coût de production + la marge paramétrée (compte
+      736000 en contrepartie).
+    Retourne (résultat de compute_cout_production, avertissements)."""
+    resultat = compute_cout_production(conn, produit_code, exercice=exercice)
+    produit = resultat["produit"]
+    exercice = exercice or get_current_exercice(conn)
+    if date_str is None:
+        today = date.today()
+        date_str = today.strftime("%Y-%m-%d") if str(today.year) == exercice else f"{exercice}-01-01"
+    piece = piece or f"FAB-{produit_code}-{date_str}"
+    warnings = []
+
+    for l in resultat["lignes"]:
+        if l["type_ligne"] != "matiere" or not l["compte"]:
+            continue
+        montant = l["montant"]
+        qte = l["quantite"] or 0
+        if montant <= 0 or qte <= 0:
+            continue
+        contre_compte = _compte_variation_stock(l["compte"])
+        add_entry(conn, date_str, piece, "OD", contre_compte, "", f"Consommation fabrication — {l['libelle']}",
+                  montant, 0)
+        add_entry(conn, date_str, piece, "OD", l["compte"], "", f"Consommation fabrication — {l['libelle']}",
+                  0, montant, quantite=qte)
+
+    valeur_produit_fini = resultat["prix_vente_total"]
+    qte_produite = resultat["quantite_produite"]
+    if valeur_produit_fini > 0 and qte_produite > 0:
+        compte_stock_pf = produit["compte_stock"]
+        contre_compte_pf = _compte_variation_stock(compte_stock_pf)
+        add_entry(conn, date_str, piece, "OD", compte_stock_pf, "", f"Production — {produit['nom']}",
+                  valeur_produit_fini, 0, quantite=qte_produite)
+        add_entry(conn, date_str, piece, "OD", contre_compte_pf, "", f"Production — {produit['nom']}",
+                  0, valeur_produit_fini)
+    else:
+        warnings.append("Valeur ou quantité produite nulle — aucune entrée en stock de produit fini comptabilisée.")
+
+    return resultat, warnings
 
 
 # ---------------------------------------------------------------------------

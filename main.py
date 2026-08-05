@@ -1026,11 +1026,27 @@ class StocksSyntheseTab(ttk.Frame):
         super().__init__(parent)
         self.conn = conn
         ttk.Label(self, text=(
-            "Stock initial (valeur ou quantité) : cliquez une ligne, modifiez la valeur puis "
-            "« Enregistrer ». La quantité de mouvement provient du champ « Quantité » saisi sur "
-            "chaque écriture (onglet Saisie) — elle permet de calculer un coût unitaire moyen pour "
-            "la valorisation des stocks."
-        ), foreground="#595959", wraplength=1000).pack(anchor="w", padx=8, pady=(8, 0))
+            "Détail RÉEL de chaque compte de stock utilisé (pas seulement les comptes centralisateurs "
+            "310000/320000/331000/360000) : tout sous-compte 31x/32x/33x/36x ayant un mouvement ou un "
+            "stock initial apparaît ici (ex. 321001 CLINKER). Cliquez une ligne, modifiez la valeur puis "
+            "« Enregistrer ». La quantité de mouvement provient du champ « Quantité » saisi sur chaque "
+            "écriture (onglet Saisie) — elle permet de calculer un coût unitaire moyen réel."
+        ), foreground="#595959", wraplength=1050).pack(anchor="w", padx=8, pady=(8, 0))
+
+        filt = ttk.Frame(self)
+        filt.pack(fill="x", padx=8, pady=4)
+        ttk.Label(filt, text="Catégorie :").pack(side="left")
+        self.categorie_var = tk.StringVar(value="Toutes")
+        ttk.Combobox(filt, textvariable=self.categorie_var, width=28, state="readonly", values=[
+            "Toutes", "31 — Marchandises", "32 — Matières premières",
+            "33 — Autres approvisionnements", "36 — Produits finis",
+        ]).pack(side="left", padx=4)
+        ttk.Button(filt, text="Filtrer", command=self.refresh).pack(side="left", padx=8)
+
+        ttk.Label(filt, text="Marge de valorisation des produits finis par défaut (%) :").pack(side="left", padx=(24, 4))
+        self.marge_defaut_var = tk.StringVar(value=str(core.get_setting(conn, "marge_production_defaut", 30.0)))
+        ttk.Entry(filt, textvariable=self.marge_defaut_var, width=6).pack(side="left", padx=2)
+        ttk.Button(filt, text="Enregistrer la marge", command=self.save_marge_defaut).pack(side="left", padx=4)
 
         edit_bar = ttk.Frame(self)
         edit_bar.pack(fill="x", padx=8, pady=4)
@@ -1042,6 +1058,8 @@ class StocksSyntheseTab(ttk.Frame):
         self.qte_initial_var = tk.StringVar()
         ttk.Entry(edit_bar, textvariable=self.qte_initial_var, width=14).pack(side="left", padx=4)
         ttk.Button(edit_bar, text="Enregistrer la quantité", command=self.save_qte_initial).pack(side="left", padx=4)
+        ttk.Label(edit_bar, text="(pour un nouveau compte : tapez son n° ci-dessus dans le champ, puis "
+                                  "enregistrez — il apparaîtra dans la liste)", foreground="#595959").pack(side="left", padx=8)
 
         cols = ("code", "label", "initial", "entrees", "sorties", "final",
                 "qte_initiale", "qte_entrees", "qte_sorties", "qte_finale", "cump")
@@ -1066,9 +1084,19 @@ class StocksSyntheseTab(ttk.Frame):
         self.initial_var.set(values[2])
         self.qte_initial_var.set(values[6])
 
+    def save_marge_defaut(self):
+        try:
+            value = float(self.marge_defaut_var.get() or 0)
+        except ValueError:
+            messagebox.showerror("Erreur", "La marge doit être un nombre.")
+            return
+        core.set_setting(self.conn, "marge_production_defaut", value)
+        messagebox.showinfo("Enregistré", "Marge de valorisation par défaut enregistrée.")
+
     def save_initial(self):
         if not self.selected_code:
-            messagebox.showinfo("Info", "Sélectionnez d'abord un compte de stock dans le tableau.")
+            messagebox.showinfo("Info", "Sélectionnez d'abord un compte de stock dans le tableau "
+                                         "(ou saisissez son code dans le champ ci-dessus après l'avoir tapé).")
             return
         try:
             value = float(self.initial_var.get() or 0)
@@ -1093,7 +1121,11 @@ class StocksSyntheseTab(ttk.Frame):
     def refresh(self):
         for row in self.tree.get_children():
             self.tree.delete(row)
-        for s in core.compute_stocks(self.conn):
+        cat = self.categorie_var.get()
+        prefixes = None
+        if cat != "Toutes":
+            prefixes = [cat.split(" — ")[0].strip()]
+        for s in core.compute_stocks_detail(self.conn, prefixes=prefixes):
             cump = f"{s['cout_unitaire_moyen']:,.2f}" if s["cout_unitaire_moyen"] is not None else "—"
             self.tree.insert("", "end", values=(
                 s["code"], s["label"], f"{s['stock_initial']:,.2f}",
@@ -1223,6 +1255,12 @@ class RecetteFabricationTab(ttk.Frame):
         ttk.Label(params, text="Marge (%) :").pack(side="left", padx=(16, 0))
         self.marge_var = tk.StringVar()
         ttk.Entry(params, textvariable=self.marge_var, width=8).pack(side="left", padx=4)
+        ttk.Label(params, text="Compte stock produit fini (classe 36) :").pack(side="left", padx=(16, 0))
+        self.compte_stock_pf_var = tk.StringVar()
+        self.compte_stock_pf_combo = ttk.Combobox(params, textvariable=self.compte_stock_pf_var, width=26)
+        self.compte_stock_pf_combo.pack(side="left", padx=4)
+        self.compte_stock_pf_combo.bind("<KeyRelease>", self._on_compte_pf_keyrelease)
+        self._refresh_compte_pf_values()
         ttk.Button(params, text="Enregistrer ces paramètres", command=self._save_params).pack(side="left", padx=8)
 
         form = ttk.LabelFrame(self, text="Ajouter un composant à la recette")
@@ -1274,12 +1312,29 @@ class RecetteFabricationTab(ttk.Frame):
         self.result_text = tk.Text(self, font=("Consolas", 11), height=8, wrap="none")
         self.result_text.pack(fill="x", padx=12, pady=8)
 
+        ttk.Button(self, text="Valider la fabrication (comptabiliser)", command=self.valider_fabrication).pack(
+            anchor="w", padx=12, pady=(0, 8))
+
         self._on_type_changed()
         self.refresh_produits()
 
     def _refresh_stock_accounts(self):
-        stocks = core.compute_stocks(self.conn)
+        stocks = core.compute_stocks_detail(self.conn, prefixes=["31", "32", "33", "36"])
         self.compte_combo["values"] = [f"{s['code']} — {s['label']}" for s in stocks]
+
+    def _refresh_compte_pf_values(self):
+        stocks = core.compute_stocks_detail(self.conn, prefixes=["36"])
+        values = [f"{s['code']} — {s['label']}" for s in stocks]
+        if "360000 — PRODUITS FINIS" not in values and core.account_exists(self.conn, "360000"):
+            values.insert(0, f"360000 — {core.get_account_label(self.conn, '360000')}")
+        self.compte_stock_pf_combo["values"] = values
+
+    def _on_compte_pf_keyrelease(self, event=None):
+        query = self._extract_code(self.compte_stock_pf_var.get())
+        if query:
+            items = [a for a in core.search_accounts(self.conn, query, limit=50)
+                     if a["code"].startswith("36")]
+            self.compte_stock_pf_combo["values"] = [f"{a['code']} — {a['label']}" for a in items]
 
     def _on_type_changed(self, event=None):
         is_matiere = self.type_combo.get() == core.LIGNE_TYPES["matiere"]
@@ -1319,7 +1374,8 @@ class RecetteFabricationTab(ttk.Frame):
         nom = simpledialog.askstring("Nouveau produit fini", "Nom du produit :", parent=self)
         if not nom:
             return
-        core.add_produit_fini(self.conn, code.strip(), nom.strip())
+        marge_defaut = core.get_setting(self.conn, "marge_production_defaut", 30.0)
+        core.add_produit_fini(self.conn, code.strip(), nom.strip(), marge_pourcentage=marge_defaut)
         self.selected_produit = code.strip()
         self.refresh_produits()
 
@@ -1341,8 +1397,12 @@ class RecetteFabricationTab(ttk.Frame):
         except ValueError:
             messagebox.showerror("Erreur", "Quantité produite et marge doivent être des nombres.")
             return
+        compte_stock = self._extract_code(self.compte_stock_pf_var.get()) or "360000"
+        if not core.account_exists(self.conn, compte_stock):
+            messagebox.showerror("Compte invalide", f"Le compte « {compte_stock} » n'existe pas.")
+            return
         core.add_produit_fini(self.conn, self.selected_produit, produit["nom"], produit["description"] or "",
-                               qte, marge)
+                               qte, marge, compte_stock)
         self.refresh()
 
     def _on_ligne_select(self, event=None):
@@ -1399,6 +1459,9 @@ class RecetteFabricationTab(ttk.Frame):
         produit = core.get_produit_fini(self.conn, self.selected_produit)
         self.qte_produite_var.set(str(produit["quantite_produite"]))
         self.marge_var.set(str(produit["marge_pourcentage"]))
+        self._refresh_compte_pf_values()
+        label_pf = core.get_account_label(self.conn, produit["compte_stock"])
+        self.compte_stock_pf_var.set(f"{produit['compte_stock']} — {label_pf}")
 
         resultat = core.compute_cout_production(self.conn, self.selected_produit)
         for l in resultat["lignes"]:
@@ -1417,6 +1480,38 @@ class RecetteFabricationTab(ttk.Frame):
             f"  {'dont marge unitaire':<45} {resultat['marge_unitaire']:>15,.2f}",
         ]
         self.result_text.insert("1.0", "\n".join(lines))
+
+    def valider_fabrication(self):
+        if not self.selected_produit:
+            messagebox.showinfo("Info", "Sélectionnez d'abord un produit fini.")
+            return
+        self._save_params()
+        resultat = core.compute_cout_production(self.conn, self.selected_produit)
+        if not resultat["lignes"]:
+            messagebox.showwarning("Recette vide", "Ajoutez au moins un composant à la recette avant de valider.")
+            return
+        if not messagebox.askyesno(
+            "Confirmer la validation de la fabrication",
+            f"Valider la fabrication de « {resultat['produit']['nom']} » ?\n\n"
+            f"Coût de production : {resultat['cout_production_total']:,.2f}\n"
+            f"Quantité produite : {resultat['quantite_produite']:g}\n"
+            f"Valeur du produit fini mis en stock (coût + marge {resultat['marge_pourcentage']:g}%) : "
+            f"{resultat['prix_vente_total']:,.2f}\n\n"
+            f"Cette action va DIMINUER les matières premières consommées (quantité et valeur) et "
+            f"AUGMENTER le stock de produit fini, avec envoi des écritures dans le menu SAISIE. "
+            f"Cette action est définitive."
+        ):
+            return
+        try:
+            _, warnings = core.valider_fabrication(self.conn, self.selected_produit)
+        except ValueError as exc:
+            messagebox.showerror("Erreur", str(exc))
+            return
+        msg = "Fabrication validée. Les matières premières ont été décrémentées et le produit fini mis en stock."
+        if warnings:
+            msg += "\n\nAvertissements :\n" + "\n".join(warnings)
+        messagebox.showinfo("Validation terminée", msg)
+        self.refresh()
 
 
 class ProductionTab(ttk.Frame):

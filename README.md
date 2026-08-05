@@ -186,6 +186,49 @@ Résultat net exact (vérifié à l'unité près sur plusieurs cas).
 
 - **PRODUCTION** : Matières premières, Fabrication, Produits finis.
 
+### Reconfiguration majeure : Stocks au détail réel + Fabrication qui consomme les matières (mise à jour)
+
+**Onglet Stocks → Synthèse par compte** : affiche désormais le **détail réel
+de chaque compte** de stock utilisé (ex. `321001 CLINKER`, `321002 GYPSE`),
+et non plus seulement les 4 comptes centralisateurs (310000/320000/331000/
+360000). Un filtre par catégorie (31 Marchandises / 32 Matières premières /
+33 Autres approvisionnements / 36 Produits finis) est disponible, ainsi
+qu'un nouveau champ **« Marge de valorisation des produits finis par défaut
+(%) »**, utilisé comme marge par défaut pour tout nouveau produit créé dans
+Fabrication.
+
+**Onglet Fabrication → Recettes / Coût de production** reconfiguré :
+- Le sélecteur **« Compte de stock »** des lignes matière propose désormais
+  tous les comptes détaillés réellement utilisés dans Stocks (pas seulement
+  les 4 comptes centralisateurs) — vous pouvez donc combiner clinker, gypse,
+  calcaire... chacun avec son propre coût réel.
+- Chaque produit fini a maintenant un **compte de stock configurable**
+  (classe 36) où il sera placé une fois fabriqué.
+- **Nouveau bouton « Valider la fabrication (comptabiliser) »** : envoie les
+  écritures comptables dans le menu SAISIE —
+  1. **Consommation des matières premières** : chaque matière utilisée dans
+     la recette est diminuée en **quantité et en valeur** sur son compte
+     réel (ex. 321001), avec pour contrepartie le compte de variation de
+     stock approprié (603200 pour les matières premières, 603100 pour les
+     marchandises...).
+  2. **Entrée du produit fini** : le compte de stock du produit (classe 36)
+     est augmenté en **quantité et en valeur**, valorisé au **coût de
+     production + la marge paramétrée**, avec pour contrepartie le compte
+     736000.
+
+**Trois bugs trouvés et corrigés pendant les tests** (tous liés à la
+reconnaissance des sous-comptes réels) : (1) le calcul du coût de
+production ne cherchait le coût unitaire que parmi les 4 comptes maîtres —
+corrigé ; (2) la fabrication était datée du jour au lieu d'une date dans
+l'exercice actif par défaut — corrigé ; (3) le total des stocks au Bilan
+utilisait des préfixes à 3 chiffres qui ratent les sous-comptes détaillés —
+corrigé avec de vrais préfixes de catégorie à 2 chiffres.
+
+Testé de bout en bout (clinker + gypse + main-d'œuvre + énergie → ciment,
+marge 25 %) : consommation exacte des matières (quantité et valeur),
+production de 10 unités de ciment valorisées à 250 000, **Bilan
+parfaitement équilibré**, sans régression sur les scénarios précédents.
+
 ### Module Fabrication — nomenclature et coût de production (nouveau)
 
 L'onglet **Fabrication** contient maintenant deux sous-onglets :
