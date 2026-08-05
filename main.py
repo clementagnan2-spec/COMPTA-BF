@@ -59,6 +59,7 @@ class App(tk.Tk):
         register("production", ProductionTab)
         register("cr", CompteResultatTab)
         register("tft", TftTab)
+        register("situation_financiere", SituationFinanciereTab)
         register("grand_livre", GrandLivreTab)
         register("balance", BalanceTab)
         register("bilan", BilanTab)
@@ -123,6 +124,7 @@ class App(tk.Tk):
             ("Bilan", "bilan"),
             ("Compte de résultat", "cr"),
             ("TFT", "tft"),
+            ("Situation financière", "situation_financiere"),
             ("Liasse fiscale", "liasse"),
             ("Tableaux d'exécution budgétaire", "budget_exec"),
             ("Impôts", "impots"),
@@ -879,8 +881,8 @@ class BilanTab(ttk.Frame):
         columns_frame.columnconfigure(0, weight=1)
         columns_frame.columnconfigure(1, weight=1)
 
-        ttk.Label(columns_frame, text="PASSIF", font=("Segoe UI", 12, "bold")).grid(row=0, column=0, sticky="w")
-        ttk.Label(columns_frame, text="ACTIF", font=("Segoe UI", 12, "bold")).grid(row=0, column=1, sticky="w")
+        ttk.Label(columns_frame, text="ACTIF", font=("Segoe UI", 12, "bold")).grid(row=0, column=0, sticky="w")
+        ttk.Label(columns_frame, text="PASSIF", font=("Segoe UI", 12, "bold")).grid(row=0, column=1, sticky="w")
 
         cols = ("libelle", "montant")
         self.tree_passif = ttk.Treeview(columns_frame, columns=cols, show="headings", height=22)
@@ -895,8 +897,8 @@ class BilanTab(ttk.Frame):
                 font = ("Segoe UI", 9, "bold") if key == "total" else ("Segoe UI", 9)
                 tree.tag_configure(key, background=color, foreground=fg, font=font)
                 tree.tag_configure(key + "_header", background=color, foreground=fg, font=("Segoe UI", 9, "bold"))
-        self.tree_passif.grid(row=1, column=0, sticky="nsew", padx=(0, 4))
-        self.tree_actif.grid(row=1, column=1, sticky="nsew", padx=(4, 0))
+        self.tree_actif.grid(row=1, column=0, sticky="nsew", padx=(0, 4))
+        self.tree_passif.grid(row=1, column=1, sticky="nsew", padx=(4, 0))
         columns_frame.rowconfigure(1, weight=1)
 
         self.ecart_var = tk.StringVar()
@@ -1653,71 +1655,100 @@ class ProductionTab(ttk.Frame):
 
 class TftIndirectTab(ttk.Frame):
     """TFT selon la méthode indirecte SYSCOHADA (avec CAFG), présenté selon le
-    modèle officiel. Calculé à partir de compute_balance() et
-    compute_liasse_resultat() — donc toujours cohérent avec la Balance et le
-    Bilan. La ligne CONTRÔLE compare la trésorerie calculée à la trésorerie
-    réelle de la Balance : un écart signale un mouvement mal classé."""
+    modèle officiel avec une couleur par section. Calculé à partir de
+    compute_balance() et compute_liasse_resultat() — donc toujours cohérent
+    avec la Balance et le Bilan. La ligne CONTRÔLE compare la trésorerie
+    calculée à la trésorerie réelle de la Balance : un écart signale un
+    mouvement mal classé."""
+
+    SECTIONS = {
+        "ouverture": "#D9D2E9",   # violet clair — trésorerie
+        "cafg": "#D9EAD3",        # vert clair — CAFG / exploitation
+        "invest": "#FCE5CD",      # orange clair — investissement
+        "finance": "#CFE2F3",     # bleu clair — financement
+        "controle": "#F4CCCC",    # rouge/rose clair — contrôle
+        "total": "#1F4E78",       # bandeau total
+    }
 
     def __init__(self, parent, conn):
         super().__init__(parent)
         self.conn = conn
-        self.text = tk.Text(self, font=("Consolas", 10), wrap="none")
-        self.text.pack(fill="both", expand=True, padx=8, pady=8)
-        ttk.Button(self, text="Actualiser", command=self.refresh).pack(pady=(0, 8))
+        cols = ("libelle", "montant")
+        self.tree = ttk.Treeview(self, columns=cols, show="headings", height=28)
+        self.tree.heading("libelle", text="Rubrique")
+        self.tree.heading("montant", text="Montant")
+        self.tree.column("libelle", width=480, anchor="w")
+        self.tree.column("montant", width=160, anchor="e")
+        for key, color in self.SECTIONS.items():
+            fg = "white" if key == "total" else "black"
+            tree_font = ("Segoe UI", 9, "bold") if key == "total" else ("Segoe UI", 9)
+            self.tree.tag_configure(key, background=color, foreground=fg, font=tree_font)
+            self.tree.tag_configure(key + "_header", background=color, foreground=fg, font=("Segoe UI", 9, "bold"))
+        self.tree.pack(fill="both", expand=True, padx=8, pady=8)
+        self.ecart_var = tk.StringVar()
+        ttk.Label(self, textvariable=self.ecart_var, font=("Segoe UI", 10, "bold")).pack(anchor="w", padx=8)
+        ttk.Button(self, text="Actualiser", command=self.refresh).pack(pady=8)
         self.refresh()
 
+    def _row(self, tag, label, val):
+        self.tree.insert("", "end", tags=(tag,), values=(f"  {label}", f"{val:,.2f}"))
+
+    def _header(self, tag, titre):
+        self.tree.insert("", "end", tags=(tag + "_header",), values=(titre, ""))
+
     def refresh(self):
+        for row in self.tree.get_children():
+            self.tree.delete(row)
         t = core.compute_tft_indirect(self.conn)
 
-        def ligne(label, val, width=58):
-            return f"  {label:<{width}} {val:>16,.2f}"
+        self._header("ouverture", "A — TRÉSORERIE NETTE AU 1ER JANVIER")
+        self._row("ouverture", "Trésorerie d'ouverture", t["treso_ouverture"])
 
-        lines = [
-            "TABLEAU DE FLUX DE TRÉSORERIE (méthode indirecte — CAFG)", "=" * 82, "",
-            ligne("A - Trésorerie nette au 1er janvier", t["treso_ouverture"]), "",
-            "DÉTERMINATION DE LA CAPACITÉ D'AUTOFINANCEMENT GLOBALE (CAFG)", "-" * 82,
-            ligne("Excédent Brut d'Exploitation (EBE)", t["ebe"]),
-            ligne("+ Revenus financiers", t["revenus_financiers"]),
-            ligne("- Frais financiers", t["frais_financiers"]),
-            ligne("CAPACITÉ D'AUTOFINANCEMENT GLOBALE (CAFG)", t["cafg"]), "",
-            ligne("- Variation des stocks", t["variation_stocks"]),
-            ligne("- Variation des créances", t["variation_creances"]),
-            ligne("+ Variation du passif circulant (dettes)", t["variation_dettes_circulantes"]),
-            ligne("FLUX DE TRÉSORERIE DES ACTIVITÉS OPÉRATIONNELLES (A)", t["flux_operationnel"]), "",
-            "FLUX DE TRÉSORERIE DES ACTIVITÉS D'INVESTISSEMENT", "-" * 82,
-            ligne("- Acquisitions d'immobilisations incorporelles", t["acquisitions_incorp"]),
-            ligne("- Acquisitions d'immobilisations corporelles", t["acquisitions_corp"]),
-            ligne("- Acquisitions d'immobilisations financières", t["acquisitions_fin"]),
-            ligne("+ Cessions d'immobilisations incorporelles", t["cessions_incorp"]),
-            ligne("+ Cessions d'immobilisations corporelles", t["cessions_corp"]),
-            ligne("+ Cessions d'immobilisations financières", t["cessions_fin"]),
-            ligne("FLUX DE TRÉSORERIE DES ACTIVITÉS D'INVESTISSEMENT (B)", t["flux_investissement"]), "",
-            "FLUX DE TRÉSORERIE DES ACTIVITÉS DE FINANCEMENT", "-" * 82,
-            ligne("+ Augmentation de capital par apports nouveaux", t["augmentation_capital"]),
-            ligne("+ Subventions d'investissement reçues", t["subventions_recues"]),
-            ligne("- Prélèvements sur le capital", t["prelevements_capital"]),
-            ligne("- Dividendes versés", t["dividendes_verses"]),
-            ligne("  Flux de trésorerie provenant des capitaux propres", t["flux_capitaux_propres"]),
-            ligne("+ Emprunts nouveaux", t["emprunts_nouveaux"]),
-            ligne("- Remboursements des emprunts", t["remboursements_emprunts"]),
-            ligne("  Flux de trésorerie provenant des capitaux étrangers", t["flux_capitaux_etrangers"]),
-            ligne("FLUX DE TRÉSORERIE DES ACTIVITÉS DE FINANCEMENT (C)", t["flux_financement"]), "",
-            "=" * 82,
-            ligne("VARIATION DE LA TRÉSORERIE NETTE (A+B+C)", t["variation_treso_nette"]),
-            ligne("TRÉSORERIE NETTE CALCULÉE AU 31/12/N", t["treso_cloture_calculee"]), "",
-            ligne("CONTRÔLE — Trésorerie réelle (Balance, classe 5)", t["treso_cloture_reelle"]),
-            ligne("ÉCART", t["ecart"]),
-        ]
+        self._header("cafg", "DÉTERMINATION DE LA CAFG")
+        self._row("cafg", "Excédent Brut d'Exploitation (EBE)", t["ebe"])
+        self._row("cafg", "+ Revenus financiers", t["revenus_financiers"])
+        self._row("cafg", "- Frais financiers", t["frais_financiers"])
+        self._row("cafg", "CAPACITÉ D'AUTOFINANCEMENT GLOBALE (CAFG)", t["cafg"])
+        self._row("cafg", "- Variation des stocks", t["variation_stocks"])
+        self._row("cafg", "- Variation des créances", t["variation_creances"])
+        self._row("cafg", "+ Variation du passif circulant (dettes)", t["variation_dettes_circulantes"])
+        self._row("cafg", "FLUX DES ACTIVITÉS OPÉRATIONNELLES (A)", t["flux_operationnel"])
+
+        self._header("invest", "FLUX DES ACTIVITÉS D'INVESTISSEMENT")
+        self._row("invest", "- Acquisitions d'immobilisations incorporelles", t["acquisitions_incorp"])
+        self._row("invest", "- Acquisitions d'immobilisations corporelles", t["acquisitions_corp"])
+        self._row("invest", "- Acquisitions d'immobilisations financières", t["acquisitions_fin"])
+        self._row("invest", "+ Cessions d'immobilisations incorporelles", t["cessions_incorp"])
+        self._row("invest", "+ Cessions d'immobilisations corporelles", t["cessions_corp"])
+        self._row("invest", "+ Cessions d'immobilisations financières", t["cessions_fin"])
+        self._row("invest", "FLUX DES ACTIVITÉS D'INVESTISSEMENT (B)", t["flux_investissement"])
+
+        self._header("finance", "FLUX DES ACTIVITÉS DE FINANCEMENT")
+        self._row("finance", "+ Augmentation de capital par apports nouveaux", t["augmentation_capital"])
+        self._row("finance", "+ Subventions d'investissement reçues", t["subventions_recues"])
+        self._row("finance", "- Prélèvements sur le capital", t["prelevements_capital"])
+        self._row("finance", "- Dividendes versés", t["dividendes_verses"])
+        self._row("finance", "Flux de trésorerie provenant des capitaux propres", t["flux_capitaux_propres"])
+        self._row("finance", "+ Emprunts nouveaux", t["emprunts_nouveaux"])
+        self._row("finance", "- Remboursements des emprunts", t["remboursements_emprunts"])
+        self._row("finance", "Flux de trésorerie provenant des capitaux étrangers", t["flux_capitaux_etrangers"])
+        self._row("finance", "FLUX DES ACTIVITÉS DE FINANCEMENT (C)", t["flux_financement"])
+
+        self._header("controle", "VARIATION ET CONTRÔLE")
+        self._row("controle", "VARIATION DE LA TRÉSORERIE NETTE (A+B+C)", t["variation_treso_nette"])
+        self._row("controle", "Trésorerie nette calculée au 31/12/N", t["treso_cloture_calculee"])
+        self._row("controle", "Contrôle — Trésorerie réelle (Balance, classe 5)", t["treso_cloture_reelle"])
+        self._row("controle", "ÉCART", t["ecart"])
+        self.tree.insert("", "end", tags=("total",), values=(
+            "TRÉSORERIE NETTE DE CLÔTURE", f"{t['treso_cloture_reelle']:,.2f}"))
+
         if abs(t["ecart"]) < 1:
-            lines.append("  ✓ La trésorerie calculée correspond exactement à la trésorerie de la Balance.")
+            self.ecart_var.set("✓ La trésorerie calculée correspond exactement à la trésorerie de la Balance.")
         else:
-            lines.append("  ⚠ Écart : un mouvement de trésorerie n'est peut-être pas correctement classé")
-            lines.append("    (vérifiez les comptes d'immobilisations, capital ou emprunts utilisés).")
-        lines.append("")
-        lines.append("NB : calculé à partir de la même Balance générale que les onglets Balance et Bilan.")
-
-        self.text.delete("1.0", "end")
-        self.text.insert("1.0", "\n".join(lines))
+            self.ecart_var.set(
+                f"⚠ Écart de {t['ecart']:,.2f} — un mouvement de trésorerie n'est peut-être pas "
+                f"correctement classé (comptes d'immobilisations, capital ou emprunts)."
+            )
 
 
 class TftDirectTab(ttk.Frame):
@@ -1779,6 +1810,109 @@ class TftDirectTab(ttk.Frame):
         ]
         self.text.delete("1.0", "end")
         self.text.insert("1.0", "\n".join(lines))
+
+
+class SituationFinanciereTab(ttk.Frame):
+    """Situation financière (FR - BFR - TN), présentée selon le modèle
+    officiel, avec une couleur par section. Entièrement recalculée à partir
+    de compute_bilan(), compute_liasse_resultat() et compute_tft_indirect()
+    — donc toujours cohérente avec la Balance, le Bilan et le TFT."""
+
+    SECTIONS = {
+        "cafg": "#D9EAD3",       # vert clair — CAFG / rentabilité
+        "fr": "#CFE2F3",         # bleu clair — Fonds de roulement
+        "bfr": "#FFF2CC",        # jaune clair — Besoin en fonds de roulement
+        "tn": "#D9D2E9",         # violet clair — Trésorerie nette
+        "flux": "#FCE5CD",       # orange clair — Flux de la période
+        "endettement": "#F4CCCC",  # rouge/rose clair — Endettement
+        "total": "#1F4E78",
+    }
+
+    def __init__(self, parent, conn):
+        super().__init__(parent)
+        self.conn = conn
+        cols = ("libelle", "montant")
+        self.tree = ttk.Treeview(self, columns=cols, show="headings", height=30)
+        self.tree.heading("libelle", text="Rubrique")
+        self.tree.heading("montant", text="Montant")
+        self.tree.column("libelle", width=480, anchor="w")
+        self.tree.column("montant", width=160, anchor="e")
+        for key, color in self.SECTIONS.items():
+            fg = "white" if key == "total" else "black"
+            tree_font = ("Segoe UI", 9, "bold") if key == "total" else ("Segoe UI", 9)
+            self.tree.tag_configure(key, background=color, foreground=fg, font=tree_font)
+            self.tree.tag_configure(key + "_header", background=color, foreground=fg, font=("Segoe UI", 9, "bold"))
+        self.tree.pack(fill="both", expand=True, padx=8, pady=8)
+        self.ecart_var = tk.StringVar()
+        ttk.Label(self, textvariable=self.ecart_var, font=("Segoe UI", 10, "bold")).pack(anchor="w", padx=8)
+        ttk.Button(self, text="Actualiser", command=self.refresh).pack(pady=8)
+        self.refresh()
+
+    def _row(self, tag, label, val, pct=False):
+        suffix = " %" if pct else ""
+        self.tree.insert("", "end", tags=(tag,), values=(f"  {label}", f"{val:,.2f}{suffix}"))
+
+    def _header(self, tag, titre):
+        self.tree.insert("", "end", tags=(tag + "_header",), values=(titre, ""))
+
+    def refresh(self):
+        for row in self.tree.get_children():
+            self.tree.delete(row)
+        s = core.compute_situation_financiere(self.conn)
+
+        self._header("cafg", "RÉSULTAT ET CAPACITÉ D'AUTOFINANCEMENT")
+        self._row("cafg", "Résultat net comptable", s["resultat_net_comptable"])
+        self._row("cafg", "Excédent Brut d'Exploitation (EBE)", s["ebe"])
+        self._row("cafg", "+ Revenus financiers", s["revenus_financiers"])
+        self._row("cafg", "- Frais financiers", s["frais_financiers"])
+        self._row("cafg", "CAPACITÉ D'AUTOFINANCEMENT GLOBALE (CAFG)", s["cafg"])
+        self._row("cafg", "- Dividendes versés durant l'exercice", s["dividendes_verses"])
+        self._row("cafg", "AUTOFINANCEMENT", s["autofinancement"])
+        self._row("cafg", "Rentabilité économique (Résultat exploit. / Cap. propres)", s["rentabilite_economique"], pct=True)
+        self._row("cafg", "Rentabilité financière (Résultat net / Cap. propres)", s["rentabilite_financiere"], pct=True)
+
+        self._header("fr", "FONDS DE ROULEMENT (FR)")
+        self._row("fr", "Capitaux propres et ressources assimilées", s["capitaux_propres_ressources"])
+        self._row("fr", "+ Dettes financières", s["dettes_financieres"])
+        self._row("fr", "= RESSOURCES STABLES", s["ressources_stables"])
+        self._row("fr", "- Actifs immobilisés", s["actifs_immobilises"])
+        self._row("fr", "= FONDS DE ROULEMENT (FR)", s["fonds_de_roulement"])
+
+        self._header("bfr", "BESOIN EN FONDS DE ROULEMENT (BFR)")
+        self._row("bfr", "+ Actif circulant d'exploitation", s["actif_circulant_exploitation"])
+        self._row("bfr", "- Passif circulant d'exploitation", s["passif_circulant_exploitation"])
+        self._row("bfr", "= BESOIN DE FINANCEMENT D'EXPLOITATION", s["besoin_financement_exploitation"])
+        self._row("bfr", "+ Actif circulant HAO", s["actif_circulant_hao"])
+        self._row("bfr", "- Passif circulant HAO", s["passif_circulant_hao"])
+        self._row("bfr", "= BESOIN DE FINANCEMENT HAO", s["besoin_financement_hao"])
+        self._row("bfr", "= BESOIN DE FINANCEMENT GLOBAL (BFR)", s["besoin_financement_global"])
+
+        self._header("tn", "TRÉSORERIE NETTE (TN = FR - BFR)")
+        self._row("tn", "TRÉSORERIE NETTE (FR - BFR)", s["tresorerie_nette"])
+        self._row("tn", "Contrôle — Trésorerie réelle (Balance, classe 5)", s["controle_treso_reelle"])
+        self._row("tn", "ÉCART", s["controle_ecart"])
+
+        self._header("flux", "FLUX DE TRÉSORERIE DE LA PÉRIODE (cf. onglet TFT)")
+        self._row("flux", "+ Flux des activités opérationnelles", s["flux_operationnel"])
+        self._row("flux", "- Flux des activités d'investissement", s["flux_investissement"])
+        self._row("flux", "+ Flux des activités de financement", s["flux_financement"])
+        self._row("flux", "VARIATION DE LA TRÉSORERIE NETTE DE LA PÉRIODE", s["variation_treso_nette"])
+
+        self._header("endettement", "ENDETTEMENT FINANCIER")
+        self._row("endettement", "Endettement financier brut (dettes fin. + trésorerie passif)", s["endettement_financier_brut"])
+        self._row("endettement", "- Trésorerie actif", s["treso_actif"])
+        self._row("endettement", "= ENDETTEMENT FINANCIER NET", s["endettement_financier_net"])
+
+        self.tree.insert("", "end", tags=("total",), values=(
+            "TRÉSORERIE NETTE", f"{s['controle_treso_reelle']:,.2f}"))
+
+        if abs(s["controle_ecart"]) < 1:
+            self.ecart_var.set("✓ La trésorerie nette (FR - BFR) correspond exactement à la Balance.")
+        else:
+            self.ecart_var.set(
+                f"⚠ Écart de {s['controle_ecart']:,.2f} — vérifiez que les soldes d'ouverture de tous "
+                f"les comptes (onglet Soldes d'ouverture) sont complets et s'équilibrent à zéro."
+            )
 
 
 class TftTab(ttk.Frame):

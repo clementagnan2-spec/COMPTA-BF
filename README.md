@@ -421,6 +421,39 @@ Les 4 écrans de gestion des plans (Plan comptable, Plan analytique, Plan
 budgétaire, Plan bailleurs de fonds) ainsi que les **Exercices comptables**
 sont désormais regroupés dans le menu **PARAMÈTRES**.
 
+### Corrections TFT + Bilan, et nouveau module Situation financière
+
+**TFT** : ajout des **bandes de couleur par section** qui manquaient (Text
+brut remplacé par un Treeview coloré — trésorerie d'ouverture en violet,
+CAFG/exploitation en vert, investissement en orange, financement en bleu,
+contrôle en rouge/rose).
+
+**Bilan** : **Actif à gauche, Passif à droite** (inversé par rapport à la
+précédente version, sur votre demande).
+
+**Nouveau : Situation financière (FR-BFR-TN)** (menu ÉTATS ET RAPPORTS),
+présentée selon le modèle officiel que vous avez fourni, avec une couleur
+par section :
+- Résultat net, CAFG, autofinancement, ratios de rentabilité économique et
+  financière (vert)
+- **Fonds de Roulement (FR)** = Ressources stables − Actifs immobilisés (bleu)
+- **Besoin en Fonds de Roulement (BFR)** = exploitation + HAO (jaune)
+- **Trésorerie Nette (TN) = FR − BFR**, avec contrôle face à la trésorerie
+  réelle de la Balance (violet)
+- Flux de la période (rappel du TFT, orange) et endettement financier net
+  (rouge/rose)
+
+Entièrement calculée à partir de `compute_bilan()`, `compute_liasse_resultat()`
+et `compute_tft_indirect()` — donc toujours cohérente avec la Balance, le
+Bilan et le TFT. **Un bug a été détecté et corrigé pendant les tests** : un
+premier essai montrait un écart de 5 000 000 entre la trésorerie nette
+calculée (FR−BFR) et la trésorerie réelle — l'investigation a révélé qu'il
+s'agissait en fait d'un **Bilan lui-même déséquilibré** dans le scénario de
+test (solde d'ouverture d'un emprunt saisi sans sa contrepartie), et non
+d'un défaut de la formule. Une fois les soldes d'ouverture complets et
+équilibrés, la Situation financière se réconcilie exactement avec la
+Balance (testé : écart 0 sur plusieurs scénarios).
+
 ### TFT en méthode indirecte — CAFG (nouveau, cohérent avec la Balance)
 
 L'onglet **TFT** contient maintenant deux sous-onglets :

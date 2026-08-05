@@ -2652,6 +2652,104 @@ def compute_tft_indirect(conn, exercice=None):
     }
 
 
+def compute_situation_financiere(conn, exercice=None):
+    """Situation financière (FR - BFR - TN), présentée selon le modèle
+    officiel : capacité d'autofinancement, ratios de rentabilité, puis
+    analyse Fonds de Roulement / Besoin en Fonds de Roulement / Trésorerie
+    Nette. Entièrement recalculé à partir de compute_bilan(),
+    compute_liasse_resultat() et compute_tft_indirect() — donc toujours
+    cohérent avec la Balance, le Bilan et le TFT."""
+    exercice = exercice or get_current_exercice(conn)
+    balance = compute_balance(conn, only_with_movement=False, exercice=exercice)
+    b = compute_bilan(conn, exercice=exercice)
+    cr = compute_liasse_resultat(conn, exercice=exercice)
+    tft = compute_tft_indirect(conn, exercice=exercice)
+
+    resultat_net = cr["XI"]
+    resultat_exploitation = cr["XE"]
+    cafg = tft["cafg"]
+    dividendes_verses = tft["dividendes_verses"]
+    autofinancement = cafg + dividendes_verses
+
+    capitaux_propres_ressources = (b["passif"]["Capital et réserves"] + b["passif"]["Subventions d'investissement"]
+                                    + b["passif"]["Provisions pour risques et charges"] + resultat_net)
+    dettes_financieres = b["passif"]["Dettes financières"]
+    ressources_stables = capitaux_propres_ressources + dettes_financieres
+    actifs_immobilises = b["actif"]["Immobilisations nettes"]
+    fonds_de_roulement = ressources_stables - actifs_immobilises
+
+    racines_exploit = ["42", "43", "44", "45", "46"]
+
+    def _somme_racine(racine, sign=None):
+        total = 0.0
+        for x in balance:
+            if account_racine(x["code"]) != racine:
+                continue
+            v = x["solde_cloture"]
+            if sign == "pos" and v <= 0:
+                continue
+            if sign == "neg" and v >= 0:
+                continue
+            total += v
+        return total
+
+    creances_exploit = _somme_racine(RACINE_CLIENTS)
+    for r in racines_exploit:
+        creances_exploit += _somme_racine(r, sign="pos")
+    actif_circulant_exploitation = b["actif"]["Stocks"] + creances_exploit
+
+    dettes_exploit = -_somme_racine(RACINE_FOURNISSEURS)
+    for r in racines_exploit:
+        dettes_exploit += -_somme_racine(r, sign="neg")
+    passif_circulant_exploitation = dettes_exploit
+
+    besoin_financement_exploitation = actif_circulant_exploitation - passif_circulant_exploitation
+
+    racines_hao = ["47", "48", "49"]
+    actif_circulant_hao = sum(_somme_racine(r, sign="pos") for r in racines_hao)
+    passif_circulant_hao = sum(-_somme_racine(r, sign="neg") for r in racines_hao)
+    besoin_financement_hao = actif_circulant_hao - passif_circulant_hao
+
+    besoin_financement_global = besoin_financement_exploitation + besoin_financement_hao
+    tresorerie_nette = fonds_de_roulement - besoin_financement_global
+
+    treso_actif = b["actif"]["Trésorerie actif"]
+    treso_passif = b["passif"]["Trésorerie passif"]
+    treso_reelle = treso_actif - treso_passif
+    controle_ecart = tresorerie_nette - treso_reelle
+
+    rentabilite_economique = (resultat_exploitation / capitaux_propres_ressources * 100
+                               ) if capitaux_propres_ressources else 0.0
+    rentabilite_financiere = (resultat_net / capitaux_propres_ressources * 100
+                               ) if capitaux_propres_ressources else 0.0
+
+    endettement_financier_brut = dettes_financieres + treso_passif
+    endettement_financier_net = endettement_financier_brut - treso_actif
+
+    return {
+        "resultat_net_comptable": resultat_net,
+        "ebe": tft["ebe"], "revenus_financiers": tft["revenus_financiers"],
+        "frais_financiers": tft["frais_financiers"], "cafg": cafg,
+        "dividendes_verses": dividendes_verses, "autofinancement": autofinancement,
+        "rentabilite_economique": rentabilite_economique, "rentabilite_financiere": rentabilite_financiere,
+        "capitaux_propres_ressources": capitaux_propres_ressources,
+        "dettes_financieres": dettes_financieres, "ressources_stables": ressources_stables,
+        "actifs_immobilises": actifs_immobilises, "fonds_de_roulement": fonds_de_roulement,
+        "actif_circulant_exploitation": actif_circulant_exploitation,
+        "passif_circulant_exploitation": passif_circulant_exploitation,
+        "besoin_financement_exploitation": besoin_financement_exploitation,
+        "actif_circulant_hao": actif_circulant_hao, "passif_circulant_hao": passif_circulant_hao,
+        "besoin_financement_hao": besoin_financement_hao,
+        "besoin_financement_global": besoin_financement_global,
+        "tresorerie_nette": tresorerie_nette, "controle_treso_reelle": treso_reelle,
+        "controle_ecart": controle_ecart,
+        "flux_operationnel": tft["flux_operationnel"], "flux_investissement": tft["flux_investissement"],
+        "flux_financement": tft["flux_financement"], "variation_treso_nette": tft["variation_treso_nette"],
+        "endettement_financier_brut": endettement_financier_brut,
+        "treso_actif": treso_actif, "endettement_financier_net": endettement_financier_net,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Export de la liasse fiscale (.xlsx), mise en page SYSCOHADA système normal
 # ---------------------------------------------------------------------------
