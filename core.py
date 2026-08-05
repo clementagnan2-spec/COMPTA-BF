@@ -347,6 +347,26 @@ def init_db(conn):
             date_paiement_reel TEXT
         )
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS produits_finis (
+            code TEXT PRIMARY KEY,
+            nom TEXT NOT NULL,
+            description TEXT,
+            quantite_produite REAL NOT NULL DEFAULT 1,
+            marge_pourcentage REAL NOT NULL DEFAULT 30
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS recette_lignes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            produit_code TEXT NOT NULL,
+            type_ligne TEXT NOT NULL,
+            libelle TEXT NOT NULL,
+            compte TEXT,
+            quantite REAL NOT NULL DEFAULT 0,
+            cout_unitaire REAL
+        )
+    """)
     conn.commit()
     _migrate(conn)
     if conn.execute("SELECT COUNT(*) FROM accounts").fetchone()[0] == 0:
@@ -1648,6 +1668,114 @@ def compute_production(conn, exercice=None):
         "postes_cout": postes,
         "cout_production": total_cout,
         "marge": valeur_production - total_cout,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Recettes de fabrication (nomenclature / BOM) — combine matières premières
+# (coût réel issu des stocks comptables), main-d'œuvre et énergie pour
+# calculer un coût de production, puis un prix de vente suggéré (+ marge).
+# ---------------------------------------------------------------------------
+LIGNE_TYPES = {
+    "matiere": "Matière première (depuis un compte de stock)",
+    "main_oeuvre": "Main-d'œuvre",
+    "energie": "Énergie",
+    "autre": "Autre charge de fabrication",
+}
+
+
+def add_produit_fini(conn, code, nom, description="", quantite_produite=1, marge_pourcentage=30):
+    conn.execute(
+        """INSERT OR REPLACE INTO produits_finis (code, nom, description, quantite_produite, marge_pourcentage)
+           VALUES (?, ?, ?, ?, ?)""",
+        (code.strip(), nom.strip(), description, quantite_produite or 1, marge_pourcentage or 0),
+    )
+    conn.commit()
+
+
+def delete_produit_fini(conn, code):
+    conn.execute("DELETE FROM recette_lignes WHERE produit_code = ?", (code,))
+    conn.execute("DELETE FROM produits_finis WHERE code = ?", (code,))
+    conn.commit()
+
+
+def list_produits_finis(conn):
+    return [dict(r) for r in conn.execute("SELECT * FROM produits_finis ORDER BY code").fetchall()]
+
+
+def get_produit_fini(conn, code):
+    row = conn.execute("SELECT * FROM produits_finis WHERE code = ?", (code,)).fetchone()
+    return dict(row) if row else None
+
+
+def add_recette_ligne(conn, produit_code, type_ligne, libelle, quantite, compte=None, cout_unitaire=None):
+    conn.execute(
+        """INSERT INTO recette_lignes (produit_code, type_ligne, libelle, compte, quantite, cout_unitaire)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        (produit_code, type_ligne, libelle, compte, quantite or 0, cout_unitaire),
+    )
+    conn.commit()
+
+
+def delete_recette_ligne(conn, ligne_id):
+    conn.execute("DELETE FROM recette_lignes WHERE id = ?", (ligne_id,))
+    conn.commit()
+
+
+def list_recette_lignes(conn, produit_code):
+    return [dict(r) for r in conn.execute(
+        "SELECT * FROM recette_lignes WHERE produit_code = ? ORDER BY id", (produit_code,)
+    ).fetchall()]
+
+
+def compute_cout_production(conn, produit_code, exercice=None):
+    """Calcule le coût de production d'un produit fini à partir de sa recette :
+    pour chaque ligne « matière première » liée à un compte de stock, le coût
+    unitaire réel est repris automatiquement du coût unitaire moyen calculé
+    dans l'onglet Stocks (valeur du stock / quantité) — sinon le coût unitaire
+    saisi manuellement sur la ligne (main-d'œuvre, énergie, autre) est utilisé."""
+    produit = get_produit_fini(conn, produit_code)
+    if not produit:
+        raise ValueError(f"Produit « {produit_code} » introuvable.")
+    lignes = list_recette_lignes(conn, produit_code)
+    stocks_by_code = {s["code"]: s for s in compute_stocks(conn, exercice=exercice)}
+
+    detail = []
+    total = 0.0
+    for l in lignes:
+        cu = l["cout_unitaire"]
+        source = "manuel"
+        if l["type_ligne"] == "matiere" and l["compte"]:
+            stock = stocks_by_code.get(l["compte"])
+            if stock and stock["cout_unitaire_moyen"] is not None:
+                cu = stock["cout_unitaire_moyen"]
+                source = "stock (coût unitaire moyen)"
+            elif cu is None:
+                cu = 0.0
+                source = "aucun coût connu — à saisir"
+        elif cu is None:
+            cu = 0.0
+            source = "à saisir"
+        montant = (l["quantite"] or 0) * (cu or 0)
+        detail.append({**l, "cout_unitaire_utilise": cu, "source_cout": source, "montant": montant})
+        total += montant
+
+    qte_produite = produit["quantite_produite"] or 1
+    cout_unitaire_produit = total / qte_produite if qte_produite else 0.0
+    marge_pct = produit["marge_pourcentage"] or 0
+    prix_vente_unitaire = cout_unitaire_produit * (1 + marge_pct / 100)
+    prix_vente_total = prix_vente_unitaire * qte_produite
+
+    return {
+        "produit": produit,
+        "lignes": detail,
+        "cout_production_total": total,
+        "quantite_produite": qte_produite,
+        "cout_unitaire_produit": cout_unitaire_produit,
+        "marge_pourcentage": marge_pct,
+        "prix_vente_unitaire": prix_vente_unitaire,
+        "prix_vente_total": prix_vente_total,
+        "marge_unitaire": prix_vente_unitaire - cout_unitaire_produit,
     }
 
 

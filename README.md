@@ -93,6 +93,35 @@ principaux (en gras) :
 - **SAISIE** : Saisie des écritures, Soldes d'ouverture.
 - **COMMERCE** : Ventes, Clients, Recouvrement, Stocks, Marges bénéficiaires.
 - **PRODUCTION** : Matières premières, Fabrication, Produits finis.
+
+### Module Fabrication — nomenclature et coût de production (nouveau)
+
+L'onglet **Fabrication** contient maintenant deux sous-onglets :
+
+**« Recettes / Coût de production »** *(nouveau)* — un calculateur de coût de
+revient (nomenclature / BOM) :
+- Créez un **produit fini** (code, nom).
+- Ajoutez ses composants : **matières premières** (choisies parmi les
+  comptes de stock — le coût unitaire réel est repris automatiquement du
+  **coût unitaire moyen** calculé dans l'onglet Stocks, donc directement
+  depuis vos achats comptabilisés), **main-d'œuvre** et **énergie** (coût
+  unitaire saisi manuellement), avec une quantité pour chacun.
+- Le **coût de production total**, le **coût de production unitaire**
+  (divisé par la quantité produite par la recette) sont calculés
+  automatiquement.
+- Réglez une **marge (%)** : le **prix de vente unitaire suggéré** est
+  calculé automatiquement (coût de production × (1 + marge)).
+
+Testé avec un cas concret : achat de 100 unités de matière première pour
+500 000 (coût unitaire réel 5 000, repris automatiquement des stocks) → une
+recette combinant 2 unités de cette matière + main-d'œuvre (3 000) +
+énergie (500) donne un coût de production de 13 500, et un prix de vente
+suggéré de 18 900 à 40 % de marge.
+
+**« Coûts de fabrication (période) »** — l'ancien contenu de l'onglet
+Fabrication (coûts réels de la période via l'axe analytique AN-FAB),
+inchangé et toujours disponible.
+
 - **ENGAGEMENTS-PROJETS** : Achats, Fournisseurs, Contrats.
 
 ### Module Commerce — Clients / Ventes / Recouvrement (nouveau)

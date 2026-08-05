@@ -1022,7 +1022,9 @@ class StocksTab(ttk.Frame):
             ))
 
 
-class ProductionTab(ttk.Frame):
+class CoutsFabricationPeriodeTab(ttk.Frame):
+    """Coûts de fabrication réels de la période (écritures taguées AN-FAB)."""
+
     def __init__(self, parent, conn):
         super().__init__(parent)
         self.conn = conn
@@ -1048,6 +1050,249 @@ class ProductionTab(ttk.Frame):
                   f"MARGE SUR COÛT DE PRODUCTION{'':<34}{p['marge']:>12,.2f}"]
         self.text.delete("1.0", "end")
         self.text.insert("1.0", "\n".join(lines))
+
+
+class RecetteFabricationTab(ttk.Frame):
+    """Nomenclature de fabrication (BOM) : combine matières premières (coût
+    réel des stocks), main-d'œuvre et énergie pour calculer le coût de
+    production d'un produit fini, puis le prix de vente suggéré (+ marge)."""
+
+    def __init__(self, parent, conn):
+        super().__init__(parent)
+        self.conn = conn
+        self.selected_produit = None
+
+        top = ttk.Frame(self)
+        top.pack(fill="x", padx=12, pady=8)
+        ttk.Label(top, text="Produit fini :").pack(side="left")
+        self.produit_var = tk.StringVar()
+        self.produit_combo = ttk.Combobox(top, textvariable=self.produit_var, width=30, state="readonly")
+        self.produit_combo.pack(side="left", padx=4)
+        self.produit_combo.bind("<<ComboboxSelected>>", self._on_produit_selected)
+        ttk.Button(top, text="Nouveau produit fini", command=self._new_produit).pack(side="left", padx=8)
+        ttk.Button(top, text="Supprimer ce produit", command=self._delete_produit).pack(side="left", padx=2)
+
+        params = ttk.Frame(self)
+        params.pack(fill="x", padx=12, pady=(0, 8))
+        ttk.Label(params, text="Quantité produite par recette :").pack(side="left")
+        self.qte_produite_var = tk.StringVar()
+        ttk.Entry(params, textvariable=self.qte_produite_var, width=8).pack(side="left", padx=4)
+        ttk.Label(params, text="Marge (%) :").pack(side="left", padx=(16, 0))
+        self.marge_var = tk.StringVar()
+        ttk.Entry(params, textvariable=self.marge_var, width=8).pack(side="left", padx=4)
+        ttk.Button(params, text="Enregistrer ces paramètres", command=self._save_params).pack(side="left", padx=8)
+
+        form = ttk.LabelFrame(self, text="Ajouter un composant à la recette")
+        form.pack(fill="x", padx=12, pady=4)
+        ttk.Label(form, text="Type :").grid(row=0, column=0, sticky="w", padx=4, pady=4)
+        self.type_var = tk.StringVar(value="matiere")
+        type_combo = ttk.Combobox(form, textvariable=self.type_var, width=22, state="readonly",
+                                   values=list(core.LIGNE_TYPES.values()))
+        type_combo.set(core.LIGNE_TYPES["matiere"])
+        type_combo.grid(row=0, column=1, padx=4)
+        type_combo.bind("<<ComboboxSelected>>", self._on_type_changed)
+        self.type_combo = type_combo
+
+        ttk.Label(form, text="Libellé :").grid(row=0, column=2, sticky="w", padx=(12, 4))
+        self.libelle_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.libelle_var, width=22).grid(row=0, column=3, padx=4)
+
+        self.compte_label = ttk.Label(form, text="Compte de stock :")
+        self.compte_label.grid(row=0, column=4, sticky="w", padx=(12, 4))
+        self.compte_var = tk.StringVar()
+        self.compte_combo = ttk.Combobox(form, textvariable=self.compte_var, width=26, state="readonly")
+        self.compte_combo.grid(row=0, column=5, padx=4)
+        self._refresh_stock_accounts()
+
+        ttk.Label(form, text="Quantité :").grid(row=1, column=0, sticky="w", padx=4, pady=4)
+        self.ligne_qte_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.ligne_qte_var, width=10).grid(row=1, column=1, padx=4, sticky="w")
+
+        self.cout_label = ttk.Label(form, text="Coût unitaire (si pas de compte de stock) :")
+        self.cout_label.grid(row=1, column=2, sticky="w", padx=(12, 4))
+        self.ligne_cout_var = tk.StringVar()
+        self.cout_entry = ttk.Entry(form, textvariable=self.ligne_cout_var, width=12)
+        self.cout_entry.grid(row=1, column=3, padx=4, sticky="w")
+
+        ttk.Button(form, text="Ajouter le composant", command=self.add_ligne).grid(row=1, column=5, padx=4, pady=4)
+
+        cols = ("id", "type", "libelle", "compte", "quantite", "cout_unitaire", "source", "montant")
+        self.tree = ttk.Treeview(self, columns=cols, show="headings", height=8)
+        headers = ["ID", "Type", "Libellé", "Compte", "Quantité", "Coût unitaire", "Origine du coût", "Montant"]
+        widths = [40, 90, 180, 90, 80, 110, 170, 110]
+        for c, h, w in zip(cols, headers, widths):
+            self.tree.heading(c, text=h)
+            self.tree.column(c, width=w, anchor="w")
+        self.tree.pack(fill="both", expand=True, padx=12, pady=8)
+        self.tree.bind("<<TreeviewSelect>>", self._on_ligne_select)
+        ttk.Button(self, text="Supprimer le composant sélectionné", command=self.delete_ligne).pack(
+            anchor="w", padx=12)
+
+        self.result_text = tk.Text(self, font=("Consolas", 11), height=8, wrap="none")
+        self.result_text.pack(fill="x", padx=12, pady=8)
+
+        self._on_type_changed()
+        self.refresh_produits()
+
+    def _refresh_stock_accounts(self):
+        stocks = core.compute_stocks(self.conn)
+        self.compte_combo["values"] = [f"{s['code']} — {s['label']}" for s in stocks]
+
+    def _on_type_changed(self, event=None):
+        is_matiere = self.type_combo.get() == core.LIGNE_TYPES["matiere"]
+        state_compte = "readonly" if is_matiere else "disabled"
+        self.compte_combo.configure(state=state_compte)
+        if not is_matiere:
+            self.compte_var.set("")
+
+    @staticmethod
+    def _extract_code(raw):
+        raw = (raw or "").strip()
+        return raw.split(" — ", 1)[0].strip() if " — " in raw else raw
+
+    def _type_key(self):
+        label = self.type_combo.get()
+        for key, val in core.LIGNE_TYPES.items():
+            if val == label:
+                return key
+        return "autre"
+
+    def refresh_produits(self):
+        produits = core.list_produits_finis(self.conn)
+        self.produit_combo["values"] = [f"{p['code']} — {p['nom']}" for p in produits]
+        if produits and not self.selected_produit:
+            self.selected_produit = produits[0]["code"]
+            self.produit_var.set(f"{produits[0]['code']} — {produits[0]['nom']}")
+        self.refresh()
+
+    def _on_produit_selected(self, event=None):
+        self.selected_produit = self._extract_code(self.produit_var.get())
+        self.refresh()
+
+    def _new_produit(self):
+        code = simpledialog.askstring("Nouveau produit fini", "Code du produit :", parent=self)
+        if not code:
+            return
+        nom = simpledialog.askstring("Nouveau produit fini", "Nom du produit :", parent=self)
+        if not nom:
+            return
+        core.add_produit_fini(self.conn, code.strip(), nom.strip())
+        self.selected_produit = code.strip()
+        self.refresh_produits()
+
+    def _delete_produit(self):
+        if not self.selected_produit:
+            return
+        if messagebox.askyesno("Confirmer", f"Supprimer le produit « {self.selected_produit} » et sa recette ?"):
+            core.delete_produit_fini(self.conn, self.selected_produit)
+            self.selected_produit = None
+            self.refresh_produits()
+
+    def _save_params(self):
+        if not self.selected_produit:
+            return
+        produit = core.get_produit_fini(self.conn, self.selected_produit)
+        try:
+            qte = float(self.qte_produite_var.get() or 1)
+            marge = float(self.marge_var.get() or 0)
+        except ValueError:
+            messagebox.showerror("Erreur", "Quantité produite et marge doivent être des nombres.")
+            return
+        core.add_produit_fini(self.conn, self.selected_produit, produit["nom"], produit["description"] or "",
+                               qte, marge)
+        self.refresh()
+
+    def _on_ligne_select(self, event=None):
+        pass
+
+    def add_ligne(self):
+        if not self.selected_produit:
+            messagebox.showinfo("Info", "Créez ou sélectionnez d'abord un produit fini.")
+            return
+        libelle = self.libelle_var.get().strip()
+        if not libelle:
+            messagebox.showwarning("Champ manquant", "Le libellé du composant est obligatoire.")
+            return
+        try:
+            qte = float(self.ligne_qte_var.get() or 0)
+        except ValueError:
+            messagebox.showerror("Erreur", "La quantité doit être un nombre.")
+            return
+        type_key = self._type_key()
+        compte = self._extract_code(self.compte_var.get()) if type_key == "matiere" else None
+        cout_unitaire = None
+        if self.ligne_cout_var.get().strip():
+            try:
+                cout_unitaire = float(self.ligne_cout_var.get())
+            except ValueError:
+                messagebox.showerror("Erreur", "Le coût unitaire doit être un nombre.")
+                return
+        if type_key == "matiere" and not compte and cout_unitaire is None:
+            messagebox.showwarning("Champ manquant",
+                                    "Choisissez un compte de stock ou saisissez un coût unitaire manuel.")
+            return
+        core.add_recette_ligne(self.conn, self.selected_produit, type_key, libelle, qte, compte, cout_unitaire)
+        self.libelle_var.set("")
+        self.ligne_qte_var.set("")
+        self.ligne_cout_var.set("")
+        self.refresh()
+
+    def delete_ligne(self):
+        sel = self.tree.selection()
+        if not sel:
+            messagebox.showinfo("Info", "Sélectionnez d'abord un composant dans le tableau.")
+            return
+        ligne_id = int(self.tree.item(sel[0], "values")[0])
+        core.delete_recette_ligne(self.conn, ligne_id)
+        self.refresh()
+
+    def refresh(self):
+        self._refresh_stock_accounts()
+        for row in self.tree.get_children():
+            self.tree.delete(row)
+        self.result_text.delete("1.0", "end")
+        if not self.selected_produit or not core.get_produit_fini(self.conn, self.selected_produit):
+            return
+        produit = core.get_produit_fini(self.conn, self.selected_produit)
+        self.qte_produite_var.set(str(produit["quantite_produite"]))
+        self.marge_var.set(str(produit["marge_pourcentage"]))
+
+        resultat = core.compute_cout_production(self.conn, self.selected_produit)
+        for l in resultat["lignes"]:
+            self.tree.insert("", "end", values=(
+                l["id"], core.LIGNE_TYPES.get(l["type_ligne"], l["type_ligne"]), l["libelle"],
+                l["compte"] or "", f"{l['quantite']:g}", f"{l['cout_unitaire_utilise']:,.2f}",
+                l["source_cout"], f"{l['montant']:,.2f}",
+            ))
+        lines = [
+            f"COÛT DE PRODUCTION — {produit['nom']} ({self.selected_produit})", "=" * 70,
+            f"  {'Coût de production total (recette)':<45} {resultat['cout_production_total']:>15,.2f}",
+            f"  {'Quantité produite':<45} {resultat['quantite_produite']:>15,g}",
+            f"  {'COÛT DE PRODUCTION UNITAIRE':<45} {resultat['cout_unitaire_produit']:>15,.2f}", "",
+            f"  {'Marge appliquée':<45} {resultat['marge_pourcentage']:>14,g} %",
+            f"  {'PRIX DE VENTE UNITAIRE SUGGÉRÉ':<45} {resultat['prix_vente_unitaire']:>15,.2f}",
+            f"  {'dont marge unitaire':<45} {resultat['marge_unitaire']:>15,.2f}",
+        ]
+        self.result_text.insert("1.0", "\n".join(lines))
+
+
+class ProductionTab(ttk.Frame):
+    """Regroupe la nomenclature de fabrication (coût de production, prix de
+    vente) et le suivi des coûts réels de fabrication de la période."""
+
+    def __init__(self, parent, conn):
+        super().__init__(parent)
+        self.conn = conn
+        inner = ttk.Notebook(self)
+        inner.pack(fill="both", expand=True)
+        self.recette_tab = RecetteFabricationTab(inner, conn)
+        self.periode_tab = CoutsFabricationPeriodeTab(inner, conn)
+        inner.add(self.recette_tab, text="Recettes / Coût de production")
+        inner.add(self.periode_tab, text="Coûts de fabrication (période)")
+
+    def refresh(self):
+        self.recette_tab.refresh_produits()
+        self.periode_tab.refresh()
 
 
 class TftTab(ttk.Frame):
