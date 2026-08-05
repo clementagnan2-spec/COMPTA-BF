@@ -91,9 +91,31 @@ entièrement via **la barre de menu** en haut de la fenêtre, avec 5 menus
 principaux (en gras) :
 
 - **SAISIE** : Saisie des écritures, Soldes d'ouverture.
-- **COMMERCE** : Ventes, Clients, Stocks, Marges bénéficiaires.
+- **COMMERCE** : Ventes, Clients, Recouvrement, Stocks, Marges bénéficiaires.
 - **PRODUCTION** : Matières premières, Fabrication, Produits finis.
 - **ENGAGEMENTS-PROJETS** : Achats, Fournisseurs, Contrats.
+
+### Module Commerce — Clients / Ventes / Recouvrement (nouveau)
+
+- **Clients** : liste auxiliaire (fiche par client : raison sociale, contact,
+  délai de paiement par défaut en jours). Créer / modifier / supprimer, ou
+  **importer en masse (.xlsx)** avec un modèle téléchargeable.
+- **Ventes** : soldes des opérations avec chaque client (Débit − Crédit sur
+  les comptes 411xxx qui lui sont tagués), **total par client**, avec un
+  **filtre de plage de dates** (Du / Au). Positif = montant restant dû par
+  le client (à recouvrer).
+- **Recouvrement** : journal des factures émises à chaque client. À la
+  création, l'échéance de **paiement** est calculée automatiquement (date
+  de facture + délai par défaut du client). Renseignez ensuite la date
+  réelle de paiement au fur et à mesure des encaissements : les **retards
+  sont détectés et affichés en rouge** (« EN RETARD (n j) » si l'échéance
+  est dépassée sans paiement enregistré, ou « Payé (retard n j) » une fois
+  la date réelle enregistrée après l'échéance).
+
+**Saisie** : un nouveau champ **« Client »** (liste déroulante avec
+recherche, proposition de création si le code n'existe pas) permet de taguer
+chaque écriture — c'est ce qui alimente automatiquement les modules Ventes
+et Recouvrement.
 
 ### Module Engagements-Projets (nouveau, remplace les placeholders)
 

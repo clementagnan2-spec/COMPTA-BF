@@ -65,6 +65,7 @@ class App(tk.Tk):
         register("liasse", LiasseFiscaleTab)
         register("ventes", VentesTab)
         register("clients", ClientsTab)
+        register("recouvrement", RecouvrementTab)
         register("marges", MargesTab)
         register("achats", AchatsTab)
         register("fournisseurs", FournisseursTab)
@@ -98,6 +99,7 @@ class App(tk.Tk):
         add_top_menu("COMMERCE", [
             ("Ventes", "ventes"),
             ("Clients", "clients"),
+            ("Recouvrement", "recouvrement"),
             ("Stocks", "stocks"),
             ("Marges bénéficiaires", "marges"),
         ])
@@ -203,7 +205,7 @@ class SaisieTab(ttk.Frame):
         labels = ["Date (JJ/MM/AAAA)", "N° Pièce", "Journal",
                   "Compte débiteur", "Compte créditeur", "Montant",
                   "Tiers", "Libellé", "Fournisseur",
-                  "Code analytique (ex: AN-FAB)", "Code budgétaire", "Code bailleur", "Quantité"]
+                  "Code analytique (ex: AN-FAB)", "Code budgétaire", "Code bailleur", "Quantité", "Client"]
         self.vars = {k: tk.StringVar() for k in labels}
         self.vars["Date (JJ/MM/AAAA)"].set(self._default_date())
 
@@ -235,6 +237,13 @@ class SaisieTab(ttk.Frame):
                 widget.bind("<FocusOut>", lambda e: self._validate_fournisseur_field())
                 self.fournisseur_combo = widget
                 self._refresh_fournisseur_values()
+            elif lbl == "Client":
+                widget = ttk.Combobox(form, textvariable=self.vars[lbl], width=22)
+                widget.grid(row=r * 2 + 1, column=c, sticky="we", padx=4, pady=(0, 4))
+                widget.bind("<KeyRelease>", self._on_client_keyrelease)
+                widget.bind("<FocusOut>", lambda e: self._validate_client_field())
+                self.client_combo = widget
+                self._refresh_client_values()
             elif lbl == "Code analytique (ex: AN-FAB)":
                 widget = ttk.Combobox(form, textvariable=self.vars[lbl], width=22)
                 widget.grid(row=r * 2 + 1, column=c, sticky="we", padx=4, pady=(0, 4))
@@ -289,11 +298,13 @@ class SaisieTab(ttk.Frame):
         ), foreground="#595959", wraplength=850).pack(side="left", padx=10)
 
         cols = ("id", "date", "piece", "journal", "compte", "libelle_compte",
-                "tiers", "libelle", "debit", "credit", "quantite", "analytique", "budget", "bailleur", "fournisseur")
+                "tiers", "libelle", "debit", "credit", "quantite", "analytique", "budget", "bailleur",
+                "fournisseur", "client")
         self.tree = ttk.Treeview(self, columns=cols, show="headings", height=15)
         headers = ["ID", "Date", "Pièce", "Journal", "Compte", "Libellé du compte",
-                   "Tiers", "Libellé écriture", "Débit", "Crédit", "Qté", "Analytique", "Budget", "Bailleur", "Fournisseur"]
-        widths = [40, 90, 80, 60, 70, 170, 90, 150, 75, 75, 55, 80, 80, 80, 100]
+                   "Tiers", "Libellé écriture", "Débit", "Crédit", "Qté", "Analytique", "Budget", "Bailleur",
+                   "Fournisseur", "Client"]
+        widths = [40, 90, 80, 60, 70, 160, 85, 140, 70, 70, 50, 75, 75, 75, 95, 95]
         for c, h, w in zip(cols, headers, widths):
             self.tree.heading(c, text=h)
             self.tree.column(c, width=w, anchor="w")
@@ -376,6 +387,34 @@ class SaisieTab(ttk.Frame):
         else:
             self.vars["Fournisseur"].set("")
 
+    def _refresh_client_values(self):
+        items = core.list_clients(self.conn)
+        self.client_combo["values"] = [f"{c['code']} — {c['raison_sociale']}" for c in items]
+
+    def _on_client_keyrelease(self, event=None):
+        query = self._extract_code(self.vars["Client"].get())
+        if query:
+            items = core.list_clients(self.conn, query)
+            self.client_combo["values"] = [f"{c['code']} — {c['raison_sociale']}" for c in items]
+
+    def _validate_client_field(self):
+        code = self._extract_code(self.vars["Client"].get())
+        if not code or core.client_exists(self.conn, code):
+            return
+        if messagebox.askyesno(
+            "Client introuvable",
+            f"Le client « {code} » n'existe pas.\n\n"
+            f"Voulez-vous le créer maintenant ? (Non pour effacer et choisir dans la liste existante)"
+        ):
+            raison = simpledialog.askstring("Nouveau client", f"Raison sociale pour « {code} » :", parent=self)
+            if not raison:
+                self.vars["Client"].set("")
+                return
+            core.add_client(self.conn, code, raison)
+            self._refresh_client_values()
+        else:
+            self.vars["Client"].set("")
+
     def _refresh_plan_values(self, plan):
         if plan == "analytique":
             items = core.list_analytic_codes(self.conn)
@@ -439,6 +478,7 @@ class SaisieTab(ttk.Frame):
             budget_code=self._extract_code(self.vars["Code budgétaire"].get()),
             donor_code=self._extract_code(self.vars["Code bailleur"].get()),
             fournisseur_code=self._extract_code(self.vars["Fournisseur"].get()),
+            client_code=self._extract_code(self.vars["Client"].get()),
             quantite=quantite,
         )
 
@@ -482,7 +522,7 @@ class SaisieTab(ttk.Frame):
                 data["tiers"], data["libelle"],
                 analytic_code=data["analytic_code"], budget_code=data["budget_code"],
                 donor_code=data["donor_code"], quantite=data["quantite"],
-                fournisseur_code=data["fournisseur_code"],
+                fournisseur_code=data["fournisseur_code"], client_code=data["client_code"],
             )
         except ValueError as exc:
             messagebox.showerror("Erreur", str(exc))
@@ -490,7 +530,7 @@ class SaisieTab(ttk.Frame):
         self.refresh()
         self.balance_var.set("")
         piece = self.vars["N° Pièce"].get().strip()
-        for k in ("Compte débiteur", "Compte créditeur", "Montant", "Tiers", "Libellé", "Fournisseur",
+        for k in ("Compte débiteur", "Compte créditeur", "Montant", "Tiers", "Libellé", "Fournisseur", "Client",
                   "Code analytique (ex: AN-FAB)", "Code budgétaire", "Code bailleur", "Quantité"):
             self.vars[k].set("")
         self.vars["N° Pièce"].set(piece)  # facilite l'ajout d'autres paires sur la même pièce
@@ -541,6 +581,7 @@ class SaisieTab(ttk.Frame):
             budget_code=self._extract_code(self.vars["Code budgétaire"].get()),
             donor_code=self._extract_code(self.vars["Code bailleur"].get()),
             fournisseur_code=self._extract_code(self.vars["Fournisseur"].get()),
+            client_code=self._extract_code(self.vars["Client"].get()),
             quantite=quantite,
         )
         try:
@@ -638,6 +679,7 @@ class SaisieTab(ttk.Frame):
         self.vars["Code budgétaire"].set(values[12])
         self.vars["Code bailleur"].set(values[13])
         self.vars["Fournisseur"].set(values[14])
+        self.vars["Client"].set(values[15])
         self._show_account_labels()
 
     def refresh(self):
@@ -657,6 +699,7 @@ class SaisieTab(ttk.Frame):
                 e["budget_code"] or "",
                 e["donor_code"] or "",
                 e["fournisseur_code"] or "",
+                e["client_code"] or "",
             ))
             total_d += e["debit"]
             total_c += e["credit"]
@@ -1151,16 +1194,34 @@ class PlaceholderTab(ttk.Frame):
 
 
 class VentesTab(ttk.Frame):
-    """Synthèse des comptes de vente (classe 7, hors produits financiers)."""
+    """Soldes des opérations avec chaque client, total par client,
+    avec filtre sur une plage de dates."""
 
     def __init__(self, parent, conn):
         super().__init__(parent)
         self.conn = conn
-        ttk.Label(self, text="VENTES", font=("Segoe UI", 14, "bold")).pack(anchor="w", padx=16, pady=(16, 8))
-        cols = ("code", "label", "debit", "credit", "net")
+        ttk.Label(self, text="VENTES — SOLDES PAR CLIENT", font=("Segoe UI", 14, "bold")).pack(
+            anchor="w", padx=16, pady=(16, 4))
+        ttk.Label(self, text=(
+            "Solde = Débit − Crédit sur les comptes clients (411xxx) taggés à chaque client dans "
+            "la Saisie. Positif = montant restant dû par le client (à recouvrer)."
+        ), foreground="#595959", wraplength=1000).pack(anchor="w", padx=16, pady=(0, 8))
+
+        filt = ttk.Frame(self)
+        filt.pack(fill="x", padx=16, pady=4)
+        ttk.Label(filt, text="Du (JJ/MM/AAAA) :").pack(side="left")
+        self.date_from_var = tk.StringVar()
+        ttk.Entry(filt, textvariable=self.date_from_var, width=12).pack(side="left", padx=4)
+        ttk.Label(filt, text="Au (JJ/MM/AAAA) :").pack(side="left", padx=(12, 0))
+        self.date_to_var = tk.StringVar()
+        ttk.Entry(filt, textvariable=self.date_to_var, width=12).pack(side="left", padx=4)
+        ttk.Button(filt, text="Filtrer", command=self.refresh).pack(side="left", padx=8)
+        ttk.Button(filt, text="Réinitialiser", command=self._reset_filter).pack(side="left", padx=2)
+
+        cols = ("code", "raison_sociale", "debit", "credit", "solde")
         self.tree = ttk.Treeview(self, columns=cols, show="headings")
-        headers = ["N° Compte", "Libellé", "Débit", "Crédit", "Ventes nettes (Crédit - Débit)"]
-        widths = [90, 320, 110, 110, 150]
+        headers = ["Code", "Client", "Total Débit", "Total Crédit", "Solde (dû si positif)"]
+        widths = [90, 320, 120, 120, 160]
         for c, h, w in zip(cols, headers, widths):
             self.tree.heading(c, text=h)
             self.tree.column(c, width=w, anchor="w")
@@ -1169,20 +1230,26 @@ class VentesTab(ttk.Frame):
         ttk.Label(self, textvariable=self.total_var, font=("Segoe UI", 10, "bold")).pack(anchor="w", padx=16, pady=(0, 12))
         self.refresh()
 
+    def _reset_filter(self):
+        self.date_from_var.set("")
+        self.date_to_var.set("")
+        self.refresh()
+
     def refresh(self):
         for row in self.tree.get_children():
             self.tree.delete(row)
-        total = 0.0
-        for b in core.compute_balance(self.conn, only_with_movement=False):
-            if b["classe"] != "7" or int(b["code"]) in (771000, 776000):
-                continue
-            net = b["credit"] - b["debit"]
-            if b["debit"] == 0 and b["credit"] == 0:
-                continue
-            self.tree.insert("", "end", values=(b["code"], b["label"], f"{b['debit']:,.2f}",
-                                                 f"{b['credit']:,.2f}", f"{net:,.2f}"))
-            total += net
-        self.total_var.set(f"TOTAL VENTES NETTES : {total:,.2f}")
+        date_from = core.to_iso_date(self.date_from_var.get()) if self.date_from_var.get().strip() else None
+        date_to = core.to_iso_date(self.date_to_var.get()) if self.date_to_var.get().strip() else None
+        ventes, total_debit, total_credit = core.compute_ventes_par_client(
+            self.conn, date_from=date_from, date_to=date_to)
+        for v in ventes:
+            self.tree.insert("", "end", values=(
+                v["code"], v["raison_sociale"], f"{v['debit']:,.2f}", f"{v['credit']:,.2f}", f"{v['solde']:,.2f}"
+            ))
+        self.total_var.set(
+            f"TOTAL — Débit : {total_debit:,.2f}   Crédit : {total_credit:,.2f}   "
+            f"Solde global à recouvrer : {total_debit - total_credit:,.2f}"
+        )
 
 
 class AchatsTab(ttk.Frame):
@@ -1272,13 +1339,129 @@ class MargesTab(ttk.Frame):
         self.text.insert("1.0", "\n".join(lines))
 
 
-class ClientsTab(GrandLivreTab):
-    """Grand livre pré-filtré sur le compte Clients (411000)."""
+class ClientsTab(ttk.Frame):
+    """Liste auxiliaire des clients : créer / modifier / importer."""
 
     def __init__(self, parent, conn):
-        super().__init__(parent, conn)
-        self.compte_var.set("411000")
+        super().__init__(parent)
+        self.conn = conn
+        ttk.Label(self, text="CLIENTS (LISTE AUXILIAIRE)", font=("Segoe UI", 14, "bold")).pack(
+            anchor="w", padx=16, pady=(16, 8))
+
+        form = ttk.Frame(self)
+        form.pack(fill="x", padx=16, pady=4)
+        labels = ["Code", "Raison sociale", "Contact", "Téléphone", "Adresse", "Délai paiement (jours)"]
+        self.vars = {k: tk.StringVar() for k in labels}
+        for i, lbl in enumerate(labels):
+            r, c = divmod(i, 4)
+            ttk.Label(form, text=lbl + " :").grid(row=r * 2, column=c, sticky="w", padx=4, pady=(4, 0))
+            ttk.Entry(form, textvariable=self.vars[lbl], width=22).grid(
+                row=r * 2 + 1, column=c, sticky="we", padx=4, pady=(0, 4))
+        btns = ttk.Frame(form)
+        btns.grid(row=2, column=0, columnspan=4, sticky="w", pady=6)
+        ttk.Button(btns, text="Créer / Modifier", command=self.save).pack(side="left", padx=2)
+        ttk.Button(btns, text="Supprimer", command=self.delete).pack(side="left", padx=2)
+        ttk.Button(btns, text="Effacer le formulaire", command=self.clear_form).pack(side="left", padx=2)
+
+        import_bar = ttk.Frame(self)
+        import_bar.pack(fill="x", padx=16, pady=(4, 4))
+        ttk.Button(import_bar, text="Importer des clients (.xlsx)", command=self.import_xlsx).pack(side="left", padx=2)
+        ttk.Button(import_bar, text="Télécharger un modèle (.xlsx)", command=self.download_template).pack(side="left", padx=2)
+
+        search_bar = ttk.Frame(self)
+        search_bar.pack(fill="x", padx=16, pady=4)
+        ttk.Label(search_bar, text="Rechercher :").pack(side="left")
+        self.search_var = tk.StringVar()
+        se = ttk.Entry(search_bar, textvariable=self.search_var, width=30)
+        se.pack(side="left", padx=6)
+        se.bind("<KeyRelease>", lambda e: self.refresh())
+
+        cols = ("code", "raison_sociale", "contact", "telephone", "adresse", "dp")
+        self.tree = ttk.Treeview(self, columns=cols, show="headings")
+        headers = ["Code", "Raison sociale", "Contact", "Téléphone", "Adresse", "Délai paiement (j)"]
+        widths = [90, 220, 130, 110, 220, 130]
+        for c, h, w in zip(cols, headers, widths):
+            self.tree.heading(c, text=h)
+            self.tree.column(c, width=w, anchor="w")
+        self.tree.pack(fill="both", expand=True, padx=16, pady=8)
+        self.tree.bind("<<TreeviewSelect>>", self._on_select)
         self.refresh()
+
+    def _on_select(self, event=None):
+        sel = self.tree.selection()
+        if not sel:
+            return
+        v = self.tree.item(sel[0], "values")
+        self.vars["Code"].set(v[0])
+        self.vars["Raison sociale"].set(v[1])
+        self.vars["Contact"].set(v[2])
+        self.vars["Téléphone"].set(v[3])
+        self.vars["Adresse"].set(v[4])
+        self.vars["Délai paiement (jours)"].set(v[5])
+
+    def clear_form(self):
+        for v in self.vars.values():
+            v.set("")
+
+    def save(self):
+        code = self.vars["Code"].get().strip()
+        raison = self.vars["Raison sociale"].get().strip()
+        if not code or not raison:
+            messagebox.showwarning("Champs manquants", "Code et Raison sociale sont obligatoires.")
+            return
+        try:
+            dp = int(self.vars["Délai paiement (jours)"].get() or 30)
+        except ValueError:
+            messagebox.showerror("Erreur", "Le délai de paiement doit être un nombre entier de jours.")
+            return
+        core.add_client(self.conn, code, raison, self.vars["Contact"].get().strip(),
+                         self.vars["Téléphone"].get().strip(), self.vars["Adresse"].get().strip(), dp)
+        self.refresh()
+
+    def delete(self):
+        code = self.vars["Code"].get().strip()
+        if not code:
+            messagebox.showinfo("Info", "Sélectionnez d'abord un client.")
+            return
+        if messagebox.askyesno("Confirmer", f"Supprimer le client {code} ?"):
+            core.delete_client(self.conn, code)
+            self.clear_form()
+            self.refresh()
+
+    def download_template(self):
+        path = filedialog.asksaveasfilename(
+            defaultextension=".xlsx", filetypes=[("Classeur Excel", "*.xlsx")],
+            initialfile="Modele_clients.xlsx", title="Enregistrer le modèle",
+        )
+        if not path:
+            return
+        core.export_clients_template(path)
+        messagebox.showinfo("Modèle créé", f"Modèle enregistré :\n{path}")
+
+    def import_xlsx(self):
+        path = filedialog.askopenfilename(filetypes=[("Classeur Excel", "*.xlsx")],
+                                           title="Importer des clients")
+        if not path:
+            return
+        try:
+            imported, warnings = core.import_clients_from_xlsx(self.conn, path)
+        except Exception as exc:
+            messagebox.showerror("Erreur", f"Échec de l'import : {exc}")
+            return
+        self.refresh()
+        msg = f"{imported} client(s) importé(s)."
+        if warnings:
+            msg += "\n\nAvertissements :\n" + "\n".join(warnings[:20])
+        messagebox.showinfo("Import terminé", msg)
+
+    def refresh(self):
+        for row in self.tree.get_children():
+            self.tree.delete(row)
+        for c in core.list_clients(self.conn, self.search_var.get().strip() or None):
+            self.tree.insert("", "end", values=(
+                c["code"], c["raison_sociale"], c["contact"] or "", c["telephone"] or "",
+                c["adresse"] or "", c["delai_paiement_jours"],
+            ))
 
 
 class FournisseursTab(ttk.Frame):
@@ -1408,6 +1591,155 @@ class FournisseursTab(ttk.Frame):
             self.tree.insert("", "end", values=(
                 f["code"], f["raison_sociale"], f["contact"] or "", f["telephone"] or "",
                 f["adresse"] or "", f["delai_paiement_jours"], f["delai_livraison_jours"],
+            ))
+
+
+class RecouvrementTab(ttk.Frame):
+    """Journal des factures clients : suivi des retards de paiement (recouvrement)."""
+
+    def __init__(self, parent, conn):
+        super().__init__(parent)
+        self.conn = conn
+        ttk.Label(self, text="RECOUVREMENT — SUIVI DES RETARDS DE PAIEMENT CLIENTS",
+                  font=("Segoe UI", 14, "bold")).pack(anchor="w", padx=16, pady=(16, 4))
+        ttk.Label(self, text=(
+            "Enregistrez ici chaque facture émise à un client. L'échéance de paiement est calculée "
+            "automatiquement à partir du délai par défaut du client (modifiable dans l'onglet "
+            "Clients), à la date de facture. Renseignez ensuite la date réelle de paiement au fur "
+            "et à mesure des encaissements — les retards sont signalés automatiquement."
+        ), foreground="#595959", wraplength=1050).pack(anchor="w", padx=16, pady=(0, 8))
+
+        form = ttk.LabelFrame(self, text="Nouvelle facture")
+        form.pack(fill="x", padx=16, pady=4)
+        ttk.Label(form, text="Client :").grid(row=0, column=0, sticky="w", padx=4, pady=4)
+        self.client_var = tk.StringVar()
+        self.client_combo = ttk.Combobox(form, textvariable=self.client_var, width=28)
+        self.client_combo.grid(row=0, column=1, padx=4)
+        self.client_combo.bind("<KeyRelease>", self._on_client_keyrelease)
+        self._refresh_client_values()
+
+        ttk.Label(form, text="N° Pièce :").grid(row=0, column=2, sticky="w", padx=(12, 4))
+        self.piece_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.piece_var, width=14).grid(row=0, column=3, padx=4)
+
+        ttk.Label(form, text="Libellé :").grid(row=0, column=4, sticky="w", padx=(12, 4))
+        self.libelle_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.libelle_var, width=26).grid(row=0, column=5, padx=4)
+
+        ttk.Label(form, text="Montant :").grid(row=1, column=0, sticky="w", padx=4, pady=4)
+        self.montant_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.montant_var, width=16).grid(row=1, column=1, padx=4)
+
+        ttk.Label(form, text="Date facture (JJ/MM/AAAA) :").grid(row=1, column=2, sticky="w", padx=(12, 4))
+        self.date_facture_var = tk.StringVar(value=date.today().strftime("%d/%m/%Y"))
+        ttk.Entry(form, textvariable=self.date_facture_var, width=14).grid(row=1, column=3, padx=4)
+
+        ttk.Button(form, text="Créer la facture (échéance auto)", command=self.add_facture).grid(
+            row=1, column=4, columnspan=2, sticky="w", padx=12, pady=4)
+
+        update_frame = ttk.LabelFrame(self, text="Mettre à jour la facture sélectionnée")
+        update_frame.pack(fill="x", padx=16, pady=(8, 4))
+        ttk.Label(update_frame, text="Date paiement réel (JJ/MM/AAAA) :").grid(row=0, column=0, sticky="w", padx=4, pady=4)
+        self.paiement_reel_var = tk.StringVar()
+        ttk.Entry(update_frame, textvariable=self.paiement_reel_var, width=14).grid(row=0, column=1, padx=4)
+        ttk.Button(update_frame, text="Enregistrer le paiement", command=self.save_paiement).grid(
+            row=0, column=2, padx=8)
+        ttk.Button(update_frame, text="Supprimer la facture sélectionnée", command=self.delete_facture).grid(
+            row=0, column=3, padx=20)
+
+        cols = ("id", "client", "piece", "libelle", "montant", "date_facture",
+                "echeance_paiement", "statut_paiement")
+        self.tree = ttk.Treeview(self, columns=cols, show="headings")
+        headers = ["ID", "Client", "Pièce", "Libellé", "Montant", "Date facture",
+                   "Échéance paiement", "Statut paiement"]
+        widths = [40, 180, 90, 200, 110, 110, 130, 160]
+        for c, h, w in zip(cols, headers, widths):
+            self.tree.heading(c, text=h)
+            self.tree.column(c, width=w, anchor="w")
+        self.tree.tag_configure("depasse", foreground="#B00020")
+        self.tree.pack(fill="both", expand=True, padx=16, pady=8)
+        self.tree.bind("<<TreeviewSelect>>", self._on_select)
+        self.selected_id = None
+        self.refresh()
+
+    def _refresh_client_values(self):
+        items = core.list_clients(self.conn)
+        self.client_combo["values"] = [f"{c['code']} — {c['raison_sociale']}" for c in items]
+
+    def _on_client_keyrelease(self, event=None):
+        query = self._extract_code(self.client_var.get())
+        if query:
+            items = core.list_clients(self.conn, query)
+            self.client_combo["values"] = [f"{c['code']} — {c['raison_sociale']}" for c in items]
+
+    @staticmethod
+    def _extract_code(raw):
+        raw = (raw or "").strip()
+        return raw.split(" — ", 1)[0].strip() if " — " in raw else raw
+
+    def _on_select(self, event=None):
+        sel = self.tree.selection()
+        if not sel:
+            return
+        values = self.tree.item(sel[0], "values")
+        self.selected_id = int(values[0])
+
+    def add_facture(self):
+        code = self._extract_code(self.client_var.get())
+        if not code:
+            messagebox.showwarning("Champ manquant", "Choisissez un client.")
+            return
+        if not core.client_exists(self.conn, code):
+            messagebox.showerror("Client invalide", f"Le client « {code} » n'existe pas. "
+                                                      f"Créez-le d'abord dans l'onglet Clients.")
+            return
+        try:
+            montant = float(self.montant_var.get() or 0)
+        except ValueError:
+            messagebox.showerror("Erreur", "Le montant doit être un nombre.")
+            return
+        date_facture = core.to_iso_date(self.date_facture_var.get().strip())
+        if not date_facture:
+            messagebox.showwarning("Champ manquant", "La date de facture est obligatoire.")
+            return
+        core.add_facture(self.conn, code, self.piece_var.get().strip(), self.libelle_var.get().strip(),
+                          montant, date_facture)
+        self.piece_var.set("")
+        self.libelle_var.set("")
+        self.montant_var.set("")
+        self.refresh()
+
+    def save_paiement(self):
+        if self.selected_id is None:
+            messagebox.showinfo("Info", "Sélectionnez d'abord une facture dans le tableau.")
+            return
+        d = core.to_iso_date(self.paiement_reel_var.get().strip())
+        if not d:
+            messagebox.showwarning("Champ manquant", "Saisissez la date de paiement réel.")
+            return
+        core.update_facture(self.conn, self.selected_id, date_paiement_reel=d)
+        self.paiement_reel_var.set("")
+        self.refresh()
+
+    def delete_facture(self):
+        if self.selected_id is None:
+            messagebox.showinfo("Info", "Sélectionnez d'abord une facture.")
+            return
+        if messagebox.askyesno("Confirmer", "Supprimer cette facture ?"):
+            core.delete_facture(self.conn, self.selected_id)
+            self.selected_id = None
+            self.refresh()
+
+    def refresh(self):
+        self._refresh_client_values()
+        for row in self.tree.get_children():
+            self.tree.delete(row)
+        for f in core.list_factures(self.conn):
+            tags = ("depasse",) if f["depassement"] else ()
+            self.tree.insert("", "end", tags=tags, values=(
+                f["id"], f["raison_sociale"], f["piece"] or "", f["libelle"] or "",
+                f"{f['montant']:,.2f}", core.to_display_date(f["date_facture"]),
+                core.to_display_date(f["date_echeance_paiement"]), f["statut_paiement"],
             ))
 
 

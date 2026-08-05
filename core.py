@@ -325,6 +325,28 @@ def init_db(conn):
             date_paiement_reel TEXT
         )
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS clients (
+            code TEXT PRIMARY KEY,
+            raison_sociale TEXT NOT NULL,
+            contact TEXT,
+            telephone TEXT,
+            adresse TEXT,
+            delai_paiement_jours INTEGER NOT NULL DEFAULT 30
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS factures_clients (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            client_code TEXT NOT NULL,
+            piece TEXT,
+            libelle TEXT,
+            montant REAL NOT NULL DEFAULT 0,
+            date_facture TEXT NOT NULL,
+            date_echeance_paiement TEXT,
+            date_paiement_reel TEXT
+        )
+    """)
     conn.commit()
     _migrate(conn)
     if conn.execute("SELECT COUNT(*) FROM accounts").fetchone()[0] == 0:
@@ -344,6 +366,8 @@ def _migrate(conn):
         conn.execute("ALTER TABLE entries ADD COLUMN quantite REAL NOT NULL DEFAULT 0")
     if "fournisseur_code" not in cols:
         conn.execute("ALTER TABLE entries ADD COLUMN fournisseur_code TEXT")
+    if "client_code" not in cols:
+        conn.execute("ALTER TABLE entries ADD COLUMN client_code TEXT")
 
     # Migre l'ancien mécanisme "stock_initial_<compte>" (settings) vers opening_balances
     default_exercice = str(datetime.today().year)
@@ -914,6 +938,225 @@ def list_commandes(conn, fournisseur_code=None, date_from=None, date_to=None):
 
 
 # ---------------------------------------------------------------------------
+# Clients (fiche auxiliaire)
+# ---------------------------------------------------------------------------
+def list_clients(conn, query=None):
+    if query:
+        like = f"%{query}%"
+        rows = conn.execute(
+            "SELECT * FROM clients WHERE code LIKE ? OR raison_sociale LIKE ? ORDER BY code",
+            (f"{query}%", like),
+        ).fetchall()
+    else:
+        rows = conn.execute("SELECT * FROM clients ORDER BY code").fetchall()
+    return [dict(r) for r in rows]
+
+
+def client_exists(conn, code):
+    return conn.execute("SELECT 1 FROM clients WHERE code = ?", (code,)).fetchone() is not None
+
+
+def get_client(conn, code):
+    row = conn.execute("SELECT * FROM clients WHERE code = ?", (code,)).fetchone()
+    return dict(row) if row else None
+
+
+def add_client(conn, code, raison_sociale, contact="", telephone="", adresse="",
+                delai_paiement_jours=30):
+    conn.execute(
+        """INSERT OR REPLACE INTO clients
+           (code, raison_sociale, contact, telephone, adresse, delai_paiement_jours)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        (code.strip(), raison_sociale.strip(), contact, telephone, adresse, int(delai_paiement_jours or 0)),
+    )
+    conn.commit()
+
+
+def delete_client(conn, code):
+    conn.execute("DELETE FROM clients WHERE code = ?", (code,))
+    conn.commit()
+
+
+CLIENT_IMPORT_COLUMNS = [
+    ("code", "Code client", ["code", "code client"]),
+    ("raison_sociale", "Raison sociale", ["raison sociale", "nom", "dénomination"]),
+    ("contact", "Contact", ["contact"]),
+    ("telephone", "Téléphone", ["téléphone", "telephone", "tel"]),
+    ("adresse", "Adresse", ["adresse"]),
+    ("delai_paiement_jours", "Délai paiement (jours)", ["délai paiement (jours)", "delai paiement", "délai paiement"]),
+]
+
+
+def export_clients_template(path):
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Clients"
+    header_font = Font(bold=True, color="FFFFFFFF")
+    header_fill = PatternFill("solid", fgColor="1F4E78")
+    for i, (_, label, _) in enumerate(CLIENT_IMPORT_COLUMNS, start=1):
+        c = ws.cell(row=1, column=i, value=label)
+        c.font = header_font
+        c.fill = header_fill
+    example = ["CLI-0001", "Société ABC", "Mme Traoré", "+226 70 11 11 11", "Ouagadougou", 30]
+    for i, val in enumerate(example, start=1):
+        ws.cell(row=2, column=i, value=val)
+    for i, w in enumerate([14, 30, 18, 16, 26, 18], start=1):
+        ws.column_dimensions[chr(64 + i)].width = w
+    wb.save(path)
+    return path
+
+
+def import_clients_from_xlsx(conn, path):
+    import openpyxl
+
+    wb = openpyxl.load_workbook(path, data_only=True)
+    ws = wb.active
+    header_cells = next(ws.iter_rows(min_row=1, max_row=1))
+    headers = [str(c.value).strip().lower() if c.value is not None else "" for c in header_cells]
+
+    colmap = {}
+    for key, _, aliases in CLIENT_IMPORT_COLUMNS:
+        for i, h in enumerate(headers):
+            if h in aliases:
+                colmap[key] = i
+                break
+
+    if "code" not in colmap or "raison_sociale" not in colmap:
+        raise ValueError(
+            "Colonnes obligatoires introuvables (« Code client » et « Raison sociale »). "
+            "Utilisez le bouton « Télécharger un modèle »."
+        )
+
+    imported, warnings = 0, []
+
+    def get(values, key, default=None):
+        idx = colmap.get(key)
+        if idx is None or idx >= len(values):
+            return default
+        return values[idx]
+
+    for row_idx, row in enumerate(ws.iter_rows(min_row=2), start=2):
+        values = [c.value for c in row]
+        if all(v in (None, "") for v in values):
+            continue
+        code = str(get(values, "code") or "").strip()
+        raison = str(get(values, "raison_sociale") or "").strip()
+        if not code or not raison:
+            warnings.append(f"Ligne {row_idx} : code ou raison sociale manquant, ligne ignorée.")
+            continue
+        try:
+            dp = int(get(values, "delai_paiement_jours", 30) or 30)
+        except (TypeError, ValueError):
+            dp = 30
+        add_client(conn, code, raison, str(get(values, "contact") or ""),
+                   str(get(values, "telephone") or ""), str(get(values, "adresse") or ""), dp)
+        imported += 1
+    return imported, warnings
+
+
+def compute_ventes_par_client(conn, date_from=None, date_to=None):
+    """Total Débit/Crédit/Solde par client, sur les seuls comptes clients (411xxx)
+    tagués avec le code client — solde positif = montant restant dû par le client
+    (à recouvrer), sur une plage de dates optionnelle."""
+    query = """
+        SELECT e.client_code AS code,
+               COALESCE(c.raison_sociale, e.client_code) AS raison_sociale,
+               COALESCE(SUM(e.debit), 0) AS debit,
+               COALESCE(SUM(e.credit), 0) AS credit
+        FROM entries e
+        LEFT JOIN clients c ON c.code = e.client_code
+        WHERE e.client_code IS NOT NULL AND e.client_code != ''
+          AND e.compte LIKE '411%'
+    """
+    params = []
+    if date_from:
+        query += " AND e.date >= ?"
+        params.append(date_from)
+    if date_to:
+        query += " AND e.date <= ?"
+        params.append(date_to)
+    query += " GROUP BY e.client_code, raison_sociale ORDER BY raison_sociale"
+    rows = conn.execute(query, params).fetchall()
+    result = []
+    total_debit = total_credit = 0.0
+    for r in rows:
+        solde = r["debit"] - r["credit"]
+        result.append({"code": r["code"], "raison_sociale": r["raison_sociale"],
+                        "debit": r["debit"], "credit": r["credit"], "solde": solde})
+        total_debit += r["debit"]
+        total_credit += r["credit"]
+    return result, total_debit, total_credit
+
+
+# ---------------------------------------------------------------------------
+# Recouvrement — factures clients avec échéance et retard de paiement
+# ---------------------------------------------------------------------------
+def add_facture(conn, client_code, piece, libelle, montant, date_facture,
+                 date_echeance_override=None):
+    client = get_client(conn, client_code)
+    delai_paiement = client["delai_paiement_jours"] if client else 30
+    base = datetime.strptime(date_facture, "%Y-%m-%d")
+    date_echeance = date_echeance_override or (base + timedelta(days=delai_paiement)).strftime("%Y-%m-%d")
+    conn.execute(
+        """INSERT INTO factures_clients
+           (client_code, piece, libelle, montant, date_facture, date_echeance_paiement)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        (client_code, piece, libelle, montant, date_facture, date_echeance),
+    )
+    conn.commit()
+
+
+def update_facture(conn, facture_id, **fields):
+    if not fields:
+        return
+    cols = ", ".join(f"{k} = ?" for k in fields)
+    conn.execute(f"UPDATE factures_clients SET {cols} WHERE id = ?", (*fields.values(), facture_id))
+    conn.commit()
+
+
+def delete_facture(conn, facture_id):
+    conn.execute("DELETE FROM factures_clients WHERE id = ?", (facture_id,))
+    conn.commit()
+
+
+def list_factures(conn, client_code=None, date_from=None, date_to=None):
+    query = """SELECT f.*, COALESCE(c.raison_sociale, f.client_code) AS raison_sociale
+               FROM factures_clients f LEFT JOIN clients c ON c.code = f.client_code
+               WHERE 1=1"""
+    params = []
+    if client_code:
+        query += " AND f.client_code = ?"
+        params.append(client_code)
+    if date_from:
+        query += " AND f.date_facture >= ?"
+        params.append(date_from)
+    if date_to:
+        query += " AND f.date_facture <= ?"
+        params.append(date_to)
+    query += " ORDER BY f.date_facture DESC, f.id DESC"
+    rows = [dict(r) for r in conn.execute(query, params).fetchall()]
+    today = date.today().strftime("%Y-%m-%d")
+    for r in rows:
+        if r["date_paiement_reel"]:
+            retard = (datetime.strptime(r["date_paiement_reel"], "%Y-%m-%d")
+                      - datetime.strptime(r["date_echeance_paiement"], "%Y-%m-%d")).days if r["date_echeance_paiement"] else 0
+            r["statut_paiement"] = f"Payé (retard {retard} j)" if retard > 0 else "Payé à temps"
+            r["depassement"] = retard > 0
+        elif r["date_echeance_paiement"] and today > r["date_echeance_paiement"]:
+            retard = (datetime.strptime(today, "%Y-%m-%d")
+                      - datetime.strptime(r["date_echeance_paiement"], "%Y-%m-%d")).days
+            r["statut_paiement"] = f"EN RETARD ({retard} j)"
+            r["depassement"] = True
+        else:
+            r["statut_paiement"] = "En attente"
+            r["depassement"] = False
+    return rows
+
+
+# ---------------------------------------------------------------------------
 def _check_exercice_editable(conn, date_str):
     exercice = _exercice_of_date(date_str)
     if exercice and is_exercice_cloture(conn, exercice):
@@ -925,22 +1168,22 @@ def _check_exercice_editable(conn, date_str):
 
 def add_entry(conn, date_str, piece, journal, compte, tiers, libelle, debit, credit,
               flux_code="", analytic_code="", budget_code="", donor_code="", quantite=0,
-              fournisseur_code=""):
+              fournisseur_code="", client_code=""):
     _check_exercice_editable(conn, date_str)
     conn.execute(
         """INSERT INTO entries (date, piece, journal, compte, tiers, libelle, debit, credit,
                                  flux_code, analytic_code, budget_code, donor_code, quantite,
-                                 fournisseur_code)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                                 fournisseur_code, client_code)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (date_str, piece, journal, compte, tiers, libelle, debit or 0, credit or 0,
-         flux_code, analytic_code, budget_code, donor_code, quantite or 0, fournisseur_code),
+         flux_code, analytic_code, budget_code, donor_code, quantite or 0, fournisseur_code, client_code),
     )
     conn.commit()
 
 
 def add_balanced_entry(conn, date_str, piece, journal, compte_debit, compte_credit, montant,
                         tiers, libelle, analytic_code="", budget_code="", donor_code="", quantite=0,
-                        fournisseur_code=""):
+                        fournisseur_code="", client_code=""):
     """Crée en une seule opération une écriture équilibrée par construction :
     une ligne au débit d'un compte, une ligne au crédit d'un autre, même montant.
     C'est le principe de la partie double — impossible de créer un déséquilibre
@@ -952,10 +1195,10 @@ def add_balanced_entry(conn, date_str, piece, journal, compte_debit, compte_cred
     _check_exercice_editable(conn, date_str)
     add_entry(conn, date_str, piece, journal, compte_debit, tiers, libelle, montant, 0,
               analytic_code=analytic_code, budget_code=budget_code, donor_code=donor_code,
-              quantite=quantite, fournisseur_code=fournisseur_code)
+              quantite=quantite, fournisseur_code=fournisseur_code, client_code=client_code)
     add_entry(conn, date_str, piece, journal, compte_credit, tiers, libelle, 0, montant,
               analytic_code=analytic_code, budget_code=budget_code, donor_code=donor_code,
-              quantite=quantite, fournisseur_code=fournisseur_code)
+              quantite=quantite, fournisseur_code=fournisseur_code, client_code=client_code)
 
 
 def update_entry(conn, entry_id, **fields):
