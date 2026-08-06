@@ -421,6 +421,23 @@ Les 4 écrans de gestion des plans (Plan comptable, Plan analytique, Plan
 budgétaire, Plan bailleurs de fonds) ainsi que les **Exercices comptables**
 sont désormais regroupés dans le menu **PARAMÈTRES**.
 
+### Grand livre complet avec bandes de couleur (mise à jour majeure)
+
+L'onglet **Grand livre** affiche désormais **tous les comptes de
+l'exercice par défaut**, groupés par compte puis par classe, exactement
+comme un grand livre papier classique :
+- Bandeau **bleu** pour l'en-tête de chaque compte, et pour son
+  sous-total (« TOTAL COMPTE XXXXXX — Solde débiteur/créditeur »).
+- Bandeau **orange** pour le total de chaque classe.
+- La ligne « À-nouveaux au 01/01 » (solde d'ouverture) s'affiche si non
+  nulle, puis le détail chronologique des écritures avec solde cumulé.
+
+Un filtre optionnel (compte et/ou tiers) permet de se recentrer sur un
+compte précis si besoin — bouton « Réinitialiser » pour revenir à la vue
+complète. Testé sur le scénario exact de votre capture (emprunt WBI/Vista) :
+le solde cumulé calculé correspond au FCFA près (-14 595 375 000 puis
+-13 849 250 000, identiques à votre grand livre de référence).
+
 ### Grand livre : corrigé (n'affichait rien tant qu'on n'avait pas tapé)
 
 **Cause** : le champ « N° Compte » n'avait aucune liste par défaut et ne

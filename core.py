@@ -2283,6 +2283,59 @@ def compute_grand_livre(conn, compte, tiers=None, date_from=None, date_to=None, 
     return rows
 
 
+def compute_grand_livre_complet(conn, exercice=None, compte_prefix=None, tiers=None):
+    """Grand livre complet : TOUS les comptes ayant un solde d'ouverture ou un
+    mouvement sur l'exercice, groupés par compte puis par classe, avec pour
+    chaque compte sa ligne « À-nouveaux », le détail chronologique de ses
+    écritures, un solde cumulé, et un sous-total de compte (avec le sens du
+    solde, débiteur ou créditeur) — puis un total par classe. `compte_prefix`
+    filtre optionnellement sur un préfixe de compte (ex. « 60 » ou « 601000 »)."""
+    exercice = exercice or get_current_exercice(conn)
+    date_from, date_to = f"{exercice}-01-01", f"{exercice}-12-31"
+    balance = compute_balance(conn, only_with_movement=True, exercice=exercice)
+    balance.sort(key=lambda b: b["code"])
+
+    classes = {}
+    for b in balance:
+        if compte_prefix and not b["code"].startswith(compte_prefix):
+            continue
+        classes.setdefault(b["classe"], []).append(b)
+
+    result_classes = []
+    for classe in sorted(classes.keys()):
+        comptes = []
+        classe_total_debit = classe_total_credit = 0.0
+        for b in classes[classe]:
+            query = "SELECT * FROM entries WHERE compte = ? AND date >= ? AND date <= ?"
+            params = [b["code"], date_from, date_to]
+            if tiers:
+                query += " AND tiers LIKE ?"
+                params.append(f"%{tiers}%")
+            query += " ORDER BY date, id"
+            lignes = [dict(r) for r in conn.execute(query, params).fetchall()]
+            solde = b["solde_ouverture"]
+            for l in lignes:
+                solde += l["debit"] - l["credit"]
+                l["solde_cumule"] = solde
+            solde_final = solde
+            comptes.append({
+                "code": b["code"], "label": b["label"],
+                "solde_ouverture": b["solde_ouverture"],
+                "lignes": lignes,
+                "total_debit": b["debit"], "total_credit": b["credit"],
+                "solde_final": solde_final,
+                "sens": "débiteur" if solde_final >= 0 else "créditeur",
+            })
+            classe_total_debit += b["debit"]
+            classe_total_credit += b["credit"]
+        if comptes:
+            result_classes.append({
+                "classe": classe, "comptes": comptes,
+                "total_debit": classe_total_debit, "total_credit": classe_total_credit,
+            })
+    return result_classes
+
+
 # ---------------------------------------------------------------------------
 # Stocks
 # ---------------------------------------------------------------------------

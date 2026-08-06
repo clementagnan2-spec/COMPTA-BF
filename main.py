@@ -1110,13 +1110,19 @@ class BilanTab(ttk.Frame):
 
 
 class GrandLivreTab(ttk.Frame):
+    """Grand livre complet : affiche TOUS les comptes ayant un mouvement (ou
+    un solde d'ouverture) sur l'exercice, groupés par compte puis par classe,
+    avec des bandes de couleur (bleu = compte / sous-total de compte, orange
+    = total de classe) — comme un grand livre papier classique. Un filtre
+    optionnel permet de se recentrer sur un compte ou un tiers précis."""
+
     def __init__(self, parent, conn):
         super().__init__(parent)
         self.conn = conn
 
         bar = ttk.Frame(self)
         bar.pack(fill="x", padx=8, pady=8)
-        ttk.Label(bar, text="N° Compte :").pack(side="left")
+        ttk.Label(bar, text="Filtrer sur un compte (optionnel) :").pack(side="left")
         self.compte_var = tk.StringVar()
         self.compte_combo = ttk.Combobox(bar, textvariable=self.compte_var, width=30)
         self.compte_combo.pack(side="left", padx=4)
@@ -1128,20 +1134,21 @@ class GrandLivreTab(ttk.Frame):
         ttk.Label(bar, text="Tiers (optionnel) :").pack(side="left", padx=(12, 0))
         self.tiers_var = tk.StringVar()
         ttk.Entry(bar, textvariable=self.tiers_var, width=18).pack(side="left", padx=4)
-        ttk.Button(bar, text="Afficher", command=self.refresh).pack(side="left", padx=12)
-        ttk.Label(bar, text=(
-            "Cliquez dans le champ N° Compte pour dérouler la liste, ou tapez un numéro/mot du libellé."
-        ), foreground="#595959").pack(side="left", padx=8)
-        self.label_var = tk.StringVar()
-        ttk.Label(bar, textvariable=self.label_var, foreground="#1F4E78").pack(side="left", padx=8)
+        ttk.Button(bar, text="Filtrer", command=self.refresh).pack(side="left", padx=8)
+        ttk.Button(bar, text="Réinitialiser (tous les comptes)", command=self._reset).pack(side="left", padx=2)
+        ttk.Label(bar, text="Par défaut, tous les comptes de l'exercice sont affichés.",
+                  foreground="#595959").pack(side="left", padx=10)
 
-        cols = ("date", "piece", "journal", "tiers", "libelle", "debit", "credit", "solde")
+        cols = ("date", "piece", "journal", "libelle", "debit", "credit", "solde")
         self.tree = ttk.Treeview(self, columns=cols, show="headings")
-        headers = ["Date", "Pièce", "Journal", "Tiers", "Libellé", "Débit", "Crédit", "Solde cumulé"]
-        widths = [90, 80, 60, 140, 260, 90, 90, 100]
+        headers = ["Date", "Pièce", "Journal", "Libellé", "Débit", "Crédit", "Solde cumulé"]
+        widths = [85, 70, 55, 260, 100, 100, 120]
         for c, h, w in zip(cols, headers, widths):
             self.tree.heading(c, text=h)
             self.tree.column(c, width=w, anchor="w")
+        self.tree.tag_configure("compte_header", background="#B4C6E7", font=("Segoe UI", 9, "bold"))
+        self.tree.tag_configure("compte_total", background="#B4C6E7", font=("Segoe UI", 9, "bold"))
+        self.tree.tag_configure("classe_total", background="#F4B183", font=("Segoe UI", 10, "bold"))
         self.tree.pack(fill="both", expand=True, padx=8, pady=(0, 8))
 
     def _extract_compte_code(self):
@@ -1167,24 +1174,44 @@ class GrandLivreTab(ttk.Frame):
             matches = core.search_accounts(self.conn, query, limit=30)
             self.compte_combo["values"] = [f"{m['code']} — {m['label']}" for m in matches]
 
+    def _reset(self):
+        self.compte_var.set("")
+        self.tiers_var.set("")
+        self.refresh()
+
     def refresh(self):
         self._refresh_compte_values()
         for row in self.tree.get_children():
             self.tree.delete(row)
-        compte = self._extract_compte_code()
-        if not compte:
-            self.label_var.set("Choisissez un compte ci-dessus, puis cliquez « Afficher ».")
-            return
-        if not core.account_exists(self.conn, compte):
-            self.label_var.set(f"Compte « {compte} » introuvable dans le Plan comptable.")
-            return
-        self.label_var.set(core.get_account_label(self.conn, compte))
-        for r in core.compute_grand_livre(self.conn, compte, self.tiers_var.get().strip() or None):
-            self.tree.insert("", "end", values=(
-                core.to_display_date(r["date"]), r["piece"] or "", r["journal"] or "", r["tiers"] or "", r["libelle"] or "",
-                f"{r['debit']:.2f}" if r["debit"] else "",
-                f"{r['credit']:.2f}" if r["credit"] else "",
-                f"{r['solde_cumule']:,.2f}",
+        compte_prefix = self._extract_compte_code() or None
+        tiers = self.tiers_var.get().strip() or None
+        classes = core.compute_grand_livre_complet(self.conn, compte_prefix=compte_prefix, tiers=tiers)
+        for c in classes:
+            for compte in c["comptes"]:
+                self.tree.insert("", "end", tags=("compte_header",), values=(
+                    "", "", "", f"{compte['code']} — {compte['label']}", "", "", "",
+                ))
+                if compte["solde_ouverture"]:
+                    self.tree.insert("", "end", values=(
+                        "", "", "", "À-nouveaux au 01/01", "", "",
+                        f"{compte['solde_ouverture']:,.2f}",
+                    ))
+                for l in compte["lignes"]:
+                    self.tree.insert("", "end", values=(
+                        core.to_display_date(l["date"]), l["piece"] or "", l["journal"] or "",
+                        l["libelle"] or "",
+                        f"{l['debit']:,.2f}" if l["debit"] else "",
+                        f"{l['credit']:,.2f}" if l["credit"] else "",
+                        f"{l['solde_cumule']:,.2f}",
+                    ))
+                self.tree.insert("", "end", tags=("compte_total",), values=(
+                    "", "", "", f"TOTAL COMPTE {compte['code']} — Solde {compte['sens']}",
+                    f"{compte['total_debit']:,.2f}", f"{compte['total_credit']:,.2f}",
+                    f"{abs(compte['solde_final']):,.2f}",
+                ))
+            self.tree.insert("", "end", tags=("classe_total",), values=(
+                "", "", "", f"TOTAL CLASSE {c['classe']}",
+                f"{c['total_debit']:,.2f}", f"{c['total_credit']:,.2f}", "",
             ))
 
 
