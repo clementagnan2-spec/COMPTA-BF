@@ -1038,73 +1038,52 @@ class BilanTab(ttk.Frame):
 
         self.ecart_var = tk.StringVar()
         ttk.Label(self, textvariable=self.ecart_var, font=("Segoe UI", 10, "bold")).pack(anchor="w", padx=8, pady=8)
-        ttk.Button(self, text="Actualiser", command=self.refresh).pack(pady=(0, 8))
+        btn_bar = ttk.Frame(self)
+        btn_bar.pack(pady=(0, 8))
+        ttk.Button(btn_bar, text="Actualiser", command=self.refresh).pack(side="left", padx=4)
+        ttk.Button(btn_bar, text="Exporter (.xlsx)", command=self.export_xlsx).pack(side="left", padx=4)
         self.refresh()
 
     @staticmethod
-    def _add_masse(tree, titre, key, lignes, total_label, total_val):
-        """lignes: liste de (libellé, montant) ; masse ignorée si tout est à 0."""
-        if not any(v for _, v in lignes) and not total_val:
+    def _add_masse(tree, key, section):
+        """section : dict {titre, lignes, total_label, total_val, vide} tel que
+        renvoyé par core.compute_bilan_presentation()."""
+        if section["vide"]:
             return
-        tree.insert("", "end", tags=(key + "_header",), values=(titre, ""))
-        for label, val in lignes:
-            if val:
-                tree.insert("", "end", tags=(key,), values=(f"   {label}", f"{val:,.2f}"))
-        tree.insert("", "end", tags=(key,), values=(f"  {total_label}", f"{total_val:,.2f}"))
+        tree.insert("", "end", tags=(key + "_header",), values=(section["titre"], ""))
+        for label, val in section["lignes"]:
+            tree.insert("", "end", tags=(key,), values=(f"   {label}", f"{val:,.2f}"))
+        tree.insert("", "end", tags=(key,), values=(f"  {section['total_label']}", f"{section['total_val']:,.2f}"))
         tree.insert("", "end", values=("", ""))  # ligne vide de séparation
+
+    def export_xlsx(self):
+        path = filedialog.asksaveasfilename(
+            defaultextension=".xlsx", filetypes=[("Classeur Excel", "*.xlsx")],
+            initialfile="Bilan.xlsx", title="Exporter le Bilan",
+        )
+        if not path:
+            return
+        core.export_bilan_xlsx(self.conn, path)
+        messagebox.showinfo("Export terminé", f"Bilan exporté :\n{path}")
 
     def refresh(self):
         for tree in (self.tree_passif, self.tree_actif):
             for row in tree.get_children():
                 tree.delete(row)
 
-        liasse = core.compute_liasse_bilan(self.conn)
-        b = liasse["totaux"]
-        ad = liasse["actif_detail"]
-        acd = liasse["actif_circulant_detail"]
-        pdet = liasse["passif_detail"]
-        stocks_detail = core.compute_stocks_detail(self.conn)
-        treso_lignes, _ = core.compute_tresorerie_detail(self.conn)
+        p = core.compute_bilan_presentation(self.conn)
 
-        # ---- ACTIF (colonne de droite) ----
-        self._add_masse(self.tree_actif, "IMMOBILISATIONS", "immo",
-                         [(k, v["net"]) for k, v in ad.items()],
-                         "Immobilisations nettes", b["actif"]["Immobilisations nettes"])
-        self._add_masse(self.tree_actif, "STOCKS", "stocks",
-                         [(f"{s['code']} {s['label']}", s["stock_final"]) for s in stocks_detail],
-                         "Total stocks", b["actif"]["Stocks"])
-        self._add_masse(self.tree_actif, "CRÉANCES", "creances",
-                         [("Avances versées sur commandes", acd["BH"]), ("Clients", acd["BI"])],
-                         "Total créances", b["actif"]["Créances et emplois assimilés"])
-        self._add_masse(self.tree_actif, "TRÉSORERIE ACTIF", "treso",
-                         [(f"{t['code']} {t['label']}", t["solde_cloture"]) for t in treso_lignes
-                          if t["solde_cloture"] > 0],
-                         "Total trésorerie actif", b["actif"]["Trésorerie actif"])
-        self.tree_actif.insert("", "end", tags=("total",), values=("TOTAL ACTIF", f"{b['total_actif']:,.2f}"))
+        # ---- ACTIF (colonne de gauche) ----
+        for section in p["actif"]:
+            self._add_masse(self.tree_actif, section["key"], section)
+        self.tree_actif.insert("", "end", tags=("total",), values=("TOTAL ACTIF", f"{p['total_actif']:,.2f}"))
 
-        # ---- PASSIF (colonne de gauche) ----
-        capitaux_lignes = [(k, v) for k, v in pdet.items()
-                            if k not in ("DA", "DB", "DC", "DJ", "DH_avances", "DK", "DM")]
-        self._add_masse(self.tree_passif, "CAPITAUX PROPRES", "capital",
-                         capitaux_lignes + [("Résultat net de l'exercice", b["passif"]["Résultat net de l'exercice"])],
-                         "Total capitaux propres", b["passif"]["Capital et réserves"] + b["passif"]["Résultat net de l'exercice"])
-        self._add_masse(self.tree_passif, "DETTES FINANCIÈRES", "dettes_fin",
-                         [("Emprunts et dettes financières", pdet["DA"])],
-                         "Total dettes financières", b["passif"]["Dettes financières"])
-        self._add_masse(self.tree_passif, "DETTES CIRCULANTES", "dettes_circ",
-                         [("Fournisseurs et comptes rattachés", pdet["DJ"]),
-                          ("Avances reçues des fournisseurs", pdet["DH_avances"]),
-                          ("Dettes fiscales et sociales", pdet["DK"]),
-                          ("Autres dettes", pdet["DM"])],
-                         "Total dettes circulantes", b["passif"]["Dettes circulantes"])
-        self._add_masse(self.tree_passif, "TRÉSORERIE PASSIF", "treso",
-                         [(f"{t['code']} {t['label']}", -t["solde_cloture"]) for t in treso_lignes
-                          if t["solde_cloture"] < 0],
-                         "Total trésorerie passif", b["passif"]["Trésorerie passif"])
-        self.tree_passif.insert("", "end", tags=("total",), values=("TOTAL PASSIF", f"{b['total_passif']:,.2f}"))
+        # ---- PASSIF (colonne de droite) ----
+        for section in p["passif"]:
+            self._add_masse(self.tree_passif, section["key"], section)
+        self.tree_passif.insert("", "end", tags=("total",), values=("TOTAL PASSIF", f"{p['total_passif']:,.2f}"))
 
-        ecart = b["ecart"]
-        couleur = "#B00020" if abs(ecart) >= 1 else "#1F7A1F"
+        ecart = p["ecart"]
         self.ecart_var.set(f"Écart Actif - Passif : {ecart:,.2f}"
                             + (" ✓ équilibré" if abs(ecart) < 1 else " ⚠ à corriger (soldes d'ouverture ?)"))
 

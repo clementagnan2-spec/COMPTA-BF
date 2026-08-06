@@ -101,10 +101,27 @@ RACINE_LABELS = {
 }
 
 COMPTES_TRESORERIE = ["521", "531", "570", "585"]
-COMPTES_CAPITAL = ["101", "118", "121"]
+COMPTES_CAPITAL = ["101", "118", "121"]  # conservé pour compatibilité (non utilisé par compute_bilan)
 COMPTE_SUBVENTIONS = "141"
 COMPTE_PROVISIONS = "191"
 COMPTES_DETTES_FIN = ["162", "165"]
+
+# ---------------------------------------------------------------------------
+# Bilan — répartition EXHAUSTIVE de la classe 1 (Ressources durables) par
+# plage de comptes contiguë. Contrairement aux anciennes listes ci-dessus
+# (qui ne repéraient que quelques comptes précis et laissaient tout le reste
+# de la classe 1 hors Bilan — cause du déséquilibre Actif/Passif), ces
+# plages couvrent 100000-199999 avec un dernier compartiment « Autres
+# ressources durables » qui absorbe automatiquement tout compte non prévu
+# ci-dessous (comptes de liaison 18, etc.). Le Bilan est donc TOUJOURS
+# équilibré, quels que soient les comptes réellement utilisés.
+RANGE_BILAN_CAPITAL = (100000, 109999)            # 10 — Capital
+RANGE_BILAN_RESERVES = (110000, 119999)           # 11 — Primes et réserves
+RANGE_BILAN_REPORT_A_NOUVEAU = (120000, 129999)   # 12 — Report à nouveau
+RANGE_BILAN_SUBVENTIONS = (140000, 149999)        # 14 — Subventions d'investissement
+RANGE_BILAN_PROVISIONS_REGL = (150000, 159999)    # 15 — Provisions réglementées
+RANGE_BILAN_DETTES_FIN = (160000, 179999)         # 16-17 — Emprunts et dettes de location-acquisition
+RANGE_BILAN_PROVISIONS_RC = (190000, 199999)      # 19 — Provisions pour risques et charges
 COMPTES_PRODUITS_EXPL = ["701", "702", "705", "706", "736"]
 COMPTE_SUBV_EXPL = "710"
 COMPTE_AUTRES_PRODUITS = "758"
@@ -197,21 +214,27 @@ def compute_liasse_bilan(conn, stock_initial=0.0, exercice=None):
     titres_participation = _sum_range(balance, [RANGE_TITRES_PARTICIPATION])
     autres_immo_fin = _sum_range(balance, [RANGE_AUTRES_IMMO_FIN])
 
-    # --- Détail indicatif Capitaux propres ---
-    capitaux_detail = {k: -_sum_range(balance, rngs) for k, rngs in RANGES_CAPITAUX.items()}
-    dettes_financieres = -_sum_range(balance, [RANGE_DETTES_FIN])
-    dettes_location = -_sum_range(balance, [RANGE_DETTES_LOCATION])
-    provisions_rc = -_sum_range(balance, [RANGE_PROVISIONS_RC])
+    # Compartiment de sécurité (immobilisations financières situées hors des
+    # plages ci-dessus, ex. 253000-259999) : garantit que le détail Actif
+    # affiché correspond toujours EXACTEMENT au total « Immobilisations
+    # nettes » du Bilan, même pour un plan comptable non standard.
+    immo_net_detail = sum(incorp_net.values()) + sum(corp_net.values()) + avances_immo + titres_participation + autres_immo_fin
+    autres_immo = bilan_simple["actif"]["Immobilisations nettes"] - immo_net_detail
 
-    # --- Détail indicatif Passif circulant ---
+    # --- Détail indicatif Actif circulant ---
+    avances_versees = _sum_range(balance, [RANGE_AVANCES_FOURN])
+    clients = _sum_range(balance, [RANGE_CLIENTS])
+
+    # --- Passif circulant (dettes fournisseurs et assimilées) ---
     fournisseurs = -_sum_range(balance, [RANGE_FOURNISSEURS])
     avances_fourn = -_sum_range(balance, [RANGE_AVANCES_FOURN])
     dettes_fisc_soc = -_sum_range(balance, [RANGE_DETTES_FISC_SOC])
     autres_dettes = -_sum_range(balance, [RANGE_AUTRES_DETTES])
 
-    # --- Détail indicatif Actif circulant ---
-    avances_versees = _sum_range(balance, [RANGE_AVANCES_FOURN])
-    clients = _sum_range(balance, [RANGE_CLIENTS])
+    # Le détail des Capitaux propres et des Dettes financières provient
+    # directement de compute_bilan() (source unique de vérité pour la classe 1),
+    # afin que ce détail et les totaux du Bilan restent toujours cohérents.
+    pb = bilan_simple["passif"]
 
     return {
         "totaux": bilan_simple,
@@ -221,13 +244,17 @@ def compute_liasse_bilan(conn, stock_initial=0.0, exercice=None):
             "AP": {"brut": avances_immo, "net": avances_immo},
             "AR": {"brut": titres_participation, "net": titres_participation},
             "AS": {"brut": autres_immo_fin, "net": autres_immo_fin},
+            **({"AT": {"brut": autres_immo, "net": autres_immo}} if abs(autres_immo) > 0.005 else {}),
         },
         "actif_circulant_detail": {
             "BH": avances_versees, "BI": clients,
         },
         "passif_detail": {
-            **capitaux_detail,
-            "DA": dettes_financieres, "DB": dettes_location, "DC": provisions_rc,
+            "Capital": pb["Capital"], "Réserves": pb["Réserves"],
+            "Report à nouveau": pb["Report à nouveau"],
+            "Provisions réglementées": pb["Provisions réglementées"],
+            "Autres ressources durables": pb["Autres ressources durables"],
+            "DA": pb["Dettes financières"], "DC": pb["Provisions pour risques et charges"],
             "DJ": fournisseurs, "DH_avances": avances_fourn,
             "DK": dettes_fisc_soc, "DM": autres_dettes,
         },
@@ -281,8 +308,14 @@ def compute_liasse_resultat(conn, exercice=None):
     xf = tk - rm
     xg = xe + xf
 
-    xh = 0.0  # Résultat HAO — non tracé dans cette application
-    rq = 0.0  # Participation des travailleurs — non tracée
+    # Résultat HAO (classe 8) + tout écart résiduel entre le détail SIG
+    # ci-dessus (qui ne couvre que les comptes 6/7 usuels) et le résultat net
+    # réel de l'exercice (compute_compte_resultat, basé sur la somme intégrale
+    # des classes 6/7/8) : ceci garantit que XI est TOUJOURS exact et cohérent
+    # avec le Bilan, même si un compte non standard a été utilisé.
+    resultat_net_reel = compute_compte_resultat(conn, exercice=exercice)["resultat_net"]
+    xh = resultat_net_reel - xg
+    rq = 0.0  # Participation des travailleurs — non tracée séparément (incluse ci-dessus si utilisée)
     rs = 0.0  # Impôt sur le résultat — non tracé (IS à calculer/saisir séparément)
     xi = xg + xh + rq + rs
 
@@ -2166,8 +2199,6 @@ def compute_compte_resultat(conn, exercice=None):
         "Subventions d'exploitation": net_produit([COMPTE_SUBV_EXPL]),
         "Autres produits": net_produit([COMPTE_AUTRES_PRODUITS]),
     }
-    total_produits = sum(produits.values())
-
     charges = {
         "Achats (marchandises et matières)": net_charge(COMPTES_ACHATS),
         "Transports": net_charge(COMPTES_TRANSPORT),
@@ -2177,22 +2208,44 @@ def compute_compte_resultat(conn, exercice=None):
         "Charges de personnel": net_charge(COMPTES_PERSONNEL),
         "Dotations aux amortissements et provisions": net_charge(COMPTES_DOTATIONS),
     }
-    total_charges = sum(charges.values())
-
-    resultat_exploitation = total_produits - total_charges
 
     produits_fin = net_produit(COMPTES_PRODUITS_FIN)
     charges_fin = net_charge(COMPTES_CHARGES_FIN)
-    resultat_financier = produits_fin - charges_fin
 
-    resultat_net = resultat_exploitation + resultat_financier
+    # Totaux RÉELS de la classe 7 (produits) et de la classe 6 (charges) :
+    # somme INTÉGRALE de tous les comptes de la classe, plutôt que la seule
+    # somme des quelques comptes listés ci-dessus. Ceci garantit que tout
+    # compte non prévu dans les listes (ex. un sous-compte de vente ou de
+    # charge non standard) est quand même compté — condition nécessaire pour
+    # que le Bilan reste toujours équilibré.
+    total_produits = -_sum_class(balance, "7")
+    total_charges = _sum_class(balance, "6")
+    resultat_hao = -_sum_class(balance, "8")  # classe 8 : Autres charges et produits HAO
+
+    produits_exploitation = total_produits - produits_fin
+    charges_exploitation = total_charges - charges_fin
+
+    # Ligne de complément « Autres produits/charges non classés » : capte
+    # automatiquement l'écart entre le détail énuméré ci-dessus et le total
+    # réel de la classe (utile en diagnostic si le détail semble incomplet).
+    autres_produits = produits_exploitation - sum(produits.values())
+    autres_charges = charges_exploitation - sum(charges.values())
+    if abs(autres_produits) > 0.005:
+        produits["Autres produits non classés"] = autres_produits
+    if abs(autres_charges) > 0.005:
+        charges["Autres charges non classées"] = autres_charges
+
+    resultat_exploitation = produits_exploitation - charges_exploitation
+    resultat_financier = produits_fin - charges_fin
+    resultat_net = resultat_exploitation + resultat_financier + resultat_hao
 
     return {
-        "produits": produits, "total_produits": total_produits,
-        "charges": charges, "total_charges": total_charges,
+        "produits": produits, "total_produits": produits_exploitation,
+        "charges": charges, "total_charges": charges_exploitation,
         "resultat_exploitation": resultat_exploitation,
         "produits_financiers": produits_fin, "charges_financieres": charges_fin,
         "resultat_financier": resultat_financier,
+        "resultat_hao": resultat_hao,
         "resultat_net": resultat_net,
     }
 
@@ -2228,13 +2281,27 @@ def compute_bilan(conn, stock_initial=0.0, exercice=None):
     treso_actif = _sum_class(balance, "5", sign="pos")
     total_actif = immo_nettes + stocks + creances + treso_actif
 
-    capital = _sum_accounts_cloture(balance, COMPTES_CAPITAL) * -1
-    subventions = _sum_accounts_cloture(balance, [COMPTE_SUBVENTIONS]) * -1
-    provisions = _sum_accounts_cloture(balance, [COMPTE_PROVISIONS]) * -1
+    # --- Passif : classe 1 (ressources durables), balayée à 100 % ---------
+    def classe1(rng):
+        return -_sum_range(balance, [rng], classe="1")
+
+    capital = classe1(RANGE_BILAN_CAPITAL)
+    reserves = classe1(RANGE_BILAN_RESERVES)
+    report_a_nouveau = classe1(RANGE_BILAN_REPORT_A_NOUVEAU)
+    subventions = classe1(RANGE_BILAN_SUBVENTIONS)
+    provisions_reglementees = classe1(RANGE_BILAN_PROVISIONS_REGL)
+    dettes_financieres = classe1(RANGE_BILAN_DETTES_FIN)
+    provisions = classe1(RANGE_BILAN_PROVISIONS_RC)
+    classe1_total = -_sum_class(balance, "1")
+    # Compartiment de sécurité : absorbe tout compte de classe 1 non prévu
+    # ci-dessus (ex. comptes de liaison 18xxxx) pour garantir l'équilibre.
+    autres_ressources = classe1_total - (capital + reserves + report_a_nouveau + subventions
+                                          + provisions_reglementees + dettes_financieres + provisions)
+
     resultat_net = cr["resultat_net"]
-    dettes_financieres = _sum_accounts_cloture(balance, COMPTES_DETTES_FIN) * -1
     treso_passif = -_sum_class(balance, "5", sign="neg")
-    total_passif = (capital + subventions + provisions + resultat_net
+    capital_et_reserves = capital + reserves + report_a_nouveau + autres_ressources
+    total_passif = (capital_et_reserves + subventions + provisions_reglementees + provisions + resultat_net
                      + dettes_financieres + dettes_circulantes + treso_passif)
 
     return {
@@ -2248,7 +2315,12 @@ def compute_bilan(conn, stock_initial=0.0, exercice=None):
         },
         "total_actif": total_actif,
         "passif": {
-            "Capital et réserves": capital,
+            "Capital": capital,
+            "Réserves": reserves,
+            "Report à nouveau": report_a_nouveau,
+            "Provisions réglementées": provisions_reglementees,
+            "Autres ressources durables": autres_ressources,
+            "Capital et réserves": capital_et_reserves,  # agrégat (compatibilité)
             "Subventions d'investissement": subventions,
             "Provisions pour risques et charges": provisions,
             "Résultat net de l'exercice": resultat_net,
@@ -2259,6 +2331,168 @@ def compute_bilan(conn, stock_initial=0.0, exercice=None):
         "total_passif": total_passif,
         "ecart": total_actif - total_passif,
     }
+
+
+def compute_bilan_presentation(conn, exercice=None):
+    """Construit le Bilan sous forme de sections prêtes à afficher/exporter
+    (ACTIF puis PASSIF, chacun une liste de masses avec leurs lignes et leur
+    sous-total). Unique source utilisée à la fois par l'onglet Bilan et par
+    l'export .xlsx, pour garantir qu'ils affichent toujours exactement les
+    mêmes chiffres."""
+    exercice = exercice or get_current_exercice(conn)
+    liasse = compute_liasse_bilan(conn, exercice=exercice)
+    b = liasse["totaux"]
+    ad = liasse["actif_detail"]
+    acd = liasse["actif_circulant_detail"]
+    pdet = liasse["passif_detail"]
+    stocks_detail = compute_stocks_detail(conn, exercice=exercice)
+    treso_lignes, _ = compute_tresorerie_detail(conn, exercice=exercice)
+
+    def section(key, titre, lignes, total_label, total_val):
+        lignes = [(lbl, v) for lbl, v in lignes if v]
+        return {"key": key, "titre": titre, "lignes": lignes, "total_label": total_label,
+                "total_val": total_val, "vide": not lignes and not total_val}
+
+    LABELS_IMMO = {
+        "AE": "Frais de R&D / charges immobilisées", "AF": "Brevets, licences, logiciels",
+        "AG": "Fonds commercial", "AH": "Autres immobilisations incorporelles",
+        "AJ": "Terrains", "AK": "Bâtiments", "AL": "Installations et agencements",
+        "AM": "Matériel, mobilier et actifs biologiques", "AN": "Matériel de transport",
+        "AP": "Avances et acomptes versés sur immobilisations",
+        "AR": "Titres de participation", "AS": "Autres immobilisations financières",
+        "AT": "Autres immobilisations non classées",
+    }
+
+    actif = [
+        section("immo", "IMMOBILISATIONS", [(LABELS_IMMO.get(k, k), v["net"]) for k, v in ad.items()],
+                 "Immobilisations nettes", b["actif"]["Immobilisations nettes"]),
+        section("stocks", "STOCKS", [(f"{s['code']} {s['label']}", s["stock_final"]) for s in stocks_detail],
+                 "Total stocks", b["actif"]["Stocks"]),
+        section("creances", "CRÉANCES", [("Avances versées sur commandes", acd["BH"]), ("Clients", acd["BI"])],
+                 "Total créances", b["actif"]["Créances et emplois assimilés"]),
+        section("treso", "TRÉSORERIE ACTIF",
+                 [(f"{t['code']} {t['label']}", t["solde_cloture"]) for t in treso_lignes if t["solde_cloture"] > 0],
+                 "Total trésorerie actif", b["actif"]["Trésorerie actif"]),
+    ]
+
+    passif = [
+        section("capital", "CAPITAUX PROPRES", [
+            ("Capital", pdet["Capital"]), ("Réserves", pdet["Réserves"]),
+            ("Report à nouveau", pdet["Report à nouveau"]),
+            ("Autres ressources durables", pdet["Autres ressources durables"]),
+            ("Résultat net de l'exercice", b["passif"]["Résultat net de l'exercice"]),
+        ], "Total capitaux propres", b["passif"]["Capital et réserves"] + b["passif"]["Résultat net de l'exercice"]),
+        section("dettes_fin", "PROVISIONS ET SUBVENTIONS", [
+            ("Subventions d'investissement", b["passif"]["Subventions d'investissement"]),
+            ("Provisions réglementées", pdet["Provisions réglementées"]),
+            ("Provisions pour risques et charges", pdet["DC"]),
+        ], "Total provisions et subventions",
+           b["passif"]["Subventions d'investissement"] + pdet["Provisions réglementées"] + pdet["DC"]),
+        section("dettes_fin", "DETTES FINANCIÈRES", [("Emprunts et dettes financières", pdet["DA"])],
+                 "Total dettes financières", b["passif"]["Dettes financières"]),
+        section("dettes_circ", "DETTES CIRCULANTES", [
+            ("Fournisseurs et comptes rattachés", pdet["DJ"]),
+            ("Avances reçues des fournisseurs", pdet["DH_avances"]),
+            ("Dettes fiscales et sociales", pdet["DK"]),
+            ("Autres dettes", pdet["DM"]),
+        ], "Total dettes circulantes", b["passif"]["Dettes circulantes"]),
+        section("treso", "TRÉSORERIE PASSIF",
+                 [(f"{t['code']} {t['label']}", -t["solde_cloture"]) for t in treso_lignes if t["solde_cloture"] < 0],
+                 "Total trésorerie passif", b["passif"]["Trésorerie passif"]),
+    ]
+
+    return {
+        "exercice": exercice,
+        "actif": [s for s in actif if not s["vide"]],
+        "passif": [s for s in passif if not s["vide"]],
+        "total_actif": b["total_actif"], "total_passif": b["total_passif"],
+        "ecart": b["ecart"],
+    }
+
+
+def export_bilan_xlsx(conn, path, exercice=None):
+    """Exporte le Bilan (Actif à gauche, Passif à droite, mêmes masses et
+    mêmes chiffres que l'onglet Bilan) en .xlsx."""
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment
+
+    exercice = exercice or get_current_exercice(conn)
+    p = compute_bilan_presentation(conn, exercice=exercice)
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Bilan"
+
+    title_font = Font(bold=True, size=13)
+    col_header_font = Font(bold=True, color="FFFFFFFF")
+    col_header_fill = PatternFill("solid", fgColor="1F4E78")
+    masse_font = Font(bold=True)
+    masse_fill = PatternFill("solid", fgColor="DCE6F1")
+    total_font = Font(bold=True, color="FFFFFFFF")
+    total_fill = PatternFill("solid", fgColor="1F4E78")
+
+    ws.merge_cells("A1:B1")
+    ws.merge_cells("D1:E1")
+    ws["A1"] = f"ACTIF — Exercice {exercice}"
+    ws["D1"] = f"PASSIF — Exercice {exercice}"
+    ws["A1"].font = title_font
+    ws["D1"].font = title_font
+
+    for col, label in (("A", "Libellé"), ("B", "Montant"), ("D", "Libellé"), ("E", "Montant")):
+        cell = ws[f"{col}3"]
+        cell.value = label
+        cell.font = col_header_font
+        cell.fill = col_header_fill
+
+    def write_column(sections, start_col_letter, amount_col_letter, total_val, total_label):
+        row = 4
+        for sec in sections:
+            ws[f"{start_col_letter}{row}"] = sec["titre"]
+            ws[f"{start_col_letter}{row}"].font = masse_font
+            ws[f"{start_col_letter}{row}"].fill = masse_fill
+            ws[f"{amount_col_letter}{row}"].fill = masse_fill
+            row += 1
+            for label, val in sec["lignes"]:
+                ws[f"{start_col_letter}{row}"] = f"   {label}"
+                ws[f"{amount_col_letter}{row}"] = val
+                ws[f"{amount_col_letter}{row}"].number_format = "#,##0.00"
+                row += 1
+            ws[f"{start_col_letter}{row}"] = f"  {sec['total_label']}"
+            ws[f"{start_col_letter}{row}"].font = Font(bold=True)
+            ws[f"{amount_col_letter}{row}"] = sec["total_val"]
+            ws[f"{amount_col_letter}{row}"].font = Font(bold=True)
+            ws[f"{amount_col_letter}{row}"].number_format = "#,##0.00"
+            row += 2
+        ws[f"{start_col_letter}{row}"] = total_label
+        ws[f"{start_col_letter}{row}"].font = total_font
+        ws[f"{start_col_letter}{row}"].fill = total_fill
+        ws[f"{amount_col_letter}{row}"] = total_val
+        ws[f"{amount_col_letter}{row}"].font = total_font
+        ws[f"{amount_col_letter}{row}"].fill = total_fill
+        ws[f"{amount_col_letter}{row}"].number_format = "#,##0.00"
+        return row
+
+    last_actif = write_column(p["actif"], "A", "B", p["total_actif"], "TOTAL ACTIF")
+    last_passif = write_column(p["passif"], "D", "E", p["total_passif"], "TOTAL PASSIF")
+
+    last_row = max(last_actif, last_passif) + 2
+    ws[f"A{last_row}"] = "Écart Actif - Passif :"
+    ws[f"B{last_row}"] = p["ecart"]
+    ws[f"B{last_row}"].number_format = "#,##0.00"
+    ws[f"A{last_row}"].font = Font(bold=True)
+    if abs(p["ecart"]) < 1:
+        ws[f"C{last_row}"] = "✓ Bilan équilibré"
+    else:
+        ws[f"C{last_row}"] = "⚠ À corriger"
+
+    ws.column_dimensions["A"].width = 40
+    ws.column_dimensions["B"].width = 18
+    ws.column_dimensions["C"].width = 4
+    ws.column_dimensions["D"].width = 40
+    ws.column_dimensions["E"].width = 18
+    ws.freeze_panes = "A4"
+    wb.save(path)
+    return path
 
 
 def compute_grand_livre(conn, compte, tiers=None, date_from=None, date_to=None, exercice=None):
@@ -3230,7 +3464,8 @@ def compute_situation_financiere(conn, exercice=None):
     autofinancement = cafg + dividendes_verses
 
     capitaux_propres_ressources = (b["passif"]["Capital et réserves"] + b["passif"]["Subventions d'investissement"]
-                                    + b["passif"]["Provisions pour risques et charges"] + resultat_net)
+                                    + b["passif"]["Provisions réglementées"] + b["passif"]["Provisions pour risques et charges"]
+                                    + resultat_net)
     dettes_financieres = b["passif"]["Dettes financières"]
     ressources_stables = capitaux_propres_ressources + dettes_financieres
     actifs_immobilises = b["actif"]["Immobilisations nettes"]
