@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-auth.pY
+auth.py
 -------
 Gestion des deux niveaux d'accès :
   - Administrateur : mot de passe fixe, choisi/changé par l'admin.
