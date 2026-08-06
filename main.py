@@ -204,6 +204,13 @@ class SaisieTab(ttk.Frame):
             return today.strftime("%d/%m/%Y")
         return f"01/01/{exercice}"
 
+    def _open_dropdown(self, event=None):
+        """Ouvre automatiquement la liste déroulante d'un Combobox au clic,
+        pour permettre de faire défiler et choisir sans avoir à taper."""
+        widget = event.widget if event else None
+        if widget is not None:
+            widget.event_generate("<Down>")
+
     def _build(self):
         form = ttk.LabelFrame(self, text="Écriture (partie double : compte débiteur ET compte créditeur obligatoires)")
         form.pack(fill="x", padx=8, pady=8)
@@ -227,6 +234,7 @@ class SaisieTab(ttk.Frame):
                 widget.bind("<FocusOut>", lambda e: self._validate_compte_field("Compte débiteur"))
                 widget.bind("<Return>", lambda e: self._validate_compte_field("Compte débiteur"))
                 widget.bind("<Tab>", lambda e: self._validate_compte_field("Compte débiteur"))
+                widget.bind("<Button-1>", self._open_dropdown)
                 self.compte_debit_combo = widget
             elif lbl == "Compte créditeur":
                 widget = ttk.Combobox(form, textvariable=self.vars[lbl], width=22)
@@ -237,16 +245,19 @@ class SaisieTab(ttk.Frame):
                 widget.bind("<FocusOut>", lambda e: self._validate_compte_field("Compte créditeur"))
                 widget.bind("<Return>", lambda e: self._validate_compte_field("Compte créditeur"))
                 widget.bind("<Tab>", lambda e: self._validate_compte_field("Compte créditeur"))
+                widget.bind("<Button-1>", self._open_dropdown)
                 self.compte_credit_combo = widget
             elif lbl == "Journal":
                 widget = ttk.Combobox(form, textvariable=self.vars[lbl], width=22,
                                        values=["AC", "VE", "OD", "BQ", "CA"])
                 widget.grid(row=r * 2 + 1, column=c, sticky="we", padx=4, pady=(0, 4))
+                widget.bind("<Button-1>", self._open_dropdown)
             elif lbl == "Fournisseur":
                 widget = ttk.Combobox(form, textvariable=self.vars[lbl], width=22)
                 widget.grid(row=r * 2 + 1, column=c, sticky="we", padx=4, pady=(0, 4))
                 widget.bind("<KeyRelease>", self._on_fournisseur_keyrelease)
                 widget.bind("<FocusOut>", lambda e: self._validate_fournisseur_field())
+                widget.bind("<Button-1>", self._open_dropdown)
                 self.fournisseur_combo = widget
                 self._refresh_fournisseur_values()
             elif lbl == "Client":
@@ -254,6 +265,7 @@ class SaisieTab(ttk.Frame):
                 widget.grid(row=r * 2 + 1, column=c, sticky="we", padx=4, pady=(0, 4))
                 widget.bind("<KeyRelease>", self._on_client_keyrelease)
                 widget.bind("<FocusOut>", lambda e: self._validate_client_field())
+                widget.bind("<Button-1>", self._open_dropdown)
                 self.client_combo = widget
                 self._refresh_client_values()
             elif lbl == "Code analytique (ex: AN-FAB)":
@@ -261,6 +273,7 @@ class SaisieTab(ttk.Frame):
                 widget.grid(row=r * 2 + 1, column=c, sticky="we", padx=4, pady=(0, 4))
                 widget.bind("<FocusOut>", lambda e: self._validate_plan_field(
                     "Code analytique (ex: AN-FAB)", "analytique"))
+                widget.bind("<Button-1>", self._open_dropdown)
                 self.analytique_combo = widget
                 self._refresh_plan_values("analytique")
             elif lbl == "Code budgétaire":
@@ -268,6 +281,7 @@ class SaisieTab(ttk.Frame):
                 widget.grid(row=r * 2 + 1, column=c, sticky="we", padx=4, pady=(0, 4))
                 widget.bind("<FocusOut>", lambda e: self._validate_plan_field(
                     "Code budgétaire", "budgetaire"))
+                widget.bind("<Button-1>", self._open_dropdown)
                 self.budgetaire_combo = widget
                 self._refresh_plan_values("budgetaire")
             elif lbl == "Code bailleur":
@@ -275,6 +289,7 @@ class SaisieTab(ttk.Frame):
                 widget.grid(row=r * 2 + 1, column=c, sticky="we", padx=4, pady=(0, 4))
                 widget.bind("<FocusOut>", lambda e: self._validate_plan_field(
                     "Code bailleur", "bailleur"))
+                widget.bind("<Button-1>", self._open_dropdown)
                 self.bailleur_combo = widget
                 self._refresh_plan_values("bailleur")
             else:
@@ -327,6 +342,17 @@ class SaisieTab(ttk.Frame):
         totals.pack(fill="x", padx=8, pady=(0, 8))
         self.totals_var = tk.StringVar()
         ttk.Label(totals, textvariable=self.totals_var, font=("Segoe UI", 10, "bold")).pack(side="left")
+
+        self._refresh_compte_values()
+
+    def _refresh_compte_values(self):
+        """Peuple les listes déroulantes Compte débiteur/créditeur avec un
+        premier lot de comptes, pour qu'un simple clic affiche déjà une
+        liste à faire défiler (sans avoir à taper au clavier)."""
+        accounts = core.search_accounts(self.conn, "", limit=300)
+        values = [f"{a['code']} — {a['label']}" for a in accounts]
+        self.compte_debit_combo["values"] = values
+        self.compte_credit_combo["values"] = values
 
     def _extract_code(self, raw):
         raw = (raw or "").strip()
@@ -750,6 +776,7 @@ class SaisieTab(ttk.Frame):
         self._show_account_labels()
 
     def refresh(self):
+        self._refresh_compte_values()
         for row in self.tree.get_children():
             self.tree.delete(row)
         entries = core.list_entries(self.conn, exercice=core.get_current_exercice(self.conn))
@@ -1112,6 +1139,15 @@ class OpeningBalancesTab(ttk.Frame):
             "La « Balance de clôture » (onglet Balance) et le Bilan intègrent automatiquement ces soldes."
         ), foreground="#595959", wraplength=1000).pack(anchor="w", padx=8, pady=(8, 4))
 
+        import_bar = ttk.Frame(self)
+        import_bar.pack(fill="x", padx=8, pady=(0, 4))
+        ttk.Button(import_bar, text="Importer la balance N-1 (.xlsx) — ÉCRASE la balance actuelle",
+                   command=self.import_xlsx).pack(side="left", padx=2)
+        ttk.Button(import_bar, text="Exporter la balance N-1 (.xlsx)", command=self.export_xlsx).pack(side="left", padx=2)
+        ttk.Label(import_bar, text="(Colonnes attendues : N° Compte, Libellé, Solde — l'écrasement "
+                                    "ne concerne que l'exercice comptable actuellement sélectionné.)",
+                  foreground="#595959").pack(side="left", padx=10)
+
         form = ttk.Frame(self)
         form.pack(fill="x", padx=8, pady=4)
         ttk.Label(form, text="N° Compte :").pack(side="left")
@@ -1186,6 +1222,39 @@ class OpeningBalancesTab(ttk.Frame):
             total += b["solde"]
         equilibre = "Équilibré ✓" if abs(total) < 0.01 else "NON ÉQUILIBRÉ ✗ (la somme des soldes d'ouverture doit être nulle)"
         self.total_var.set(f"Somme des soldes d'ouverture : {total:,.2f}   {equilibre}")
+
+    def export_xlsx(self):
+        path = filedialog.asksaveasfilename(
+            defaultextension=".xlsx", filetypes=[("Classeur Excel", "*.xlsx")],
+            initialfile="Balance_ouverture.xlsx", title="Exporter la balance d'ouverture",
+        )
+        if not path:
+            return
+        core.export_opening_balances_xlsx(self.conn, path)
+        messagebox.showinfo("Export terminé", f"Balance d'ouverture exportée :\n{path}")
+
+    def import_xlsx(self):
+        path = filedialog.askopenfilename(filetypes=[("Classeur Excel", "*.xlsx")],
+                                           title="Importer une balance d'ouverture (N-1)")
+        if not path:
+            return
+        exercice = core.get_current_exercice(self.conn)
+        if not messagebox.askyesno(
+            "Confirmer l'écrasement",
+            f"Importer ce fichier va ÉCRASER complètement les soldes d'ouverture de l'exercice "
+            f"{exercice} actuellement sélectionné. Cette action est irréversible. Continuer ?"
+        ):
+            return
+        try:
+            n, warnings = core.import_opening_balances_xlsx(self.conn, path)
+        except Exception as exc:
+            messagebox.showerror("Erreur", f"Échec de l'import : {exc}")
+            return
+        self.refresh()
+        msg = f"{n} solde(s) importé(s) pour l'exercice {exercice}. La balance précédente a été remplacée."
+        if warnings:
+            msg += "\n\nAvertissements :\n" + "\n".join(warnings[:20])
+        messagebox.showinfo("Import terminé", msg)
 
 
 class StocksTab(ttk.Frame):
@@ -3562,6 +3631,12 @@ class PlanComptableTab(ttk.Frame):
         search_entry.pack(side="left", padx=6)
         search_entry.bind("<KeyRelease>", lambda e: self.refresh())
 
+        import_bar = ttk.Frame(self)
+        import_bar.pack(fill="x", padx=16, pady=4)
+        ttk.Button(import_bar, text="Importer un plan (.xlsx) — ÉCRASE le plan actuel",
+                   command=self.import_xlsx).pack(side="left", padx=2)
+        ttk.Button(import_bar, text="Exporter le plan actuel (.xlsx)", command=self.export_xlsx).pack(side="left", padx=2)
+
         form = ttk.Frame(self)
         form.pack(fill="x", padx=16, pady=6)
         ttk.Label(form, text="N° Compte :").grid(row=0, column=0, sticky="w")
@@ -3620,6 +3695,36 @@ class PlanComptableTab(ttk.Frame):
             racine_label = core.RACINE_LABELS.get(racine, "")
             self.tree.insert("", "end", values=(a["code"], a["label"], a["classe"], racine, racine_label))
 
+    def export_xlsx(self):
+        path = filedialog.asksaveasfilename(
+            defaultextension=".xlsx", filetypes=[("Classeur Excel", "*.xlsx")],
+            initialfile="Plan_comptable.xlsx", title="Exporter le Plan comptable",
+        )
+        if not path:
+            return
+        core.export_plan_comptable_xlsx(self.conn, path)
+        messagebox.showinfo("Export terminé", f"Plan comptable exporté :\n{path}")
+
+    def import_xlsx(self):
+        path = filedialog.askopenfilename(filetypes=[("Classeur Excel", "*.xlsx")],
+                                           title="Importer un Plan comptable")
+        if not path:
+            return
+        if not messagebox.askyesno(
+            "Confirmer l'écrasement",
+            "Importer ce fichier va ÉCRASER complètement le Plan comptable actuel (tous les comptes "
+            "existants seront supprimés et remplacés par ceux du fichier). Cette action est "
+            "irréversible. Continuer ?"
+        ):
+            return
+        try:
+            n = core.import_plan_comptable_xlsx(self.conn, path)
+        except Exception as exc:
+            messagebox.showerror("Erreur", f"Échec de l'import : {exc}")
+            return
+        self.refresh()
+        messagebox.showinfo("Import terminé", f"{n} compte(s) importé(s). Le plan précédent a été remplacé.")
+
 
 class _SimplePlanTab(ttk.Frame):
     """Base pour les plans Code + Libellé (analytique, bailleurs)."""
@@ -3635,10 +3740,22 @@ class _SimplePlanTab(ttk.Frame):
     def delete_fn(self, conn, code):
         raise NotImplementedError
 
+    def export_fn(self, conn, path):
+        raise NotImplementedError
+
+    def import_fn(self, conn, path):
+        raise NotImplementedError
+
     def __init__(self, parent, conn):
         super().__init__(parent)
         self.conn = conn
         ttk.Label(self, text=self.TITLE, font=("Segoe UI", 14, "bold")).pack(anchor="w", padx=16, pady=(16, 4))
+
+        import_bar = ttk.Frame(self)
+        import_bar.pack(fill="x", padx=16, pady=(0, 4))
+        ttk.Button(import_bar, text="Importer (.xlsx) — ÉCRASE le plan actuel",
+                   command=self.import_xlsx).pack(side="left", padx=2)
+        ttk.Button(import_bar, text="Exporter (.xlsx)", command=self.export_xlsx).pack(side="left", padx=2)
 
         form = ttk.Frame(self)
         form.pack(fill="x", padx=16, pady=6)
@@ -3694,6 +3811,35 @@ class _SimplePlanTab(ttk.Frame):
         for item in self.list_fn(self.conn):
             self.tree.insert("", "end", values=(item["code"], item["label"]))
 
+    def export_xlsx(self):
+        path = filedialog.asksaveasfilename(
+            defaultextension=".xlsx", filetypes=[("Classeur Excel", "*.xlsx")],
+            initialfile=f"{self.TITLE.title().replace(' ', '_')}.xlsx", title=f"Exporter {self.TITLE}",
+        )
+        if not path:
+            return
+        self.export_fn(self.conn, path)
+        messagebox.showinfo("Export terminé", f"Plan exporté :\n{path}")
+
+    def import_xlsx(self):
+        path = filedialog.askopenfilename(filetypes=[("Classeur Excel", "*.xlsx")],
+                                           title=f"Importer {self.TITLE}")
+        if not path:
+            return
+        if not messagebox.askyesno(
+            "Confirmer l'écrasement",
+            f"Importer ce fichier va ÉCRASER complètement le {self.TITLE.lower()} actuel. "
+            f"Cette action est irréversible. Continuer ?"
+        ):
+            return
+        try:
+            n = self.import_fn(self.conn, path)
+        except Exception as exc:
+            messagebox.showerror("Erreur", f"Échec de l'import : {exc}")
+            return
+        self.refresh()
+        messagebox.showinfo("Import terminé", f"{n} ligne(s) importée(s). Le plan précédent a été remplacé.")
+
 
 class PlanAnalytiqueTab(_SimplePlanTab):
     TITLE = "PLAN ANALYTIQUE"
@@ -3707,6 +3853,12 @@ class PlanAnalytiqueTab(_SimplePlanTab):
 
     def delete_fn(self, conn, code):
         core.delete_analytic_code(conn, code)
+
+    def export_fn(self, conn, path):
+        core.export_analytic_codes_xlsx(conn, path)
+
+    def import_fn(self, conn, path):
+        return core.import_analytic_codes_xlsx(conn, path)
 
 
 class PlanBailleurTab(_SimplePlanTab):
@@ -3722,6 +3874,12 @@ class PlanBailleurTab(_SimplePlanTab):
     def delete_fn(self, conn, code):
         core.delete_donor_code(conn, code)
 
+    def export_fn(self, conn, path):
+        core.export_donor_codes_xlsx(conn, path)
+
+    def import_fn(self, conn, path):
+        return core.import_donor_codes_xlsx(conn, path)
+
 
 class PlanBudgetaireTab(ttk.Frame):
     """Plan budgétaire : Code + Libellé + Montant prévu."""
@@ -3730,6 +3888,12 @@ class PlanBudgetaireTab(ttk.Frame):
         super().__init__(parent)
         self.conn = conn
         ttk.Label(self, text="PLAN BUDGÉTAIRE", font=("Segoe UI", 14, "bold")).pack(anchor="w", padx=16, pady=(16, 4))
+
+        import_bar = ttk.Frame(self)
+        import_bar.pack(fill="x", padx=16, pady=(0, 4))
+        ttk.Button(import_bar, text="Importer (.xlsx) — ÉCRASE le plan actuel",
+                   command=self.import_xlsx).pack(side="left", padx=2)
+        ttk.Button(import_bar, text="Exporter (.xlsx)", command=self.export_xlsx).pack(side="left", padx=2)
 
         form = ttk.Frame(self)
         form.pack(fill="x", padx=16, pady=6)
@@ -3794,6 +3958,35 @@ class PlanBudgetaireTab(ttk.Frame):
             self.tree.delete(row)
         for item in core.list_budget_codes(self.conn):
             self.tree.insert("", "end", values=(item["code"], item["label"], f"{item['montant']:,.2f}"))
+
+    def export_xlsx(self):
+        path = filedialog.asksaveasfilename(
+            defaultextension=".xlsx", filetypes=[("Classeur Excel", "*.xlsx")],
+            initialfile="Plan_budgetaire.xlsx", title="Exporter le Plan budgétaire",
+        )
+        if not path:
+            return
+        core.export_budget_codes_xlsx(self.conn, path)
+        messagebox.showinfo("Export terminé", f"Plan budgétaire exporté :\n{path}")
+
+    def import_xlsx(self):
+        path = filedialog.askopenfilename(filetypes=[("Classeur Excel", "*.xlsx")],
+                                           title="Importer un Plan budgétaire")
+        if not path:
+            return
+        if not messagebox.askyesno(
+            "Confirmer l'écrasement",
+            "Importer ce fichier va ÉCRASER complètement le Plan budgétaire actuel. "
+            "Cette action est irréversible. Continuer ?"
+        ):
+            return
+        try:
+            n = core.import_budget_codes_xlsx(self.conn, path)
+        except Exception as exc:
+            messagebox.showerror("Erreur", f"Échec de l'import : {exc}")
+            return
+        self.refresh()
+        messagebox.showinfo("Import terminé", f"{n} ligne(s) importée(s). Le plan précédent a été remplacé.")
 
 
 if __name__ == "__main__":

@@ -421,6 +421,32 @@ Les 4 écrans de gestion des plans (Plan comptable, Plan analytique, Plan
 budgétaire, Plan bailleurs de fonds) ainsi que les **Exercices comptables**
 sont désormais regroupés dans le menu **PARAMÈTRES**.
 
+### Import/Export xlsx pour tous les plans + balance N-1, et liste déroulante automatique en Saisie
+
+**Import/Export .xlsx avec écrasement** (menu PARAMÈTRES) :
+- **Plan comptable** : boutons Importer/Exporter dans l'onglet. Importer un
+  fichier **écrase entièrement** le plan actuel (les comptes non présents
+  dans le fichier disparaissent), puis réinsère automatiquement les comptes
+  racines (1, 2, 3, 5, 6, 7, 8, 9, 40-49).
+- **Plan analytique, Plan budgétaire, Plan bailleurs** : même principe
+  (Importer écrase, Exporter génère un .xlsx avec les bons en-têtes).
+
+**Balance d'ouverture (N-1)** (menu SAISIE → Soldes d'ouverture) : mêmes
+boutons Importer/Exporter. L'import **écrase les soldes d'ouverture de
+l'exercice actuellement sélectionné uniquement** (les autres exercices ne
+sont pas affectés) — un compte absent du Plan comptable déclenche un
+avertissement mais est importé quand même.
+
+Testé pour les 5 imports : écrasement confirmé dans chaque cas (les
+anciennes données disparaissent, remplacées par le contenu du fichier).
+
+**Liste déroulante automatique en Saisie** : un simple **clic** dans les
+champs Compte débiteur/créditeur, Journal, Fournisseur, Client, Code
+analytique/budgétaire/bailleur ouvre désormais directement la liste
+déroulante pour faire défiler et choisir — plus besoin de taper au clavier.
+Les champs Compte débiteur/créditeur sont préchargés avec les 300 premiers
+comptes dès l'ouverture de l'onglet.
+
 ### NOTE 34 (Liasse fiscale) remplie + liens externes cassés supprimés
 
 **Cause identifiée** : le bandeau "IMPOSSIBLE D'ACTUALISER... valeurs

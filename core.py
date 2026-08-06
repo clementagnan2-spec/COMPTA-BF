@@ -677,6 +677,81 @@ def total_opening_balance(conn, exercice=None):
     return row["t"]
 
 
+def export_opening_balances_xlsx(conn, path, exercice=None):
+    """Exporte la balance d'ouverture (soldes d'ouverture) de l'exercice en .xlsx."""
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill
+
+    exercice = exercice or get_current_exercice(conn)
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Soldes ouverture"
+    header_font = Font(bold=True, color="FFFFFFFF")
+    header_fill = PatternFill("solid", fgColor="1F4E78")
+    for i, label in enumerate(["N° Compte", "Libellé", "Solde (débit +, crédit -)"], start=1):
+        c = ws.cell(row=1, column=i, value=label)
+        c.font = header_font
+        c.fill = header_fill
+    for r, row in enumerate(list_opening_balances(conn, exercice=exercice), start=2):
+        ws.cell(row=r, column=1, value=row["code"])
+        ws.cell(row=r, column=2, value=row["label"])
+        ws.cell(row=r, column=3, value=row["solde"])
+    for i, w in enumerate([14, 40, 20], start=1):
+        ws.column_dimensions[chr(64 + i)].width = w
+    wb.save(path)
+    return path
+
+
+def import_opening_balances_xlsx(conn, path, exercice=None):
+    """Importe une balance d'ouverture depuis un .xlsx et ÉCRASE les soldes
+    d'ouverture existants pour cet exercice (les autres exercices ne sont
+    pas affectés)."""
+    import openpyxl
+
+    exercice = exercice or get_current_exercice(conn)
+    wb = openpyxl.load_workbook(path, data_only=True)
+    ws = wb.active
+    header_cells = next(ws.iter_rows(min_row=1, max_row=1))
+    headers = [str(c.value).strip().lower() if c.value is not None else "" for c in header_cells]
+    aliases = {"code": ["n° compte", "code", "compte"],
+               "solde": ["solde (débit +, crédit -)", "solde", "solde débit", "montant"]}
+    colmap = {}
+    for key, alist in aliases.items():
+        for i, h in enumerate(headers):
+            if h in alist:
+                colmap[key] = i
+                break
+    if "code" not in colmap or "solde" not in colmap:
+        raise ValueError("Colonnes obligatoires introuvables (« N° Compte » et « Solde »).")
+
+    rows = []
+    warnings = []
+    for r_idx, r in enumerate(ws.iter_rows(min_row=2), start=2):
+        values = [c.value for c in r]
+        if all(v in (None, "") for v in values):
+            continue
+        code = str(values[colmap["code"]] or "").strip()
+        if not code:
+            continue
+        try:
+            solde = float(values[colmap["solde"]] or 0)
+        except (TypeError, ValueError):
+            warnings.append(f"Ligne {r_idx} : solde invalide pour le compte {code}, ignoré.")
+            continue
+        if not account_exists(conn, code):
+            warnings.append(f"Ligne {r_idx} : compte « {code} » introuvable dans le Plan comptable — "
+                             f"importé quand même.")
+        rows.append((code, exercice, solde))
+
+    if not rows:
+        raise ValueError("Le fichier ne contient aucune ligne valide.")
+
+    conn.execute("DELETE FROM opening_balances WHERE exercice = ?", (exercice,))
+    conn.executemany("INSERT INTO opening_balances (code, exercice, solde) VALUES (?, ?, ?)", rows)
+    conn.commit()
+    return len(rows), warnings
+
+
 def load_plan_comptable(conn, json_path=None):
     """Charge le plan comptable (bundlé avec l'application) dans la base."""
     if json_path is None:
@@ -776,6 +851,78 @@ def delete_account(conn, code):
     conn.commit()
 
 
+def export_plan_comptable_xlsx(conn, path):
+    """Exporte tout le Plan comptable (code, libellé, classe) en .xlsx."""
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Plan comptable"
+    header_font = Font(bold=True, color="FFFFFFFF")
+    header_fill = PatternFill("solid", fgColor="1F4E78")
+    for i, label in enumerate(["N° Compte", "Libellé", "Classe"], start=1):
+        c = ws.cell(row=1, column=i, value=label)
+        c.font = header_font
+        c.fill = header_fill
+    for r, a in enumerate(conn.execute("SELECT code, label, classe FROM accounts ORDER BY code"), start=2):
+        ws.cell(row=r, column=1, value=a["code"])
+        ws.cell(row=r, column=2, value=a["label"])
+        ws.cell(row=r, column=3, value=a["classe"])
+    for i, w in enumerate([14, 45, 10], start=1):
+        ws.column_dimensions[chr(64 + i)].width = w
+    wb.save(path)
+    return path
+
+
+def import_plan_comptable_xlsx(conn, path):
+    """Importe un Plan comptable depuis un .xlsx et ÉCRASE l'ancien plan
+    (toutes les fiches auxiliaires clients/fournisseurs et les écritures
+    existantes ne sont PAS supprimées, mais leurs comptes ne seront plus
+    reconnus s'ils ne figurent pas dans le nouveau plan)."""
+    import openpyxl
+
+    wb = openpyxl.load_workbook(path, data_only=True)
+    ws = wb.active
+    header_cells = next(ws.iter_rows(min_row=1, max_row=1))
+    headers = [str(c.value).strip().lower() if c.value is not None else "" for c in header_cells]
+    aliases = {"code": ["n° compte", "code", "compte"], "label": ["libellé", "libelle"],
+               "classe": ["classe"]}
+    colmap = {}
+    for key, alist in aliases.items():
+        for i, h in enumerate(headers):
+            if h in alist:
+                colmap[key] = i
+                break
+    if "code" not in colmap or "label" not in colmap:
+        raise ValueError("Colonnes obligatoires introuvables (« N° Compte » et « Libellé »).")
+
+    rows = []
+    for r in ws.iter_rows(min_row=2):
+        values = [c.value for c in r]
+        if all(v in (None, "") for v in values):
+            continue
+        code = str(values[colmap["code"]] or "").strip()
+        label = str(values[colmap["label"]] or "").strip()
+        if not code or not label:
+            continue
+        classe = None
+        if "classe" in colmap and colmap["classe"] < len(values) and values[colmap["classe"]]:
+            classe = str(values[colmap["classe"]]).strip()
+        if not classe:
+            classe = code[:2] if code[:1] == "4" else code[:1]
+        rows.append((code, label, classe))
+
+    if not rows:
+        raise ValueError("Le fichier ne contient aucun compte valide.")
+
+    conn.execute("DELETE FROM accounts")
+    conn.executemany("INSERT INTO accounts (code, label, classe) VALUES (?, ?, ?)", rows)
+    conn.commit()
+    ensure_racine_accounts(conn)
+    return len(rows)
+
+
 # ---------------------------------------------------------------------------
 # Plans auxiliaires : analytique, budgétaire, bailleurs de fonds
 # (même logique CRUD simple pour les 3, table dédiée chacun)
@@ -847,6 +994,105 @@ def add_donor_code(conn, code, label):
 
 def delete_donor_code(conn, code):
     _plan_delete(conn, "donor_codes", code)
+
+
+def _export_plan_generic_xlsx(conn, path, table, title, has_montant=False):
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = title[:31]
+    header_font = Font(bold=True, color="FFFFFFFF")
+    header_fill = PatternFill("solid", fgColor="1F4E78")
+    headers = ["Code", "Libellé"] + (["Montant"] if has_montant else [])
+    for i, label in enumerate(headers, start=1):
+        c = ws.cell(row=1, column=i, value=label)
+        c.font = header_font
+        c.fill = header_fill
+    cols = "code, label" + (", montant" if has_montant else "")
+    for r, row in enumerate(conn.execute(f"SELECT {cols} FROM {table} ORDER BY code"), start=2):
+        ws.cell(row=r, column=1, value=row["code"])
+        ws.cell(row=r, column=2, value=row["label"])
+        if has_montant:
+            ws.cell(row=r, column=3, value=row["montant"])
+    widths = [16, 40] + ([16] if has_montant else [])
+    for i, w in enumerate(widths, start=1):
+        ws.column_dimensions[chr(64 + i)].width = w
+    wb.save(path)
+    return path
+
+
+def _import_plan_generic_xlsx(conn, path, table, has_montant=False):
+    """Importe un plan (code/libellé[/montant]) depuis un .xlsx et ÉCRASE
+    l'ancien contenu de la table."""
+    import openpyxl
+
+    wb = openpyxl.load_workbook(path, data_only=True)
+    ws = wb.active
+    header_cells = next(ws.iter_rows(min_row=1, max_row=1))
+    headers = [str(c.value).strip().lower() if c.value is not None else "" for c in header_cells]
+    aliases = {"code": ["code"], "label": ["libellé", "libelle"], "montant": ["montant"]}
+    colmap = {}
+    for key, alist in aliases.items():
+        for i, h in enumerate(headers):
+            if h in alist:
+                colmap[key] = i
+                break
+    if "code" not in colmap or "label" not in colmap:
+        raise ValueError("Colonnes obligatoires introuvables (« Code » et « Libellé »).")
+
+    rows = []
+    for r in ws.iter_rows(min_row=2):
+        values = [c.value for c in r]
+        if all(v in (None, "") for v in values):
+            continue
+        code = str(values[colmap["code"]] or "").strip()
+        label = str(values[colmap["label"]] or "").strip()
+        if not code or not label:
+            continue
+        montant = 0.0
+        if has_montant and "montant" in colmap and colmap["montant"] < len(values):
+            try:
+                montant = float(values[colmap["montant"]] or 0)
+            except (TypeError, ValueError):
+                montant = 0.0
+        rows.append((code, label, montant) if has_montant else (code, label))
+
+    if not rows:
+        raise ValueError("Le fichier ne contient aucune ligne valide.")
+
+    conn.execute(f"DELETE FROM {table}")
+    if has_montant:
+        conn.executemany(f"INSERT INTO {table} (code, label, montant) VALUES (?, ?, ?)", rows)
+    else:
+        conn.executemany(f"INSERT INTO {table} (code, label) VALUES (?, ?)", rows)
+    conn.commit()
+    return len(rows)
+
+
+def export_analytic_codes_xlsx(conn, path):
+    return _export_plan_generic_xlsx(conn, path, "analytic_codes", "Plan analytique")
+
+
+def import_analytic_codes_xlsx(conn, path):
+    return _import_plan_generic_xlsx(conn, path, "analytic_codes")
+
+
+def export_budget_codes_xlsx(conn, path):
+    return _export_plan_generic_xlsx(conn, path, "budget_codes", "Plan budgétaire", has_montant=True)
+
+
+def import_budget_codes_xlsx(conn, path):
+    return _import_plan_generic_xlsx(conn, path, "budget_codes", has_montant=True)
+
+
+def export_donor_codes_xlsx(conn, path):
+    return _export_plan_generic_xlsx(conn, path, "donor_codes", "Plan bailleurs")
+
+
+def import_donor_codes_xlsx(conn, path):
+    return _import_plan_generic_xlsx(conn, path, "donor_codes")
 
 
 # ---------------------------------------------------------------------------
