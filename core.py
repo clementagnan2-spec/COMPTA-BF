@@ -3132,6 +3132,11 @@ def export_liasse_fiscale_complete(conn, path, stock_initial=0.0):
     wb = openpyxl.load_workbook(template_path)
     green = Font(color="FF008000")
 
+    # ---- Supprime les liens externes cassés (source du bandeau Excel
+    #      « Impossible d'actualiser... valeurs depuis un classeur lié ») ----
+    if getattr(wb, "_external_links", None):
+        wb._external_links = []
+
     # ---- GARDE : identification de l'entité ----
     if "GARDE" in wb.sheetnames:
         g = wb["GARDE"]
@@ -3382,6 +3387,27 @@ def export_liasse_fiscale_complete(conn, path, stock_initial=0.0):
                 if isinstance(cell.value, str) and "GCM" in cell.value.upper():
                     if not my_name or my_name not in cell.value.upper():
                         cell.value = None
+
+    # ---- NOTE 34 : Fiche de synthèse des principaux indicateurs financiers
+    #      (SIG) — mêmes données que l'onglet Compte de résultat de l'app.
+    #      Rempli APRÈS le nettoyage général ci-dessus (qui efface d'abord
+    #      les anciennes valeurs littérales de l'entité précédente). ----
+    if "NOTE 34" in wb.sheetnames:
+        ws34 = wb["NOTE 34"]
+        note34_map = {"XB": 11, "XA": 12, "XC": 13, "XD": 14, "XE": 15, "XF": 16,
+                      "XG": 17, "XH": 18, "XI": 19}
+        for ref, row in note34_map.items():
+            c = ws34.cell(row=row, column=6, value=round(cr.get(ref, 0.0)))
+            c.font = green
+        try:
+            exercice_n = get_current_exercice(conn)
+            exercice_n1 = str(int(exercice_n) - 1)
+            if any(e["exercice"] == exercice_n1 for e in list_exercices(conn)):
+                cr_n1 = compute_liasse_resultat(conn, exercice=exercice_n1)
+                for ref, row in note34_map.items():
+                    ws34.cell(row=row, column=7, value=round(cr_n1.get(ref, 0.0)))
+        except (ValueError, TypeError):
+            pass
 
     # ---- Uniformise toutes les cellules de type date au format JJ/MM/AAAA ----
     date_format_markers = ("yy", "mm", "dd", "jj", "aaaa")

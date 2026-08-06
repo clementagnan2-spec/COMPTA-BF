@@ -421,6 +421,25 @@ Les 4 écrans de gestion des plans (Plan comptable, Plan analytique, Plan
 budgétaire, Plan bailleurs de fonds) ainsi que les **Exercices comptables**
 sont désormais regroupés dans le menu **PARAMÈTRES**.
 
+### NOTE 34 (Liasse fiscale) remplie + liens externes cassés supprimés
+
+**Cause identifiée** : le bandeau "IMPOSSIBLE D'ACTUALISER... valeurs
+depuis un classeur lié" venait de **liens externes cassés** dans le modèle
+(référence vers l'ancien classeur de l'entité GCM, absent). La feuille
+**NOTE 34** (Fiche de synthèse des indicateurs financiers — SIG) contenait
+en plus d'anciennes valeurs littérales (pas des formules), donc mon
+nettoyage général les vidait sans les remplacer, d'où l'écran vide.
+
+**Deux corrections** :
+1. **Les liens externes cassés sont maintenant supprimés** à l'export —
+   testé, le bandeau d'erreur ne devrait plus apparaître à l'ouverture.
+2. **NOTE 34 est remplie automatiquement** (Chiffre d'affaires, Marge
+   commerciale, Valeur ajoutée, EBE, Résultat d'exploitation, Résultat
+   financier, Résultat des activités ordinaires, Résultat HAO, Résultat
+   net), avec les mêmes données que l'onglet Compte de résultat — colonne
+   « Année N-1 » remplie aussi si l'exercice précédent existe dans
+   l'application.
+
 ### Compte de résultat en Soldes Intermédiaires de Gestion (SIG) (mise à jour)
 
 L'onglet **Compte de résultat** suit désormais exactement la structure
