@@ -287,7 +287,7 @@ def compute_liasse_resultat(conn, exercice=None):
     xi = xg + xh + rq + rs
 
     return {
-        "TA": ta, "RA": ra, "XA": xa,
+        "TA": ta, "RA": ra, "RA_STOCK": ra_stock, "XA": xa,
         "TB": tb, "TC": tc, "TD": td, "XB": xb,
         "TE": te, "TG": tg, "TH": th,
         "RC": rc, "RE": re, "RG": rg, "RH": rh, "RI": ri, "RJ": rj, "XC": xc,
@@ -2535,6 +2535,75 @@ def compute_tft(conn, treso_ouverture=None, exercice=None):
     }
 
 
+def compute_tft_officiel(conn, exercice=None):
+    """TFT selon la disposition EXACTE du formulaire officiel SYSCOHADA
+    (références ZA, FA à FE, ZB...), pour remplissage direct de la feuille
+    TFT de la Liasse fiscale. Réutilise les mêmes briques que
+    compute_tft_indirect / compute_situation_financiere — donc cohérent
+    avec la Balance. Seule la partie confirmée visuellement (ZA, FA-FE) est
+    actuellement mappée ; l'investissement et le financement restent à
+    positionner une fois les numéros de ligne du modèle officiel confirmés."""
+    exercice = exercice or get_current_exercice(conn)
+    balance = compute_balance(conn, only_with_movement=False, exercice=exercice)
+    cr = compute_liasse_resultat(conn, exercice=exercice)
+
+    treso_ouverture = sum(b["solde_ouverture"] for b in balance if b["classe"] == "5")
+    treso_cloture_reelle = sum(b["solde_cloture"] for b in balance if b["classe"] == "5")
+
+    ebe = cr["XD"]
+    revenus_financiers = cr["TK"]
+    frais_financiers = -cr["RM"]
+    fa_cafg = ebe + revenus_financiers + frais_financiers
+
+    def _delta_prefixes(prefixes):
+        ouv = sum(b["solde_ouverture"] for b in balance if any(b["code"].startswith(p) for p in prefixes))
+        clo = sum(b["solde_cloture"] for b in balance if any(b["code"].startswith(p) for p in prefixes))
+        return ouv, clo
+
+    stock_ouv, stock_clo = _delta_prefixes(COMPTES_STOCK_PREFIXES)
+    fc_variation_stocks = -(stock_clo - stock_ouv)
+
+    racines_exploit = ["42", "43", "44", "45", "46"]
+    creances_ouv = sum(b["solde_ouverture"] for b in balance if account_racine(b["code"]) == RACINE_CLIENTS)
+    creances_clo = sum(b["solde_cloture"] for b in balance if account_racine(b["code"]) == RACINE_CLIENTS)
+    for r in racines_exploit:
+        creances_ouv += sum(b["solde_ouverture"] for b in balance
+                             if account_racine(b["code"]) == r and b["solde_ouverture"] > 0)
+        creances_clo += sum(b["solde_cloture"] for b in balance
+                             if account_racine(b["code"]) == r and b["solde_cloture"] > 0)
+    fd_variation_creances = -(creances_clo - creances_ouv)
+
+    dettes_ouv = -sum(b["solde_ouverture"] for b in balance if account_racine(b["code"]) == RACINE_FOURNISSEURS)
+    dettes_clo = -sum(b["solde_cloture"] for b in balance if account_racine(b["code"]) == RACINE_FOURNISSEURS)
+    for r in racines_exploit:
+        dettes_ouv += -sum(b["solde_ouverture"] for b in balance
+                            if account_racine(b["code"]) == r and b["solde_ouverture"] < 0)
+        dettes_clo += -sum(b["solde_cloture"] for b in balance
+                            if account_racine(b["code"]) == r and b["solde_cloture"] < 0)
+    fe_variation_passif = dettes_clo - dettes_ouv
+
+    racines_hao = ["47", "48", "49"]
+    hao_actif_ouv = sum(b["solde_ouverture"] for b in balance
+                         if account_racine(b["code"]) in racines_hao and b["solde_ouverture"] > 0)
+    hao_actif_clo = sum(b["solde_cloture"] for b in balance
+                         if account_racine(b["code"]) in racines_hao and b["solde_cloture"] > 0)
+    hao_passif_ouv = -sum(b["solde_ouverture"] for b in balance
+                          if account_racine(b["code"]) in racines_hao and b["solde_ouverture"] < 0)
+    hao_passif_clo = -sum(b["solde_cloture"] for b in balance
+                          if account_racine(b["code"]) in racines_hao and b["solde_cloture"] < 0)
+    fb_variation_hao = -((hao_actif_clo - hao_actif_ouv) - (hao_passif_clo - hao_passif_ouv))
+
+    zb_flux_operationnel = fa_cafg + fb_variation_hao + fc_variation_stocks + fd_variation_creances + fe_variation_passif
+
+    return {
+        "ZA": treso_ouverture,
+        "FA": fa_cafg, "FB": fb_variation_hao, "FC": fc_variation_stocks,
+        "FD": fd_variation_creances, "FE": fe_variation_passif,
+        "ZB": zb_flux_operationnel,
+        "treso_cloture_reelle": treso_cloture_reelle,
+    }
+
+
 def compute_tft_indirect(conn, exercice=None):
     """TFT selon la méthode indirecte SYSCOHADA (avec CAFG), au même format
     que le modèle officiel : A) trésorerie d'ouverture, détermination de la
@@ -3172,8 +3241,11 @@ def export_liasse_fiscale_complete(conn, path, stock_initial=0.0):
             cell = ws.cell(row=row, column=9, value=round(val))
             cell.font = green
 
-    # ---- TFT : ajoute un onglet supplémentaire avec notre calcul (méthode
-    #      indirecte — CAFG), les mêmes données que l'onglet TFT de l'application ----
+    # ---- TFT : remplit la vraie feuille officielle sur les lignes confirmées
+    #      (ZA=10, FA=12, FB=13, FC=14, FD=15, FE=16), + un onglet
+    #      supplémentaire avec le calcul complet (méthode indirecte — CAFG),
+    #      les mêmes données que l'onglet TFT de l'application ----
+    tft_off = compute_tft_officiel(conn)
     tft = compute_tft_indirect(conn)
     if "TFT" in wb.sheetnames:
         ws = wb["TFT"]
@@ -3182,11 +3254,17 @@ def export_liasse_fiscale_complete(conn, path, stock_initial=0.0):
                 cell = ws.cell(row=row, column=col)
                 if isinstance(cell.value, (int, float)) and not isinstance(cell.value, bool):
                     cell.value = None
-        ws["I10"] = round(tft["treso_ouverture"])
-        ws["I10"].font = green
-        ws["A44"] = ("Feuille officielle laissée vierge (mise en page DGI non mappée automatiquement) "
-                     "— voir l'onglet « TFT (méthode indirecte - CAFG) » pour le calcul complet, "
-                     "identique à celui de l'onglet TFT de l'application.")
+        for ref, row in (("ZA", 10), ("FA", 12), ("FB", 13), ("FC", 14), ("FD", 15), ("FE", 16)):
+            c = ws.cell(row=row, column=9, value=round(tft_off[ref]))
+            c.font = green
+        ws["A44"] = (
+            "Lignes ZA et FA à FE remplies automatiquement depuis vos écritures (identique à "
+            "l'onglet TFT de l'application, section Flux opérationnels). Les lignes d'investissement "
+            "et de financement (FF et suivantes) n'ont pas encore de position de cellule confirmée "
+            "dans ce modèle — complétez-les manuellement, ou envoyez une capture des lignes "
+            "suivantes pour qu'elles soient automatisées aussi. Voir l'onglet « TFT (méthode "
+            "indirecte - CAFG) » pour le calcul complet (investissement et financement inclus)."
+        )
     ws_tft = wb.create_sheet("TFT (méthode indirecte - CAFG)")
     ws_tft["A1"] = "TABLEAU DE FLUX DE TRÉSORERIE (méthode indirecte — CAFG)"
     ws_tft["A1"].font = Font(bold=True, size=12)

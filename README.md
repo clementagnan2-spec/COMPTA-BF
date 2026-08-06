@@ -421,6 +421,48 @@ Les 4 écrans de gestion des plans (Plan comptable, Plan analytique, Plan
 budgétaire, Plan bailleurs de fonds) ainsi que les **Exercices comptables**
 sont désormais regroupés dans le menu **PARAMÈTRES**.
 
+### Compte de résultat en Soldes Intermédiaires de Gestion (SIG) (mise à jour)
+
+L'onglet **Compte de résultat** suit désormais exactement la structure
+officielle SIG (Soldes Intermédiaires de Gestion) de votre modèle, avec une
+couleur par section :
+- **Activité commerciale** (vert) : Marge commerciale
+- **Chiffre d'affaires** (bleu) : A+B+C+D
+- **Valeur ajoutée** (jaune) : tous les achats et charges externes détaillés
+- **EBE et Résultat d'exploitation** (violet)
+- **Résultat financier** (orange) et Résultat des activités ordinaires
+- **HAO et Résultat net** (rouge/rose)
+
+Calculé à partir de **`compute_liasse_resultat()`** — la même fonction que
+la Liasse fiscale, le TFT et la Situation financière — donc toujours
+cohérent avec la Balance et le Bilan. Vérifié : le Résultat net affiché
+correspond exactement à celui utilisé par le Bilan (`compute_compte_resultat`
+et `compute_liasse_resultat` donnent la même valeur, testé sur plusieurs
+scénarios y compris avec variation de stock).
+
+### TFT : la vraie feuille officielle est maintenant remplie (mise à jour)
+
+Grâce à une capture de votre feuille TFT officielle, j'ai pu identifier
+précisément les cellules à remplir : **ZA** (trésorerie d'ouverture, ligne
+10), **FA** (CAFG, ligne 12), **FB** (variation actif circulant HAO, ligne
+13), **FC** (variation des stocks, ligne 14), **FD** (variation des
+créances, ligne 15), **FE** (variation du passif circulant, ligne 16) —
+toutes en colonne I (Exercice N), calculées depuis vos écritures.
+
+Testé : les valeurs injectées dans la vraie feuille TFT correspondent
+exactement à celles de l'onglet TFT de l'application (flux opérationnel
+cohérent entre les deux, écart 0).
+
+⚠️ **Les lignes d'investissement et de financement (à partir de FF) ne sont
+pas encore automatisées** dans la vraie feuille officielle — je n'ai pas
+encore de confirmation visuelle de leur position exacte dans votre modèle,
+et je préfère ne pas deviner au risque d'écrire au mauvais endroit sur un
+document officiel. **Envoyez-moi une capture des lignes suivantes de la
+feuille TFT** (après la ligne 19) pour que je complète le reste. En
+attendant, le calcul complet (avec investissement et financement) reste
+disponible dans l'onglet supplémentaire « TFT (méthode indirecte - CAFG) »
+du même fichier exporté.
+
 ### Liasse fiscale : mêmes données que Balance/Bilan/TFT/Situation financière
 
 L'export de la Liasse fiscale utilise désormais **exactement les mêmes

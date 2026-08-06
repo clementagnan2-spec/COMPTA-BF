@@ -819,33 +819,96 @@ class BalanceTab(ttk.Frame):
 
 
 class CompteResultatTab(ttk.Frame):
+    """Compte de résultat selon les Soldes Intermédiaires de Gestion (SIG),
+    présenté selon le modèle officiel, avec une couleur par section.
+    Calculé à partir de compute_liasse_resultat() — la même fonction que la
+    Liasse fiscale et la Situation financière — donc toujours cohérent avec
+    la Balance, le Bilan, le TFT et la Situation financière."""
+
+    SECTIONS = {
+        "commerciale": "#D9EAD3",   # vert clair — activité commerciale
+        "ca": "#CFE2F3",            # bleu clair — chiffre d'affaires
+        "va": "#FFF2CC",            # jaune clair — valeur ajoutée
+        "ebe": "#D9D2E9",           # violet clair — EBE / résultat exploitation
+        "financier": "#FCE5CD",     # orange clair — résultat financier
+        "hao": "#F4CCCC",           # rouge/rose clair — HAO / résultat net
+        "total": "#1F4E78",
+    }
+
     def __init__(self, parent, conn):
         super().__init__(parent)
         self.conn = conn
-        self.text = tk.Text(self, font=("Consolas", 11), wrap="none")
-        self.text.pack(fill="both", expand=True, padx=8, pady=8)
-        ttk.Button(self, text="Actualiser", command=self.refresh).pack(pady=(0, 8))
+        cols = ("libelle", "montant")
+        self.tree = ttk.Treeview(self, columns=cols, show="headings", height=30)
+        self.tree.heading("libelle", text="Rubrique")
+        self.tree.heading("montant", text="Montant")
+        self.tree.column("libelle", width=480, anchor="w")
+        self.tree.column("montant", width=160, anchor="e")
+        for key, color in self.SECTIONS.items():
+            fg = "white" if key == "total" else "black"
+            tree_font = ("Segoe UI", 9, "bold") if key == "total" else ("Segoe UI", 9)
+            self.tree.tag_configure(key, background=color, foreground=fg, font=tree_font)
+            self.tree.tag_configure(key + "_header", background=color, foreground=fg, font=("Segoe UI", 9, "bold"))
+        self.tree.pack(fill="both", expand=True, padx=8, pady=8)
+        ttk.Label(self, text=(
+            "Calculé à partir de la même fonction que la Liasse fiscale, la Situation financière et "
+            "le TFT (compute_liasse_resultat) — toujours cohérent avec la Balance et le Bilan."
+        ), foreground="#595959").pack(anchor="w", padx=8)
+        ttk.Button(self, text="Actualiser", command=self.refresh).pack(pady=8)
         self.refresh()
 
+    def _row(self, tag, label, val):
+        self.tree.insert("", "end", tags=(tag,), values=(f"  {label}", f"{val:,.2f}"))
+
+    def _header(self, tag, titre):
+        self.tree.insert("", "end", tags=(tag + "_header",), values=(titre, ""))
+
     def refresh(self):
-        cr = core.compute_compte_resultat(self.conn)
-        lines = ["COMPTE DE RÉSULTAT", "=" * 60, "", "PRODUITS D'EXPLOITATION"]
-        for k, v in cr["produits"].items():
-            lines.append(f"  {k:<50} {v:>12,.2f}")
-        lines.append(f"  {'TOTAL PRODUITS':<50} {cr['total_produits']:>12,.2f}")
-        lines += ["", "CHARGES D'EXPLOITATION"]
-        for k, v in cr["charges"].items():
-            lines.append(f"  {k:<50} {v:>12,.2f}")
-        lines.append(f"  {'TOTAL CHARGES':<50} {cr['total_charges']:>12,.2f}")
-        lines += ["", f"RÉSULTAT D'EXPLOITATION{'':<39}{cr['resultat_exploitation']:>12,.2f}", ""]
-        lines += ["RÉSULTAT FINANCIER",
-                  f"  Produits financiers{'':<38}{cr['produits_financiers']:>12,.2f}",
-                  f"  Charges financières{'':<38}{cr['charges_financieres']:>12,.2f}",
-                  f"  {'RÉSULTAT FINANCIER':<50} {cr['resultat_financier']:>12,.2f}", ""]
-        label_rn = "RÉSULTAT NET DE L'EXERCICE"
-        lines.append(f"{label_rn:<52} {cr['resultat_net']:>12,.2f}")
-        self.text.delete("1.0", "end")
-        self.text.insert("1.0", "\n".join(lines))
+        for row in self.tree.get_children():
+            self.tree.delete(row)
+        cr = core.compute_liasse_resultat(self.conn)
+
+        self._header("commerciale", "ACTIVITÉ COMMERCIALE")
+        self._row("commerciale", "+ Vente de marchandises (A)", cr["TA"])
+        self._row("commerciale", "- Coût d'achat des marchandises vendues", cr["RA"])
+        self._row("commerciale", "- Variation de stocks de marchandises", cr["RA_STOCK"])
+        self._row("commerciale", "MARGE COMMERCIALE", cr["XA"])
+
+        self._header("ca", "CHIFFRE D'AFFAIRES")
+        self._row("ca", "+ Vente de produits fabriqués (B)", cr["TB"])
+        self._row("ca", "+ Travaux, services vendus (C)", cr["TC"])
+        self._row("ca", "+ Produits accessoires (D)", cr["TD"])
+        self._row("ca", "CHIFFRE D'AFFAIRES (A+B+C+D)", cr["XB"])
+
+        self._header("va", "VALEUR AJOUTÉE")
+        self._row("va", "+ Production stockée", cr["TE"])
+        self._row("va", "+ Subvention d'exploitation", cr["TG"])
+        self._row("va", "+ Autres produits", cr["TH"])
+        self._row("va", "- Achats de matières premières (+ variation de stocks)", cr["RC"])
+        self._row("va", "- Autres achats (+ variation de stocks)", cr["RE"])
+        self._row("va", "- Transport", cr["RG"])
+        self._row("va", "- Services extérieurs", cr["RH"])
+        self._row("va", "- Impôts et taxes", cr["RI"])
+        self._row("va", "- Autres charges", cr["RJ"])
+        self._row("va", "VALEUR AJOUTÉE", cr["XC"])
+
+        self._header("ebe", "EXCÉDENT BRUT D'EXPLOITATION ET RÉSULTAT D'EXPLOITATION")
+        self._row("ebe", "- Charges de personnel", cr["RK"])
+        self._row("ebe", "EXCÉDENT BRUT D'EXPLOITATION (EBE)", cr["XD"])
+        self._row("ebe", "- Dotations aux amortissements et provisions", cr["RL"])
+        self._row("ebe", "RÉSULTAT D'EXPLOITATION", cr["XE"])
+
+        self._header("financier", "RÉSULTAT FINANCIER")
+        self._row("financier", "+ Produits financiers", cr["TK"])
+        self._row("financier", "- Frais financiers et charges assimilées", cr["RM"])
+        self._row("financier", "RÉSULTAT FINANCIER", cr["XF"])
+        self._row("financier", "RÉSULTAT DES ACTIVITÉS ORDINAIRES", cr["XG"])
+
+        self._header("hao", "RÉSULTAT HORS ACTIVITÉS ORDINAIRES ET RÉSULTAT NET")
+        self._row("hao", "RÉSULTAT HAO", cr["XH"])
+        self._row("hao", "- Participation des salariés", cr["RQ"])
+        self._row("hao", "- Impôts sur les bénéfices", cr["RS"])
+        self.tree.insert("", "end", tags=("total",), values=("RÉSULTAT NET COMPTABLE", f"{cr['XI']:,.2f}"))
 
 
 class BilanTab(ttk.Frame):
