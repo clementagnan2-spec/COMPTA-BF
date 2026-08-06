@@ -421,6 +421,35 @@ Les 4 écrans de gestion des plans (Plan comptable, Plan analytique, Plan
 budgétaire, Plan bailleurs de fonds) ainsi que les **Exercices comptables**
 sont désormais regroupés dans le menu **PARAMÈTRES**.
 
+### Modèle téléchargeable pour la balance N-1 (nouveau)
+
+Ajout d'un bouton **« Télécharger un modèle (.xlsx) »** dans l'onglet
+Soldes d'ouverture, avant les boutons Importer/Exporter — génère un fichier
+vierge avec les bons en-têtes et **un exemple équilibré** (4 comptes dont
+la somme fait 0), à remplir puis réimporter directement. Testé : le modèle
+généré s'importe sans le moindre avertissement (round-trip complet).
+
+### Import de la balance N-1 rendu plus tolérant (correction de bug)
+
+**Bug signalé** : l'import échouait avec « Colonnes obligatoires
+introuvables » sur un fichier réel. Corrigé — l'import reconnaît maintenant
+plusieurs formats courants :
+- Une colonne **« Solde »** signée (notre format par défaut).
+- **Deux colonnes séparées « Solde débit » / « Solde crédit »** (comme une
+  balance générale classique — le solde est recalculé automatiquement en
+  Débit − Crédit).
+- Simplement **« Débit » / « Crédit »**.
+- Un **en-tête décalé** (titre ou lignes vides au-dessus) — la ligne
+  d'en-têtes est désormais recherchée dans les 10 premières lignes, pas
+  seulement la ligne 1.
+
+Si le fichier ne correspond toujours à aucun format reconnu, le **message
+d'erreur affiche maintenant les en-têtes réellement détectés** dans le
+fichier, pour vous aider à comprendre ce qui ne correspond pas.
+
+Testé avec 3 formats différents (solde signé, débit/crédit séparés,
+en-tête décalé avec titre) : tous s'importent correctement.
+
 ### Import/Export xlsx pour tous les plans + balance N-1, et liste déroulante automatique en Saisie
 
 **Import/Export .xlsx avec écrasement** (menu PARAMÈTRES) :

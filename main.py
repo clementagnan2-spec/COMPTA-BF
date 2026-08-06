@@ -1141,6 +1141,7 @@ class OpeningBalancesTab(ttk.Frame):
 
         import_bar = ttk.Frame(self)
         import_bar.pack(fill="x", padx=8, pady=(0, 4))
+        ttk.Button(import_bar, text="Télécharger un modèle (.xlsx)", command=self.download_template).pack(side="left", padx=2)
         ttk.Button(import_bar, text="Importer la balance N-1 (.xlsx) — ÉCRASE la balance actuelle",
                    command=self.import_xlsx).pack(side="left", padx=2)
         ttk.Button(import_bar, text="Exporter la balance N-1 (.xlsx)", command=self.export_xlsx).pack(side="left", padx=2)
@@ -1222,6 +1223,18 @@ class OpeningBalancesTab(ttk.Frame):
             total += b["solde"]
         equilibre = "Équilibré ✓" if abs(total) < 0.01 else "NON ÉQUILIBRÉ ✗ (la somme des soldes d'ouverture doit être nulle)"
         self.total_var.set(f"Somme des soldes d'ouverture : {total:,.2f}   {equilibre}")
+
+    def download_template(self):
+        path = filedialog.asksaveasfilename(
+            defaultextension=".xlsx", filetypes=[("Classeur Excel", "*.xlsx")],
+            initialfile="Modele_balance_N-1.xlsx", title="Enregistrer le modèle de balance d'ouverture",
+        )
+        if not path:
+            return
+        core.export_opening_balances_template(path)
+        messagebox.showinfo("Modèle créé", f"Modèle enregistré :\n{path}\n\n"
+                                            f"Remplissez-le (une ligne par compte), puis utilisez "
+                                            f"« Importer la balance N-1 ».")
 
     def export_xlsx(self):
         path = filedialog.asksaveasfilename(

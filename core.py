@@ -702,41 +702,135 @@ def export_opening_balances_xlsx(conn, path, exercice=None):
     return path
 
 
+def export_opening_balances_template(path):
+    """Génère un modèle .xlsx vierge (bons en-têtes + exemple équilibré) pour
+    préparer une balance d'ouverture (N-1) à importer."""
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Soldes ouverture"
+    header_font = Font(bold=True, color="FFFFFFFF")
+    header_fill = PatternFill("solid", fgColor="1F4E78")
+    for i, label in enumerate(["N° Compte", "Libellé", "Solde (débit +, crédit -)"], start=1):
+        c = ws.cell(row=1, column=i, value=label)
+        c.font = header_font
+        c.fill = header_fill
+    exemples = [
+        ("101000", "CAPITAL SOCIAL", -10000000),
+        ("521000", "BANQUES LOCALES", 8000000),
+        ("411000", "CLIENTS", 3000000),
+        ("401000", "FOURNISSEURS, DETTES EN COMPTE", -1000000),
+    ]
+    for r, (code, label, solde) in enumerate(exemples, start=2):
+        ws.cell(row=r, column=1, value=code)
+        ws.cell(row=r, column=2, value=label)
+        ws.cell(row=r, column=3, value=solde)
+    total_row = len(exemples) + 3
+    ws.cell(row=total_row, column=2, value="Total (doit être 0) :")
+    ws.cell(row=total_row, column=3, value=f"=SUM(C2:C{len(exemples) + 1})")
+    ws.cell(row=total_row, column=2).font = Font(bold=True)
+    ws.cell(row=total_row, column=3).font = Font(bold=True)
+    for i, w in enumerate([14, 40, 22], start=1):
+        ws.column_dimensions[chr(64 + i)].width = w
+    wb.save(path)
+    return path
+
+
 def import_opening_balances_xlsx(conn, path, exercice=None):
     """Importe une balance d'ouverture depuis un .xlsx et ÉCRASE les soldes
     d'ouverture existants pour cet exercice (les autres exercices ne sont
-    pas affectés)."""
+    pas affectés). Tolère plusieurs formats d'en-têtes : une colonne
+    « Solde » signée, OU deux colonnes séparées « Solde débit »/« Solde
+    crédit » (comme un export de Balance générale classique) — dans ce
+    second cas, le solde est recalculé comme Débit - Crédit."""
     import openpyxl
 
     exercice = exercice or get_current_exercice(conn)
     wb = openpyxl.load_workbook(path, data_only=True)
     ws = wb.active
-    header_cells = next(ws.iter_rows(min_row=1, max_row=1))
-    headers = [str(c.value).strip().lower() if c.value is not None else "" for c in header_cells]
-    aliases = {"code": ["n° compte", "code", "compte"],
-               "solde": ["solde (débit +, crédit -)", "solde", "solde débit", "montant"]}
+
+    code_aliases = ["n° compte", "n° de compte", "no compte", "numero compte", "num compte",
+                    "compte", "code", "code compte", "intitulé du compte", "n° compte "]
+    solde_aliases = ["solde (débit +, crédit -)", "solde", "solde d'ouverture", "montant",
+                     "solde débit", "solde debit", "cumul débit", "cumul debit", "débit", "debit"]
+    credit_aliases = ["solde crédit", "solde credit", "cumul crédit", "cumul credit", "crédit", "credit"]
+
+    def _norm(h):
+        return (str(h).strip().lower() if h is not None else "")
+
+    header_row_idx = None
     colmap = {}
-    for key, alist in aliases.items():
+    for row_idx in range(1, min(ws.max_row, 10) + 1):
+        headers = [_norm(c.value) for c in next(ws.iter_rows(min_row=row_idx, max_row=row_idx))]
+        candidate = {}
         for i, h in enumerate(headers):
-            if h in alist:
-                colmap[key] = i
+            if h in code_aliases and "code" not in candidate:
+                candidate["code"] = i
+            if h in solde_aliases and "solde" not in candidate:
+                candidate["solde"] = i
+            if h in credit_aliases and "credit" not in candidate:
+                candidate["credit"] = i
+        if "code" in candidate and ("solde" in candidate or "credit" in candidate):
+            header_row_idx = row_idx
+            colmap = candidate
+            break
+
+    if header_row_idx is None:
+        # Aucune ligne d'en-tête reconnue : on donne les en-têtes de la 1re ligne
+        # non vide pour aider au diagnostic.
+        first_headers = []
+        for row_idx in range(1, min(ws.max_row, 10) + 1):
+            vals = [c.value for c in next(ws.iter_rows(min_row=row_idx, max_row=row_idx)) if c.value not in (None, "")]
+            if vals:
+                first_headers = vals
                 break
-    if "code" not in colmap or "solde" not in colmap:
-        raise ValueError("Colonnes obligatoires introuvables (« N° Compte » et « Solde »).")
+        raise ValueError(
+            "Colonnes obligatoires introuvables (une colonne « N° Compte » et une colonne "
+            "« Solde » — ou « Solde débit » — sont nécessaires). En-têtes détectés dans le "
+            f"fichier : {first_headers if first_headers else 'aucun'}. Utilisez le bouton "
+            "« Exporter la balance N-1 » pour obtenir un fichier au bon format, ou renommez "
+            "vos colonnes en « N° Compte » et « Solde »."
+        )
 
     rows = []
     warnings = []
-    for r_idx, r in enumerate(ws.iter_rows(min_row=2), start=2):
+    for r_idx, r in enumerate(ws.iter_rows(min_row=header_row_idx + 1), start=header_row_idx + 1):
         values = [c.value for c in r]
         if all(v in (None, "") for v in values):
             continue
-        code = str(values[colmap["code"]] or "").strip()
+        code_idx = colmap["code"]
+        if code_idx >= len(values):
+            continue
+        code = str(values[code_idx] or "").strip()
+        if code.endswith(".0") and code.replace(".0", "").isdigit():
+            code = code[:-2]
         if not code:
             continue
-        try:
-            solde = float(values[colmap["solde"]] or 0)
-        except (TypeError, ValueError):
-            warnings.append(f"Ligne {r_idx} : solde invalide pour le compte {code}, ignoré.")
+
+        def _to_float(idx):
+            if idx is None or idx >= len(values) or values[idx] in (None, ""):
+                return 0.0
+            try:
+                return float(values[idx])
+            except (TypeError, ValueError):
+                return None
+
+        if "credit" in colmap:
+            debit = _to_float(colmap.get("solde"))
+            credit = _to_float(colmap.get("credit"))
+            if debit is None or credit is None:
+                warnings.append(f"Ligne {r_idx} : solde invalide pour le compte {code}, ignoré.")
+                continue
+            solde = (debit or 0) - (credit or 0)
+        else:
+            solde = _to_float(colmap.get("solde"))
+            if solde is None:
+                warnings.append(f"Ligne {r_idx} : solde invalide pour le compte {code}, ignoré.")
+                continue
+
+        if solde == 0:
             continue
         if not account_exists(conn, code):
             warnings.append(f"Ligne {r_idx} : compte « {code} » introuvable dans le Plan comptable — "
@@ -744,7 +838,7 @@ def import_opening_balances_xlsx(conn, path, exercice=None):
         rows.append((code, exercice, solde))
 
     if not rows:
-        raise ValueError("Le fichier ne contient aucune ligne valide.")
+        raise ValueError("Le fichier ne contient aucune ligne de solde non nul.")
 
     conn.execute("DELETE FROM opening_balances WHERE exercice = ?", (exercice,))
     conn.executemany("INSERT INTO opening_balances (code, exercice, solde) VALUES (?, ?, ?)", rows)
