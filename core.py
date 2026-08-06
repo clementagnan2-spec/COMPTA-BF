@@ -1768,6 +1768,28 @@ def delete_entry(conn, entry_id):
     conn.commit()
 
 
+def delete_entries_bulk(conn, entry_ids):
+    """Supprime plusieurs écritures en une seule transaction (un seul commit
+    à la fin, beaucoup plus rapide qu'un appel à delete_entry par ligne —
+    chaque commit implique une écriture synchrone sur disque). Retourne
+    (nb_supprimées, liste_erreurs)."""
+    deleted = 0
+    errors = []
+    for entry_id in entry_ids:
+        row = conn.execute("SELECT date FROM entries WHERE id = ?", (entry_id,)).fetchone()
+        if not row:
+            continue
+        try:
+            _check_exercice_editable(conn, row["date"])
+        except ValueError as exc:
+            errors.append(f"ID {entry_id} : {exc}")
+            continue
+        conn.execute("DELETE FROM entries WHERE id = ?", (entry_id,))
+        deleted += 1
+    conn.commit()
+    return deleted, errors
+
+
 def list_entries(conn, order_by="date", exercice=None):
     if exercice:
         date_from, date_to = f"{exercice}-01-01", f"{exercice}-12-31"

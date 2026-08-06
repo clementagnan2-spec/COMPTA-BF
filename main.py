@@ -211,6 +211,12 @@ class SaisieTab(ttk.Frame):
         if widget is not None:
             widget.event_generate("<Down>")
 
+    def _select_all(self, event=None):
+        """Ctrl+A dans le tableau : sélectionne toutes les lignes visibles
+        (pour une suppression groupée par exemple)."""
+        self.tree.selection_set(self.tree.get_children())
+        return "break"  # empêche le comportement par défaut (sélection de texte)
+
     def _build(self):
         form = ttk.LabelFrame(self, text="Écriture (partie double : compte débiteur ET compte créditeur obligatoires)")
         form.pack(fill="x", padx=8, pady=8)
@@ -337,6 +343,8 @@ class SaisieTab(ttk.Frame):
             self.tree.column(c, width=w, anchor="w")
         self.tree.pack(fill="both", expand=True, padx=8, pady=(0, 8))
         self.tree.bind("<<TreeviewSelect>>", self._on_select)
+        self.tree.bind("<Control-a>", self._select_all)
+        self.tree.bind("<Control-A>", self._select_all)
 
         totals = ttk.Frame(self)
         totals.pack(fill="x", padx=8, pady=(0, 8))
@@ -696,14 +704,7 @@ class SaisieTab(ttk.Frame):
         question = "Supprimer cette écriture ?" if n == 1 else f"Supprimer ces {n} écritures sélectionnées ?"
         if not messagebox.askyesno("Confirmer", question):
             return
-        errors = []
-        deleted = 0
-        for entry_id in ids:
-            try:
-                core.delete_entry(self.conn, entry_id)
-                deleted += 1
-            except ValueError as exc:
-                errors.append(f"ID {entry_id} : {exc}")
+        deleted, errors = core.delete_entries_bulk(self.conn, ids)
         self.clear_form()
         self.refresh()
         if errors:
