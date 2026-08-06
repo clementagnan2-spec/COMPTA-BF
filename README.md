@@ -1,5 +1,88 @@
 # Saisie Comptable SYSCOHADA — application Windows autonome
 
+## 🔄 RÉSUMÉ DE REPRISE (à lire en premier par toute nouvelle conversation Claude)
+
+**Contexte** : application de comptabilité SYSCOHADA développée sur
+plusieurs longues sessions avec Claude. Le code est **volumineux et déjà
+très abouti** (`core.py` ~180 Ko, `main.py` ~210 Ko) — avant toute
+modification, lis intégralement les fichiers concernés plutôt que de les
+régénérer ou de les réécrire à partir d'une supposition. Une réécriture
+depuis zéro **casserait** des dizaines de fonctionnalités déjà construites
+et testées.
+
+**Dépôt GitHub** : build automatique via GitHub Actions (le `.exe` ne peut
+pas être compilé directement par Claude, environnement Linux). Voir section
+suivante pour le processus de mise à jour.
+
+**Ce qui existe déjà (ne pas reconstruire, juste modifier/étendre)** :
+- Menu à 6 entrées : SAISIE, COMMERCE, PRODUCTION, ENGAGEMENTS-PROJETS,
+  ÉTATS ET RAPPORTS, PARAMÈTRES (navigation par menu déroulant, pas
+  d'onglets classiques — voir `class App` dans `main.py`)
+- **Saisie** : partie double forcée (Compte débiteur + Compte créditeur
+  obligatoires ensemble), validation des comptes/tiers en temps réel,
+  liste déroulante automatique au clic, sélection multiple + Ctrl+A +
+  suppression groupée (transaction unique, pas de commit par ligne)
+- **Exercices comptables** : multi-exercices avec clôture annuelle
+  (report des soldes + résultat net vers le compte 121000), verrouillage
+  des exercices clôturés
+- **Plan comptable** : 1591 comptes (import Sage), comptes racines
+  (1 chiffre, ou 40-49 pour la classe 4), rattachement obligatoire des
+  écritures 40xxx/41xxx à un fournisseur/client
+- **Commerce** : Ventes, Clients, Recouvrement, Facturation (avec sortie de
+  stock automatique et TVA), Stocks, Marges
+- **Engagements-projets** : Achats, Fournisseurs, Factures frs (entrée de
+  stock automatique + retenue à la source), Contrats
+- **Production** : Fabrication avec nomenclature (BOM), coût de production,
+  validation qui décrémente les matières et valorise le produit fini
+- **États et rapports** : Grand livre complet (tous comptes, bandes de
+  couleur), Balance (sous-totaux par classe), **Bilan « avec détails »**
+  (Actif gauche en Brut/Amortissements/Net, Passif droite en Montant,
+  détail compte par compte — immobilisations, stocks, créances, dettes,
+  trésorerie banque par banque —, toujours équilibré par construction,
+  exportable en .xlsx ; voir section « Bilan « avec détails » » plus bas),
+  Compte de résultat (SIG), TFT (méthode indirecte CAFG), Situation
+  financière (FR-BFR-TN), Liasse fiscale (export 92 pages, cohérente avec
+  tous les écrans ci-dessus)
+- **Paramètres** : gestion des 4 plans (comptable/analytique/budgétaire/
+  bailleurs) avec import/export xlsx (écrase à l'import)
+
+**Pièges déjà rencontrés (pour ne pas les refaire)** :
+- Les f-strings avec apostrophe échappée (`f"{'d\\'accord'}"`) plantent en
+  Python < 3.12 — toujours extraire la chaîne dans une variable avant.
+- Toujours utiliser `account_racine()`/préfixes (pas le code exact à 6
+  chiffres) pour agréger des comptes — le vrai plan comptable de
+  l'utilisateur est plein de sous-comptes détaillés (602101, 521120...).
+- Chaque `conn.commit()` coûte cher en boucle — grouper en une transaction
+  pour les opérations multiples.
+- Toujours tester avec `python3 -m py_compile` et un scénario réel
+  (`core.get_connection('t.db')` puis nettoyer) avant de livrer.
+- Vérifier la cohérence Balance ↔ Bilan ↔ TFT ↔ Situation financière ↔
+  Liasse fiscale : ils partagent tous `compute_balance()` **et, depuis la
+  correction de l'équilibre du Bilan, le même `compute_resultat_net_complet()`
+  pour le résultat net.**
+- **Ne jamais calculer un total de Bilan (résultat net, capitaux propres,
+  stocks...) à partir d'une liste de comptes codée en dur** (ex.
+  `COMPTES_CAPITAL = ["101","118","121"]`) : le vrai plan comptable de
+  l'utilisateur (1591 comptes Sage) contient forcément des comptes hors de
+  toute liste pré-définie, qui disparaîtraient alors silencieusement du
+  Total Actif/Passif et casseraient l'équilibre. Pour un TOTAL, toujours
+  sommer la classe entière (`_sum_class(balance, "1")` etc.) ; les listes de
+  comptes codées en dur ne sont acceptables que pour un DÉTAIL affiché à
+  titre indicatif, avec une ligne « Autres » qui absorbe le reliquat pour
+  que le détail somme exactement au vrai total.
+
+**Ce qui reste à construire/imparfait** : Contrats (module vide),
+Tableaux d'exécution budgétaire, Impôts, Déclarations sociales,
+Rapprochements bancaires (tous encore des placeholders) ; les lignes
+d'investissement/financement de la vraie feuille TFT officielle dans la
+Liasse fiscale (seules ZA/FA-FE sont mappées, positions FF+ à confirmer).
+
+**Les données réelles de l'utilisateur (`comptabilite.db`) ne sont PAS ici**
+— uniquement sur son PC Windows local
+(`%LOCALAPPDATA%\SaisieComptable\`). Ne jamais supposer leur contenu.
+
+---
+
 Application de bureau (Tkinter) qui reproduit les fonctions essentielles
 du classeur Excel : Saisie des écritures, Balance, Compte de résultat et
 Bilan, calculés automatiquement. Aucune installation d'Excel n'est requise :
@@ -420,6 +503,62 @@ et le Bilan reste équilibré, y compris après de nouveaux mouvements en 2025.
 Les 4 écrans de gestion des plans (Plan comptable, Plan analytique, Plan
 budgétaire, Plan bailleurs de fonds) ainsi que les **Exercices comptables**
 sont désormais regroupés dans le menu **PARAMÈTRES**.
+
+### Grand livre complet avec bandes de couleur (mise à jour majeure)
+
+L'onglet **Grand livre** affiche désormais **tous les comptes de
+l'exercice par défaut**, groupés par compte puis par classe, exactement
+comme un grand livre papier classique :
+- Bandeau **bleu** pour l'en-tête de chaque compte, et pour son
+  sous-total (« TOTAL COMPTE XXXXXX — Solde débiteur/créditeur »).
+- Bandeau **orange** pour le total de chaque classe.
+- La ligne « À-nouveaux au 01/01 » (solde d'ouverture) s'affiche si non
+  nulle, puis le détail chronologique des écritures avec solde cumulé.
+
+Un filtre optionnel (compte et/ou tiers) permet de se recentrer sur un
+compte précis si besoin — bouton « Réinitialiser » pour revenir à la vue
+complète. Testé sur le scénario exact de votre capture (emprunt WBI/Vista) :
+le solde cumulé calculé correspond au FCFA près (-14 595 375 000 puis
+-13 849 250 000, identiques à votre grand livre de référence).
+
+### Grand livre : corrigé (n'affichait rien tant qu'on n'avait pas tapé)
+
+**Cause** : le champ « N° Compte » n'avait aucune liste par défaut et ne
+s'ouvrait pas au clic (il fallait taper au clavier pour voir apparaître des
+résultats) — d'où l'impression que l'écran « n'affiche rien ». Corrigé,
+même comportement que dans Saisie : liste des 300 premiers comptes
+préchargée, clic = ouverture automatique de la liste déroulante, message
+d'aide affiché tant qu'aucun compte n'est choisi (et message clair si le
+compte tapé n'existe pas). Le calcul lui-même a été testé et fonctionne
+correctement.
+
+### Diagnostic de l'écart de Balance (analyse de votre fichier)
+
+**Comparaison faite entre votre Balance PDF (exercice 2024, autre logiciel)
+et notre export (exercice 2026)** : les **soldes de clôture** (colonnes
+Solde Débit/Crédit) correspondent **exactement** entre les deux systèmes
+là où c'est comparable (ex. TOTAL CLASSE 1 : 20 055 904 / 27 576 434 184
+identiques des deux côtés) — la formule de calcul du solde est donc
+correcte.
+
+L'écart que vous observez sur les **Cumul Débit/Crédit** vient d'un
+mélange de deux facteurs, pas d'un bug de calcul :
+1. **Ce ne sont pas les mêmes exercices** (PDF = 2024, export = 2026) : les
+   mouvements de la période ne peuvent pas être identiques entre deux
+   années différentes.
+2. **Des opérations semblent avoir été saisies comme solde d'ouverture au
+   lieu d'écritures de la période** (ex. le compte 162020 « EMPRUNT VISTA »
+   : votre solde d'ouverture 2026 est déjà de -15 000 000 000, alors que le
+   PDF 2024 montre ce même emprunt DÉCAISSÉ pendant l'année — crédité 15
+   milliards en cours d'exercice). Le solde final est identique dans les
+   deux cas, mais le détail des mouvements de la période diffère forcément
+   selon où l'opération a été enregistrée.
+
+L'indicateur d'écart ajouté sur la Balance (message précédent) devrait déjà
+vous signaler ce type de situation. Si un écart de **Cumul Débit/Crédit
+total** subsiste sur l'exercice 2026 lui-même (pas en comparaison avec
+2024), c'est probablement dû à un import massif d'écritures déséquilibré —
+dites-le-moi si c'est le cas et je regarderai les données précises.
 
 ### Balance : export ajouté + diagnostic du déséquilibre (correction)
 
@@ -886,3 +1025,65 @@ projet / par bailleur de fonds (feuille « Rapport d'exécution » du
 classeur), ni les comptes auxiliaires Fournisseurs/Clients détaillés.
 Dites-moi si vous voulez que je les ajoute — le moteur (`core.py`) est
 structuré pour que ce soit un ajout incrémental, pas une réécriture.
+
+### Bilan « avec détails » + correction de l'équilibre (mise à jour majeure)
+
+**Cause racine de l'ancien déséquilibre du Bilan identifiée et corrigée** :
+plusieurs calculs (résultat net dans `compute_bilan`, capitaux propres,
+clôture d'exercice) s'appuyaient sur des **listes de comptes codées en dur**
+(`COMPTES_PRODUITS_EXPL`, `COMPTES_CAPITAL`, etc.) qui ne couvrent qu'une
+partie du vrai plan comptable de l'utilisateur (1591 comptes importés de
+Sage). Tout compte hors de ces listes disparaissait purement et simplement
+du Total Actif ou du Total Passif, d'où l'écart constaté.
+
+**Correctif** : `compute_resultat_net_complet()` (nouveau, dans `core.py`)
+calcule désormais le résultat net de façon exhaustive à partir de
+**l'intégralité** des classes 6 (charges), 7 (produits) et 8 (HAO), sans
+aucune liste de comptes partielle. `compute_bilan()` utilise l'intégralité
+de la **classe 1** (au lieu de `COMPTES_CAPITAL`/`COMPTES_DETTES_FIN`...) et
+l'intégralité de la **classe 3** (au lieu des 4 comptes maîtres de stock) —
+chaque compte de la Balance est donc classé dans une case et une seule de
+l'Actif ou du Passif, ce qui **garantit mathématiquement Actif = Passif**
+(tant que la somme des soldes d'ouverture de l'exercice est nulle).
+`compute_liasse_resultat()` (Compte de résultat officiel, TFT, Situation
+financière, Liasse fiscale) est recalée sur cette même référence via une
+ligne de réconciliation (repliée dans « Autres produits »/« Autres
+charges ») — tous les états financiers partagent maintenant EXACTEMENT le
+même résultat net. `close_exercice()` (clôture annuelle) utilise aussi ce
+calcul exhaustif pour reporter le résultat sur le compte 121000.
+
+**Nouvel onglet Bilan, présenté « avec détails »** (calqué sur le rapport
+financier de référence fourni par l'utilisateur, pas sur les codes officiels
+DGI de la Liasse fiscale) : `compute_bilan_detaille()` —
+- **Actif** en colonnes Brut / Amortissements / Net : immobilisations par
+  catégorie (charges immobilisées, terrains, bâtiments, installations,
+  matériel, matériel de transport, avances sur immo, immobilisations
+  financières — répartition de l'amortissement proportionnelle au brut de
+  chaque catégorie, indicatif) ; stocks regroupés par préfixe à 2 chiffres
+  (31 à 39, plus de compte de stock oublié) ; créances **compte par compte**
+  (chaque client, chaque avance fournisseur, chaque compte 42 à 49 débiteur
+  affiché séparément — pas juste un total) ; trésorerie **banque par
+  banque**.
+- **Passif** en Montant : capitaux propres et ressources durables **compte
+  par compte** (capital, réserves, report à nouveau, emprunts... — classe 1
+  entière) puis Résultat net de l'exercice ; dettes circulantes **compte par
+  compte** (chaque fournisseur, et pour la classe 44 chaque compte distinct
+  — IS, IMF, BIC, TVA facturée, TVA due, retenues... apparaissent
+  automatiquement séparément dès lors qu'ils existent comme comptes distincts
+  dans le plan comptable réel, sans codage en dur) ; trésorerie créditrice
+  banque par banque.
+- **Exportable en .xlsx** (bouton « Exporter (.xlsx) », `export_bilan_detaille_xlsx()`),
+  dans une mise en page à deux colonnes proche du modèle papier fourni.
+
+Testé de bout en bout avec des comptes volontairement absents des anciennes
+listes codées en dur (105xxx, 163xxx, 380xxx stock, 84x/87x HAO...) : Bilan
+et Bilan détaillé strictement équilibrés (écart = 0), Compte de résultat/TFT/
+Situation financière cohérents avec ce même résultat net, clôture d'exercice
+fonctionnelle.
+
+**Point de vigilance non résolu** : la répartition Brut/Amortissements par
+catégorie d'immobilisation reste **proportionnelle** (indicatif, comme déjà
+signalé pour la Liasse fiscale) faute de connaître la correspondance exacte
+entre chaque compte d'immobilisation et son compte d'amortissement dédié
+dans le plan comptable réel de l'utilisateur — le Net par catégorie et le
+Total Net restent, eux, exacts.
