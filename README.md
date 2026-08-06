@@ -421,6 +421,31 @@ Les 4 écrans de gestion des plans (Plan comptable, Plan analytique, Plan
 budgétaire, Plan bailleurs de fonds) ainsi que les **Exercices comptables**
 sont désormais regroupés dans le menu **PARAMÈTRES**.
 
+### Balance : export ajouté + diagnostic du déséquilibre (correction)
+
+**Bouton d'export manquant** : l'onglet Balance n'avait effectivement pas
+de bouton d'export — corrigé, un bouton **« Exporter (.xlsx) »** génère
+maintenant un fichier avec les mêmes sous-totaux par classe et le total
+général que l'écran.
+
+**Sur la formule elle-même** : testée avec des données garanties
+équilibrées, elle est correcte (Cumul Débit = Cumul Crédit, Solde Débit =
+Solde Crédit à l'euro près). Le déséquilibre visible sur votre capture
+vient très probablement de **données important déséquilibrées** — deux
+causes possibles, maintenant détectées automatiquement :
+1. **Écart sur le Cumul Débit/Crédit** → une ou plusieurs écritures de la
+   période ne sont pas équilibrées. Cela ne peut arriver que via l'**import
+   massif d'écritures (.xlsx)**, qui n'imposait pas l'équilibre global du
+   fichier — **corrigé** : cet import affiche désormais un avertissement
+   explicite si le fichier importé n'est pas équilibré dans son ensemble
+   (testé et reproduit : Débit 5 000 ≠ Crédit 3 000 → avertissement déclenché).
+2. **Écart sur le Solde Débit/Crédit** → soldes d'ouverture incomplets
+   (déjà signalé dans le Bilan).
+
+L'onglet Balance affiche maintenant un **indicateur d'écart en bas du
+tableau** (vert si équilibré, rouge avec explication sinon) pour repérer
+ces situations immédiatement, sans avoir à comparer les totaux à la main.
+
 ### Ctrl+A pour tout sélectionner dans Saisie (nouveau)
 
 Dans le tableau de l'onglet Saisie, **Ctrl+A sélectionne désormais toutes

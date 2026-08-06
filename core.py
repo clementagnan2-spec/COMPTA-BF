@@ -1882,6 +1882,7 @@ def import_entries_from_xlsx(conn, path):
     valid_accounts = {r["code"] for r in conn.execute("SELECT code FROM accounts")}
     imported = 0
     warnings = []
+    total_debit = total_credit = 0.0
 
     def get(values, key):
         idx = colmap.get(key)
@@ -1938,6 +1939,18 @@ def import_entries_from_xlsx(conn, path):
         add_entry(conn, date_str, str(piece), str(journal), compte, str(tiers), str(libelle),
                   debit, credit, "", str(analytic_code), str(budget_code), str(donor_code), quantite)
         imported += 1
+        total_debit += debit
+        total_credit += credit
+
+    ecart = total_debit - total_credit
+    if abs(ecart) >= 1:
+        warnings.append(
+            f"⚠ ATTENTION : ce fichier n'est PAS équilibré dans son ensemble — Total Débit "
+            f"{total_debit:,.2f} ≠ Total Crédit {total_credit:,.2f} (écart de {ecart:,.2f}). "
+            f"Toutes les lignes ont été importées telles quelles, mais la Balance affichera un "
+            f"écart tant que ce déséquilibre n'est pas corrigé (complétez le fichier avec les "
+            f"lignes de contrepartie manquantes, ou ajoutez une écriture de régularisation)."
+        )
 
     return imported, warnings
 
@@ -2010,6 +2023,67 @@ def compute_balance_detaillee(conn, exercice=None):
             grand[k] += sous_total[k]
 
     return {"classes": result_classes, "grand_total": grand}
+
+
+def export_balance_xlsx(conn, path, exercice=None):
+    """Exporte la Balance générale (avec sous-totaux par classe et total
+    général) en .xlsx — mêmes données que l'onglet Balance."""
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill
+
+    exercice = exercice or get_current_exercice(conn)
+    data = compute_balance_detaillee(conn, exercice=exercice)
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Balance"
+    header_font = Font(bold=True, color="FFFFFFFF")
+    header_fill = PatternFill("solid", fgColor="1F4E78")
+    total_font = Font(bold=True)
+    total_fill = PatternFill("solid", fgColor="DCE6F1")
+    grand_font = Font(bold=True, color="FFFFFFFF")
+    grand_fill = PatternFill("solid", fgColor="1F4E78")
+
+    headers = ["N° Compte", "Libellé du compte", "Solde Ouverture", "Cumul Débit", "Cumul Crédit",
+               "Solde Débit", "Solde Crédit"]
+    ws.append([f"BALANCE GÉNÉRALE — Exercice {exercice}"])
+    ws["A1"].font = Font(bold=True, size=13)
+    ws.append([])
+    ws.append(headers)
+    for c in range(1, len(headers) + 1):
+        cell = ws.cell(row=3, column=c)
+        cell.font = header_font
+        cell.fill = header_fill
+
+    for c in data["classes"]:
+        for l in c["lignes"]:
+            ws.append([l["code"], l["label"], l["solde_ouverture"], l["cumul_debit"], l["cumul_credit"],
+                       l["solde_debit"] or None, l["solde_credit"] or None])
+        st = c["sous_total"]
+        ws.append(["", f"TOTAL CLASSE {c['classe']}", "", st["cumul_debit"], st["cumul_credit"],
+                   st["solde_debit"], st["solde_credit"]])
+        for col in range(1, len(headers) + 1):
+            cell = ws.cell(row=ws.max_row, column=col)
+            cell.font = total_font
+            cell.fill = total_fill
+
+    gt = data["grand_total"]
+    ws.append(["", "TOTAL BALANCE", "", gt["cumul_debit"], gt["cumul_credit"],
+               gt["solde_debit"], gt["solde_credit"]])
+    for col in range(1, len(headers) + 1):
+        cell = ws.cell(row=ws.max_row, column=col)
+        cell.font = grand_font
+        cell.fill = grand_fill
+
+    for col in range(3, len(headers) + 1):
+        for row in range(4, ws.max_row + 1):
+            ws.cell(row=row, column=col).number_format = "#,##0.00"
+
+    for i, w in enumerate([14, 40, 16, 16, 16, 16, 16], start=1):
+        ws.column_dimensions[chr(64 + i)].width = w
+    ws.freeze_panes = "A4"
+    wb.save(path)
+    return path
 
 
 def compute_tresorerie_detail(conn, exercice=None):

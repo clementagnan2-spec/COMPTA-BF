@@ -832,8 +832,23 @@ class BalanceTab(ttk.Frame):
         self.tree.tag_configure("classe_total", background="#DCE6F1", font=("Segoe UI", 9, "bold"))
         self.tree.tag_configure("grand_total", background="#1F4E78", foreground="white", font=("Segoe UI", 10, "bold"))
         self.tree.pack(fill="both", expand=True, padx=8, pady=8)
-        ttk.Button(self, text="Actualiser", command=self.refresh).pack(pady=(0, 8))
+        btn_bar = ttk.Frame(self)
+        btn_bar.pack(fill="x", pady=(0, 4))
+        ttk.Button(btn_bar, text="Actualiser", command=self.refresh).pack(side="left", padx=8)
+        ttk.Button(btn_bar, text="Exporter (.xlsx)", command=self.export_xlsx).pack(side="left", padx=2)
+        self.ecart_var = tk.StringVar()
+        ttk.Label(self, textvariable=self.ecart_var, font=("Segoe UI", 9, "bold")).pack(anchor="w", padx=8, pady=(0, 8))
         self.refresh()
+
+    def export_xlsx(self):
+        path = filedialog.asksaveasfilename(
+            defaultextension=".xlsx", filetypes=[("Classeur Excel", "*.xlsx")],
+            initialfile="Balance.xlsx", title="Exporter la Balance",
+        )
+        if not path:
+            return
+        core.export_balance_xlsx(self.conn, path)
+        messagebox.showinfo("Export terminé", f"Balance exportée :\n{path}")
 
     def refresh(self):
         for row in self.tree.get_children():
@@ -859,6 +874,20 @@ class BalanceTab(ttk.Frame):
             f"{gt['cumul_debit']:,.2f}", f"{gt['cumul_credit']:,.2f}",
             f"{gt['solde_debit']:,.2f}", f"{gt['solde_credit']:,.2f}",
         ))
+        ecart_cumul = gt["cumul_debit"] - gt["cumul_credit"]
+        ecart_solde = gt["solde_debit"] - gt["solde_credit"]
+        if abs(ecart_cumul) < 1 and abs(ecart_solde) < 1:
+            self.ecart_var.set("✓ Balance équilibrée (Cumul Débit = Cumul Crédit, Solde Débit = Solde Crédit).")
+        else:
+            msg = "⚠ Balance déséquilibrée — "
+            parts = []
+            if abs(ecart_cumul) >= 1:
+                parts.append(f"écart Cumul Débit/Crédit de {ecart_cumul:,.2f} (des écritures de la période "
+                              f"ne sont pas équilibrées — vérifiez un éventuel import massif d'écritures)")
+            if abs(ecart_solde) >= 1:
+                parts.append(f"écart Solde Débit/Crédit de {ecart_solde:,.2f} (soldes d'ouverture "
+                              f"incomplets — voir l'onglet Soldes d'ouverture)")
+            self.ecart_var.set(msg + " ; ".join(parts))
 
 
 class CompteResultatTab(ttk.Frame):
