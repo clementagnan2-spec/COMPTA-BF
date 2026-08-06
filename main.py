@@ -1122,16 +1122,10 @@ class GrandLivreTab(ttk.Frame):
         self.compte_combo.pack(side="left", padx=4)
         self.compte_combo.bind("<KeyRelease>", self._on_compte_keyrelease)
         self.compte_combo.bind("<<ComboboxSelected>>", lambda e: self.refresh())
-        self.compte_combo.bind("<Button-1>", self._open_dropdown)
-        self.compte_combo.bind("<Return>", lambda e: self.refresh())
-        self._refresh_compte_values()
         ttk.Label(bar, text="Tiers (optionnel) :").pack(side="left", padx=(12, 0))
         self.tiers_var = tk.StringVar()
         ttk.Entry(bar, textvariable=self.tiers_var, width=18).pack(side="left", padx=4)
         ttk.Button(bar, text="Afficher", command=self.refresh).pack(side="left", padx=12)
-        ttk.Label(bar, text=(
-            "Cliquez dans le champ N° Compte pour dérouler la liste, ou tapez un numéro/mot du libellé."
-        ), foreground="#595959").pack(side="left", padx=8)
         self.label_var = tk.StringVar()
         ttk.Label(bar, textvariable=self.label_var, foreground="#1F4E78").pack(side="left", padx=8)
 
@@ -1150,15 +1144,6 @@ class GrandLivreTab(ttk.Frame):
             return raw.split(" — ", 1)[0].strip()
         return raw
 
-    def _open_dropdown(self, event=None):
-        widget = event.widget if event else None
-        if widget is not None:
-            widget.event_generate("<Down>")
-
-    def _refresh_compte_values(self):
-        accounts = core.search_accounts(self.conn, "", limit=300)
-        self.compte_combo["values"] = [f"{a['code']} — {a['label']}" for a in accounts]
-
     def _on_compte_keyrelease(self, event=None):
         if event is not None and event.keysym in ("Up", "Down", "Return", "Tab"):
             return
@@ -1168,15 +1153,11 @@ class GrandLivreTab(ttk.Frame):
             self.compte_combo["values"] = [f"{m['code']} — {m['label']}" for m in matches]
 
     def refresh(self):
-        self._refresh_compte_values()
         for row in self.tree.get_children():
             self.tree.delete(row)
         compte = self._extract_compte_code()
         if not compte:
-            self.label_var.set("Choisissez un compte ci-dessus, puis cliquez « Afficher ».")
-            return
-        if not core.account_exists(self.conn, compte):
-            self.label_var.set(f"Compte « {compte} » introuvable dans le Plan comptable.")
+            self.label_var.set("")
             return
         self.label_var.set(core.get_account_label(self.conn, compte))
         for r in core.compute_grand_livre(self.conn, compte, self.tiers_var.get().strip() or None):

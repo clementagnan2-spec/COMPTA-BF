@@ -421,45 +421,6 @@ Les 4 écrans de gestion des plans (Plan comptable, Plan analytique, Plan
 budgétaire, Plan bailleurs de fonds) ainsi que les **Exercices comptables**
 sont désormais regroupés dans le menu **PARAMÈTRES**.
 
-### Grand livre : corrigé (n'affichait rien tant qu'on n'avait pas tapé)
-
-**Cause** : le champ « N° Compte » n'avait aucune liste par défaut et ne
-s'ouvrait pas au clic (il fallait taper au clavier pour voir apparaître des
-résultats) — d'où l'impression que l'écran « n'affiche rien ». Corrigé,
-même comportement que dans Saisie : liste des 300 premiers comptes
-préchargée, clic = ouverture automatique de la liste déroulante, message
-d'aide affiché tant qu'aucun compte n'est choisi (et message clair si le
-compte tapé n'existe pas). Le calcul lui-même a été testé et fonctionne
-correctement.
-
-### Diagnostic de l'écart de Balance (analyse de votre fichier)
-
-**Comparaison faite entre votre Balance PDF (exercice 2024, autre logiciel)
-et notre export (exercice 2026)** : les **soldes de clôture** (colonnes
-Solde Débit/Crédit) correspondent **exactement** entre les deux systèmes
-là où c'est comparable (ex. TOTAL CLASSE 1 : 20 055 904 / 27 576 434 184
-identiques des deux côtés) — la formule de calcul du solde est donc
-correcte.
-
-L'écart que vous observez sur les **Cumul Débit/Crédit** vient d'un
-mélange de deux facteurs, pas d'un bug de calcul :
-1. **Ce ne sont pas les mêmes exercices** (PDF = 2024, export = 2026) : les
-   mouvements de la période ne peuvent pas être identiques entre deux
-   années différentes.
-2. **Des opérations semblent avoir été saisies comme solde d'ouverture au
-   lieu d'écritures de la période** (ex. le compte 162020 « EMPRUNT VISTA »
-   : votre solde d'ouverture 2026 est déjà de -15 000 000 000, alors que le
-   PDF 2024 montre ce même emprunt DÉCAISSÉ pendant l'année — crédité 15
-   milliards en cours d'exercice). Le solde final est identique dans les
-   deux cas, mais le détail des mouvements de la période diffère forcément
-   selon où l'opération a été enregistrée.
-
-L'indicateur d'écart ajouté sur la Balance (message précédent) devrait déjà
-vous signaler ce type de situation. Si un écart de **Cumul Débit/Crédit
-total** subsiste sur l'exercice 2026 lui-même (pas en comparaison avec
-2024), c'est probablement dû à un import massif d'écritures déséquilibré —
-dites-le-moi si c'est le cas et je regarderai les données précises.
-
 ### Balance : export ajouté + diagnostic du déséquilibre (correction)
 
 **Bouton d'export manquant** : l'onglet Balance n'avait effectivement pas
