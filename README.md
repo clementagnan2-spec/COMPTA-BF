@@ -421,6 +421,16 @@ Les 4 écrans de gestion des plans (Plan comptable, Plan analytique, Plan
 budgétaire, Plan bailleurs de fonds) ainsi que les **Exercices comptables**
 sont désormais regroupés dans le menu **PARAMÈTRES**.
 
+### Suppression groupée dans Saisie (nouveau)
+
+Le tableau de l'onglet Saisie accepte désormais la **sélection multiple**
+(Ctrl+clic ou Maj+clic, comme dans l'Explorateur Windows). Le bouton
+**« Supprimer (sélection multiple possible) »** supprime alors toutes les
+lignes sélectionnées d'un coup, avec une seule confirmation — un exercice
+clôturé bloque toujours la suppression des lignes qu'il concerne (message
+détaillé si certaines lignes n'ont pas pu être supprimées). Testé :
+suppression groupée de 4 écritures en un clic.
+
 ### Modèle téléchargeable pour la balance N-1 (nouveau)
 
 Ajout d'un bouton **« Télécharger un modèle (.xlsx) »** dans l'onglet

@@ -309,7 +309,7 @@ class SaisieTab(ttk.Frame):
         btns.grid(row=11, column=0, columnspan=3, sticky="w", pady=6, padx=4)
         ttk.Button(btns, text="Ajouter (écriture équilibrée)", command=self.add_entry).pack(side="left", padx=2)
         ttk.Button(btns, text="Enregistrer modification", command=self.update_entry).pack(side="left", padx=2)
-        ttk.Button(btns, text="Supprimer", command=self.delete_entry).pack(side="left", padx=2)
+        ttk.Button(btns, text="Supprimer (sélection multiple possible)", command=self.delete_entry).pack(side="left", padx=2)
         ttk.Button(btns, text="Effacer le formulaire", command=self.clear_form).pack(side="left", padx=2)
 
         import_bar = ttk.Frame(self)
@@ -327,7 +327,7 @@ class SaisieTab(ttk.Frame):
         cols = ("id", "date", "piece", "journal", "compte", "libelle_compte",
                 "tiers", "libelle", "debit", "credit", "quantite", "analytique", "budget", "bailleur",
                 "fournisseur", "client")
-        self.tree = ttk.Treeview(self, columns=cols, show="headings", height=15)
+        self.tree = ttk.Treeview(self, columns=cols, show="headings", height=15, selectmode="extended")
         headers = ["ID", "Date", "Pièce", "Journal", "Compte", "Libellé du compte",
                    "Tiers", "Libellé écriture", "Débit", "Crédit", "Qté", "Analytique", "Budget", "Bailleur",
                    "Fournisseur", "Client"]
@@ -686,17 +686,32 @@ class SaisieTab(ttk.Frame):
         self.refresh()
 
     def delete_entry(self):
-        if self.selected_id is None:
-            messagebox.showinfo("Info", "Sélectionnez d'abord une ligne dans le tableau.")
+        sel = self.tree.selection()
+        if not sel:
+            messagebox.showinfo("Info", "Sélectionnez d'abord une ou plusieurs lignes dans le tableau "
+                                         "(Ctrl+clic ou Maj+clic pour en sélectionner plusieurs).")
             return
-        if messagebox.askyesno("Confirmer", "Supprimer cette écriture ?"):
+        ids = [int(self.tree.item(item, "values")[0]) for item in sel]
+        n = len(ids)
+        question = "Supprimer cette écriture ?" if n == 1 else f"Supprimer ces {n} écritures sélectionnées ?"
+        if not messagebox.askyesno("Confirmer", question):
+            return
+        errors = []
+        deleted = 0
+        for entry_id in ids:
             try:
-                core.delete_entry(self.conn, self.selected_id)
+                core.delete_entry(self.conn, entry_id)
+                deleted += 1
             except ValueError as exc:
-                messagebox.showerror("Erreur", str(exc))
-                return
-            self.clear_form()
-            self.refresh()
+                errors.append(f"ID {entry_id} : {exc}")
+        self.clear_form()
+        self.refresh()
+        if errors:
+            msg = f"{deleted} écriture(s) supprimée(s) sur {n}."
+            msg += "\n\nNon supprimées :\n" + "\n".join(errors[:20])
+            messagebox.showwarning("Suppression partielle", msg)
+        elif n > 1:
+            messagebox.showinfo("Suppression terminée", f"{deleted} écriture(s) supprimée(s).")
 
     def clear_form(self):
         self.selected_id = None
