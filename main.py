@@ -7,6 +7,7 @@ choisi. Les données sont stockées localement dans un fichier SQLite
 (%LOCALAPPDATA%\\SaisieComptable\\comptabilite.db sous Windows).
 """
 import tkinter as tk
+import os
 from tkinter import ttk, messagebox, filedialog, simpledialog
 from datetime import date, datetime
 
@@ -66,6 +67,9 @@ class App(tk.Tk):
         register("exercices", ExercicesTab, self)
         register("plan_comptable", PlanComptableTab)
         register("plan_analytique", PlanAnalytiqueTab)
+        register("taux_tva", TauxTVATab)
+        register("taux_retenue", TauxRetenueTab)
+        register("admin_factures", AdminFacturesTab)
         register("plan_budgetaire", PlanBudgetaireTab)
         register("plan_bailleur", PlanBailleurTab)
         register("stocks", StocksTab)
@@ -169,6 +173,11 @@ class App(tk.Tk):
             ("Plan analytique", "plan_analytique"),
             ("Plan budgétaire", "plan_budgetaire"),
             ("Plan bailleurs de fonds", "plan_bailleur"),
+        ])
+        add_top_menu("ADMIN", [
+            ("Taux de TVA", "taux_tva"),
+            ("Taux de retenue à la source", "taux_retenue"),
+            ("Modification des factures", "admin_factures"),
         ])
         self.config(menu=menubar)
 
@@ -3617,6 +3626,7 @@ class FacturationTab(ttk.Frame):
         self.corriger_btn = ttk.Button(top, text="Corriger cette facture (erreur sur les chiffres)",
                                         command=self.corriger_facture)
         self.corriger_btn.pack(side="left", padx=2)
+        ttk.Button(top, text="Imprimer la facture", command=self.imprimer_facture).pack(side="left", padx=2)
         self.statut_var = tk.StringVar()
         ttk.Label(top, textvariable=self.statut_var, font=("Segoe UI", 10, "bold")).pack(side="left", padx=16)
 
@@ -3643,6 +3653,12 @@ class FacturationTab(ttk.Frame):
         ttk.Label(info, text="TVA % (compte 44) :").grid(row=0, column=6, sticky="w", padx=(12, 4))
         self.tva_var = tk.StringVar(value=str(core.get_setting(conn, "tva_taux_defaut", core.TVA_TAUX_DEFAUT)))
         ttk.Entry(info, textvariable=self.tva_var, width=6).grid(row=0, column=7, padx=4)
+        ttk.Label(info, text="Préréglage (ADMIN) :").grid(row=1, column=6, sticky="w", padx=(12, 4), pady=(4, 0))
+        self.tva_preset_var = tk.StringVar()
+        self.tva_preset_combo = ttk.Combobox(info, textvariable=self.tva_preset_var, width=18, state="readonly")
+        self.tva_preset_combo.grid(row=1, column=7, padx=4, pady=(4, 0))
+        self.tva_preset_combo.bind("<<ComboboxSelected>>", self._on_tva_preset_selected)
+        self._refresh_tva_presets()
 
         # ---- Lignes ----
         form = ttk.LabelFrame(self, text="Ajouter une ligne (produit/service vendu — compte 70x)")
@@ -3930,9 +3946,36 @@ class FacturationTab(ttk.Frame):
                              "cliquez sur « Valider et envoyer en Saisie ».")
         self.refresh_factures_list()
 
+    def _refresh_tva_presets(self):
+        presets = core.list_taux_tva(self.conn)
+        self.tva_preset_combo["values"] = [f"{p['label']} ({p['montant']:g}%)" for p in presets]
+        self._tva_presets = presets
+
+    def _on_tva_preset_selected(self, event=None):
+        idx = self.tva_preset_combo.current()
+        if idx is not None and 0 <= idx < len(getattr(self, "_tva_presets", [])):
+            self.tva_var.set(str(self._tva_presets[idx]["montant"]))
+
+    def imprimer_facture(self):
+        """Génère la facture en HTML imprimable (bouton « Imprimer » intégré,
+        ou Ctrl+P depuis le navigateur qui s'ouvre) et l'ouvre directement."""
+        if not self.current_facture_id:
+            messagebox.showinfo("Info", "Sélectionnez d'abord une facture.")
+            return
+        import tempfile
+        import webbrowser
+        path = os.path.join(tempfile.gettempdir(), f"facture_vente_{self.current_facture_id}.html")
+        try:
+            core.export_facture_vente_html(self.conn, self.current_facture_id, path)
+        except ValueError as exc:
+            messagebox.showerror("Erreur", str(exc))
+            return
+        webbrowser.open(f"file://{path}")
+
     def refresh(self):
         self._refresh_client_values()
         self._refresh_ligne_compte_values()
+        self._refresh_tva_presets()
         self.refresh_factures_list()
 
 
@@ -4105,6 +4148,10 @@ class FacturesFrsTab(ttk.Frame):
         self.facture_combo.bind("<<ComboboxSelected>>", self._on_facture_selected)
         ttk.Button(top, text="Nouvelle facture", command=self.new_facture).pack(side="left", padx=8)
         ttk.Button(top, text="Supprimer cette facture", command=self.delete_facture).pack(side="left", padx=2)
+        self.corriger_btn = ttk.Button(top, text="Corriger cette facture (erreur sur les chiffres)",
+                                        command=self.corriger_facture)
+        self.corriger_btn.pack(side="left", padx=2)
+        ttk.Button(top, text="Imprimer la facture", command=self.imprimer_facture).pack(side="left", padx=2)
         self.statut_var = tk.StringVar()
         ttk.Label(top, textvariable=self.statut_var, font=("Segoe UI", 10, "bold")).pack(side="left", padx=16)
 
@@ -4138,6 +4185,12 @@ class FacturesFrsTab(ttk.Frame):
         self.retenue_compte_combo.grid(row=1, column=3, columnspan=2, sticky="w", padx=4, pady=(6, 0))
         self.retenue_compte_combo.bind("<KeyRelease>", self._on_retenue_compte_keyrelease)
         self._refresh_retenue_compte_values()
+        ttk.Label(info, text="Préréglage (ADMIN) :").grid(row=2, column=2, sticky="w", padx=(12, 4), pady=(4, 0))
+        self.retenue_preset_var = tk.StringVar()
+        self.retenue_preset_combo = ttk.Combobox(info, textvariable=self.retenue_preset_var, width=22, state="readonly")
+        self.retenue_preset_combo.grid(row=2, column=3, columnspan=2, sticky="w", padx=4, pady=(4, 0))
+        self.retenue_preset_combo.bind("<<ComboboxSelected>>", self._on_retenue_preset_selected)
+        self._refresh_retenue_presets()
 
         form = ttk.LabelFrame(self, text="Ajouter une ligne (produit/service acheté — compte 6x)")
         form.pack(fill="x", padx=12, pady=6)
@@ -4265,11 +4318,13 @@ class FacturesFrsTab(ttk.Frame):
         if not self.current_facture_id:
             self.statut_var.set("Aucune facture — créez-en une nouvelle.")
             self.totals_var.set("")
+            self.corriger_btn.configure(state="disabled")
             return
         f = core.get_facture_achat(self.conn, self.current_facture_id)
         if not f:
             self.current_facture_id = None
             self.statut_var.set("")
+            self.corriger_btn.configure(state="disabled")
             return
         self.numero_var.set(f["numero"])
         self.date_var.set(core.to_display_date(f["date_facture"]))
@@ -4282,6 +4337,7 @@ class FacturesFrsTab(ttk.Frame):
         self.pied_text.insert("1.0", f["pied_page"] or "")
         statut_label = "VALIDÉE (écritures envoyées en Saisie)" if f["statut"] == "validee" else "Brouillon"
         self.statut_var.set(f"Statut : {statut_label}")
+        self.corriger_btn.configure(state="normal" if f["statut"] == "validee" else "disabled")
 
         lignes = core.list_lignes_facture_achat(self.conn, self.current_facture_id)
         for l in lignes:
@@ -4407,10 +4463,63 @@ class FacturesFrsTab(ttk.Frame):
             self.current_facture_id = None
             self.refresh_factures_list()
 
+    def corriger_facture(self):
+        """Repasse une facture d'achat déjà validée en brouillon modifiable,
+        en supprimant les écritures comptables qu'elle avait générées — pour
+        corriger une erreur sur les chiffres, puis revalider ensuite."""
+        if not self.current_facture_id:
+            return
+        if not messagebox.askyesno(
+            "Corriger cette facture",
+            "Cette facture est déjà validée : ses écritures comptables (débit achats, "
+            "crédit fournisseur, retenue à la source, entrée de stock) vont être RETIRÉES "
+            "de la Saisie et la facture repassera en brouillon modifiable.\n\n"
+            "Vous pourrez alors corriger les chiffres puis la revalider.\n\n"
+            "Continuer ?"
+        ):
+            return
+        try:
+            core.devalider_facture_achat(self.conn, self.current_facture_id)
+        except ValueError as exc:
+            messagebox.showerror("Erreur", str(exc))
+            return
+        messagebox.showinfo("Facture repassée en brouillon",
+                             "La facture est de nouveau modifiable. Corrigez les chiffres puis "
+                             "cliquez sur « Valider et envoyer en Saisie ».")
+        self.refresh_factures_list()
+
+    def _refresh_retenue_presets(self):
+        presets = core.list_taux_retenue(self.conn)
+        self.retenue_preset_combo["values"] = [f"{p['label']} ({p['montant']:g}%)" for p in presets]
+        self._retenue_presets = presets
+
+    def _on_retenue_preset_selected(self, event=None):
+        idx = self.retenue_preset_combo.current()
+        if idx is not None and 0 <= idx < len(getattr(self, "_retenue_presets", [])):
+            self.retenue_taux_var.set(str(self._retenue_presets[idx]["montant"]))
+
+    def imprimer_facture(self):
+        """Génère la facture d'achat en HTML imprimable (bouton « Imprimer »
+        intégré, ou Ctrl+P depuis le navigateur qui s'ouvre) et l'ouvre
+        directement."""
+        if not self.current_facture_id:
+            messagebox.showinfo("Info", "Sélectionnez d'abord une facture.")
+            return
+        import tempfile
+        import webbrowser
+        path = os.path.join(tempfile.gettempdir(), f"facture_achat_{self.current_facture_id}.html")
+        try:
+            core.export_facture_achat_html(self.conn, self.current_facture_id, path)
+        except ValueError as exc:
+            messagebox.showerror("Erreur", str(exc))
+            return
+        webbrowser.open(f"file://{path}")
+
     def refresh(self):
         self._refresh_fournisseur_values()
         self._refresh_ligne_compte_values()
         self._refresh_retenue_compte_values()
+        self._refresh_retenue_presets()
         self.refresh_factures_list()
 
 
@@ -4795,10 +4904,11 @@ class PlanComptableTab(ttk.Frame):
 
 
 class _SimplePlanTab(ttk.Frame):
-    """Base pour les plans Code + Libellé (analytique, bailleurs)."""
+    """Base pour les plans Code + Libellé (analytique, bailleurs, taux)."""
     TITLE = ""
     CODE_LABEL = "Code"
     HAS_UNITE = False  # PlanAnalytiqueTab l'active pour gérer L / Kw / H...
+    HAS_TAUX = False    # TauxTVATab/TauxRetenueTab l'activent pour gérer un taux (%)
 
     def list_fn(self, conn):
         raise NotImplementedError
@@ -4840,12 +4950,19 @@ class _SimplePlanTab(ttk.Frame):
             self.unite_var = tk.StringVar()
             ttk.Entry(form, textvariable=self.unite_var, width=10).grid(row=0, column=5, padx=6)
             next_col = 6
+        if self.HAS_TAUX:
+            ttk.Label(form, text="Taux (%) :").grid(row=0, column=4, sticky="w", padx=(16, 0))
+            self.taux_var = tk.StringVar()
+            ttk.Entry(form, textvariable=self.taux_var, width=10).grid(row=0, column=5, padx=6)
+            next_col = 6
         ttk.Button(form, text="Créer / Modifier", command=self.save).grid(row=0, column=next_col, padx=6)
         ttk.Button(form, text="Supprimer", command=self.delete).grid(row=0, column=next_col + 1, padx=6)
 
-        cols = ("code", "label", "unite") if self.HAS_UNITE else ("code", "label")
-        headers = [self.CODE_LABEL, "Libellé", "Unité"] if self.HAS_UNITE else [self.CODE_LABEL, "Libellé"]
-        widths = [140, 460, 80] if self.HAS_UNITE else [140, 500]
+        cols = ("code", "label", "unite") if self.HAS_UNITE else (
+            ("code", "label", "taux") if self.HAS_TAUX else ("code", "label"))
+        headers = ([self.CODE_LABEL, "Libellé", "Unité"] if self.HAS_UNITE else
+                   ([self.CODE_LABEL, "Libellé", "Taux (%)"] if self.HAS_TAUX else [self.CODE_LABEL, "Libellé"]))
+        widths = [140, 460, 80] if self.HAS_UNITE else ([140, 460, 90] if self.HAS_TAUX else [140, 500])
         self.tree = ttk.Treeview(self, columns=cols, show="headings")
         for c, h, w in zip(cols, headers, widths):
             self.tree.heading(c, text=h)
@@ -4863,6 +4980,8 @@ class _SimplePlanTab(ttk.Frame):
         self.label_var.set(values[1])
         if self.HAS_UNITE:
             self.unite_var.set(values[2] if len(values) > 2 else "")
+        if self.HAS_TAUX:
+            self.taux_var.set(values[2] if len(values) > 2 else "")
 
     def save(self):
         code = self.code_var.get().strip()
@@ -4872,6 +4991,13 @@ class _SimplePlanTab(ttk.Frame):
             return
         if self.HAS_UNITE:
             self.add_fn(self.conn, code, label, unite=self.unite_var.get().strip() or None)
+        elif self.HAS_TAUX:
+            try:
+                taux = float(self.taux_var.get().strip() or 0)
+            except ValueError:
+                messagebox.showerror("Erreur", "Le taux doit être un nombre.")
+                return
+            self.add_fn(self.conn, code, label, montant=taux)
         else:
             self.add_fn(self.conn, code, label)
         self.refresh()
@@ -4887,6 +5013,8 @@ class _SimplePlanTab(ttk.Frame):
             self.label_var.set("")
             if self.HAS_UNITE:
                 self.unite_var.set("")
+            if self.HAS_TAUX:
+                self.taux_var.set("")
             self.refresh()
 
     def refresh(self):
@@ -4895,6 +5023,8 @@ class _SimplePlanTab(ttk.Frame):
         for item in self.list_fn(self.conn):
             if self.HAS_UNITE:
                 self.tree.insert("", "end", values=(item["code"], item["label"], item.get("unite") or ""))
+            elif self.HAS_TAUX:
+                self.tree.insert("", "end", values=(item["code"], item["label"], item.get("montant") or 0))
             else:
                 self.tree.insert("", "end", values=(item["code"], item["label"]))
 
@@ -4967,6 +5097,133 @@ class PlanBailleurTab(_SimplePlanTab):
 
     def import_fn(self, conn, path):
         return core.import_donor_codes_xlsx(conn, path)
+
+
+class TauxTVATab(_SimplePlanTab):
+    """Taux de TVA paramétrables (menu ADMIN) — utilisés en préréglage dans
+    l'onglet Facturation (COMMERCE), à la place d'un taux tapé à la main."""
+    TITLE = "TAUX DE TVA"
+    CODE_LABEL = "Code"
+    HAS_TAUX = True
+
+    def list_fn(self, conn):
+        return core.list_taux_tva(conn)
+
+    def add_fn(self, conn, code, label, montant=0):
+        core.add_taux_tva(conn, code, label, montant=montant)
+
+    def delete_fn(self, conn, code):
+        core.delete_taux_tva(conn, code)
+
+    def export_fn(self, conn, path):
+        core.export_taux_tva_xlsx(conn, path)
+
+    def import_fn(self, conn, path):
+        return core.import_taux_tva_xlsx(conn, path)
+
+
+class TauxRetenueTab(_SimplePlanTab):
+    """Taux de retenue à la source paramétrables (menu ADMIN) — utilisés en
+    préréglage dans l'onglet Factures frs (ENGAGEMENTS-PROJETS), en plus du
+    choix du compte de retenue (classe 44)."""
+    TITLE = "TAUX DE RETENUE À LA SOURCE"
+    CODE_LABEL = "Code"
+    HAS_TAUX = True
+
+    def list_fn(self, conn):
+        return core.list_taux_retenue(conn)
+
+    def add_fn(self, conn, code, label, montant=0):
+        core.add_taux_retenue(conn, code, label, montant=montant)
+
+    def delete_fn(self, conn, code):
+        core.delete_taux_retenue(conn, code)
+
+    def export_fn(self, conn, path):
+        core.export_taux_retenue_xlsx(conn, path)
+
+    def import_fn(self, conn, path):
+        return core.import_taux_retenue_xlsx(conn, path)
+
+
+class AdminFacturesTab(ttk.Frame):
+    """Vue consolidée (menu ADMIN) de toutes les factures VALIDÉES — vente
+    et achat — avec la possibilité de les repasser en brouillon modifiable
+    en cas d'erreur sur les chiffres (dévalidation : retire les écritures
+    comptables générées, sans rien supprimer d'autre). Complète, sans le
+    remplacer, le bouton de correction déjà présent dans chaque onglet de
+    facturation."""
+
+    def __init__(self, parent, conn):
+        super().__init__(parent)
+        self.conn = conn
+        ttk.Label(self, text="ADMIN — MODIFICATION DES FACTURES", font=("Segoe UI", 14, "bold")).pack(
+            anchor="w", padx=16, pady=(16, 4))
+        ttk.Label(self, text=(
+            "Liste de toutes les factures déjà validées (vente et achat). Sélectionnez-en une et cliquez sur "
+            "« Dévalider » pour la repasser en brouillon modifiable : ses écritures comptables générées sont "
+            "retirées de la Saisie, puis vous pouvez corriger les chiffres dans l'onglet Facturation ou "
+            "Factures frs et la revalider."
+        ), foreground="#595959", wraplength=1100).pack(anchor="w", padx=16, pady=(0, 8))
+
+        btn_bar = ttk.Frame(self)
+        btn_bar.pack(fill="x", padx=16, pady=4)
+        ttk.Button(btn_bar, text="Actualiser", command=self.refresh).pack(side="left")
+        ttk.Button(btn_bar, text="Dévalider la facture sélectionnée", command=self.devalider).pack(
+            side="left", padx=8)
+
+        cols = ("type", "numero", "date", "tiers", "statut")
+        self.tree = ttk.Treeview(self, columns=cols, show="headings", height=20)
+        headers = ["Type", "N° Pièce", "Date", "Client / Fournisseur", "Statut"]
+        widths = [90, 140, 100, 320, 100]
+        for c, h, w in zip(cols, headers, widths):
+            self.tree.heading(c, text=h)
+            self.tree.column(c, width=w, anchor="w")
+        self.tree.pack(fill="both", expand=True, padx=16, pady=8)
+        self._by_iid = {}
+        self.refresh()
+
+    def refresh(self):
+        for row in self.tree.get_children():
+            self.tree.delete(row)
+        self._by_iid = {}
+        for f in core.list_factures_vente(self.conn):
+            if f["statut"] != "validee":
+                continue
+            iid = self.tree.insert("", "end", values=(
+                "Vente", f["numero"], core.to_display_date(f["date_facture"]), f["raison_sociale"], "Validée"))
+            self._by_iid[iid] = ("vente", f["id"])
+        for f in core.list_factures_achat(self.conn):
+            if f["statut"] != "validee":
+                continue
+            iid = self.tree.insert("", "end", values=(
+                "Achat", f["numero"], core.to_display_date(f["date_facture"]), f["raison_sociale"], "Validée"))
+            self._by_iid[iid] = ("achat", f["id"])
+
+    def devalider(self):
+        sel = self.tree.selection()
+        if not sel:
+            messagebox.showinfo("Info", "Sélectionnez d'abord une facture dans le tableau.")
+            return
+        type_facture, facture_id = self._by_iid[sel[0]]
+        if not messagebox.askyesno(
+            "Dévalider cette facture",
+            "Cette facture va être repassée en brouillon modifiable : ses écritures comptables générées "
+            "vont être RETIRÉES de la Saisie.\n\nVous pourrez ensuite la corriger dans l'onglet correspondant "
+            "puis la revalider.\n\nContinuer ?"
+        ):
+            return
+        try:
+            if type_facture == "vente":
+                core.devalider_facture_vente(self.conn, facture_id)
+            else:
+                core.devalider_facture_achat(self.conn, facture_id)
+        except ValueError as exc:
+            messagebox.showerror("Erreur", str(exc))
+            return
+        messagebox.showinfo("Facture repassée en brouillon",
+                             "La facture est de nouveau modifiable dans son onglet d'origine.")
+        self.refresh()
 
 
 class PlanBudgetaireTab(ttk.Frame):

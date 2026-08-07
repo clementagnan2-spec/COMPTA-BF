@@ -1550,3 +1550,48 @@ CLI-0009/CLI-0006, réglée par une banque, sortie de 10 unités de CLINKER) :
 le stock diminue bien de la bonne quantité, au coût unitaire moyen réel
 (pas au prix de vente), Bilan équilibré. Non-régression vérifiée sur le
 mode entrée (achat) et le mode ligne par ligne classique.
+
+### Nouveau menu ADMIN : taux paramétrables, correction consolidée, impression des factures
+
+**Demande** : unifier Facturation/Factures frs, bouton « Imprimer la
+facture », menu ADMIN pour la modification des factures, TVA paramétrable
+(Facturation) et retenue à la source par compte de classe 44 paramétrable
+(Factures frs), les taux étant définis dans ADMIN.
+
+**Réalisé** :
+- **Nouveau menu ADMIN** avec 3 sous-menus :
+  - **Taux de TVA** : liste de taux nommés et réutilisables (ex. « TVA
+    standard 18% », « Exonéré 0% »), gérés comme le Plan analytique (créer/
+    modifier/supprimer, import/export .xlsx).
+  - **Taux de retenue à la source** : même principe (ex. « Retenue BIC
+    5% »), pour Factures frs.
+  - **Modification des factures** : vue consolidée de TOUTES les factures
+    déjà validées (vente ET achat), avec un bouton « Dévalider » unique —
+    complète, sans le remplacer, le bouton déjà présent dans chaque onglet.
+- **`core.devalider_facture_achat()`** (nouveau — n'existait pas, seul le
+  côté vente avait cette capacité) : symétrique à `devalider_facture_vente()`.
+- **Facturation (COMMERCE)** : nouveau menu déroulant « Préréglage (ADMIN) »
+  à côté du champ TVA — sélectionner un taux de la liste ADMIN remplit
+  automatiquement le champ (toujours modifiable à la main si besoin).
+- **Factures frs (ENGAGEMENTS-PROJETS)** : même principe pour la retenue à
+  la source, en plus du choix du compte de retenue (classe 44) déjà
+  existant et déjà filtré à cette classe. **Bouton « Corriger cette
+  facture »** ajouté (n'existait pas sur ce module, seulement côté ventes)
+  utilisant la nouvelle fonction de dévalidation.
+- **Bouton « Imprimer la facture »** sur les deux modules : génère un
+  document HTML avec bouton Imprimer intégré (Ctrl+P), ouvert directement
+  dans le navigateur par défaut — aucune dépendance PDF supplémentaire à
+  intégrer au `.exe`.
+
+**Choix de conception assumé** : Facturation et Factures frs restent deux
+classes séparées (`FacturationTab`/`FacturesFrsTab`) plutôt qu'une fusion
+complète en une seule fenêtre — une fusion aurait été un chantier à part
+entière, risqué pour deux modules déjà testés en production. Elles ont en
+revanche été rendues **strictement cohérentes** : mêmes boutons (Nouvelle
+facture / Supprimer / Corriger / Imprimer), même comportement de
+dévalidation, même mécanisme de préréglage de taux depuis ADMIN.
+
+Testé de bout en bout : taux TVA et retenue paramétrés dans ADMIN, facture
+de vente et facture d'achat créées/validées avec ces taux, export HTML des
+deux imprimable, dévalidation des deux types de factures (simulant le
+bouton ADMIN consolidé), Bilan resté équilibré à chaque étape.

@@ -405,6 +405,20 @@ def init_db(conn):
         )
     """)
     conn.execute("""
+        CREATE TABLE IF NOT EXISTS taux_tva (
+            code TEXT PRIMARY KEY,
+            label TEXT NOT NULL,
+            montant REAL NOT NULL DEFAULT 0
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS taux_retenue (
+            code TEXT PRIMARY KEY,
+            label TEXT NOT NULL,
+            montant REAL NOT NULL DEFAULT 0
+        )
+    """)
+    conn.execute("""
         CREATE TABLE IF NOT EXISTS donor_codes (
             code TEXT PRIMARY KEY,
             label TEXT NOT NULL
@@ -1172,6 +1186,42 @@ def add_budget_code(conn, code, label, montant=0):
     conn.commit()
 
 
+def list_taux_tva(conn):
+    return _plan_list(conn, "taux_tva", extra_cols="montant")
+
+
+def taux_tva_exists(conn, code):
+    return _plan_exists(conn, "taux_tva", code)
+
+
+def add_taux_tva(conn, code, label, montant=0):
+    conn.execute("INSERT OR REPLACE INTO taux_tva (code, label, montant) VALUES (?, ?, ?)",
+                 (code.strip(), label.strip(), montant or 0))
+    conn.commit()
+
+
+def delete_taux_tva(conn, code):
+    return _plan_delete(conn, "taux_tva", code)
+
+
+def list_taux_retenue(conn):
+    return _plan_list(conn, "taux_retenue", extra_cols="montant")
+
+
+def taux_retenue_exists(conn, code):
+    return _plan_exists(conn, "taux_retenue", code)
+
+
+def add_taux_retenue(conn, code, label, montant=0):
+    conn.execute("INSERT OR REPLACE INTO taux_retenue (code, label, montant) VALUES (?, ?, ?)",
+                 (code.strip(), label.strip(), montant or 0))
+    conn.commit()
+
+
+def delete_taux_retenue(conn, code):
+    return _plan_delete(conn, "taux_retenue", code)
+
+
 def delete_budget_code(conn, code):
     _plan_delete(conn, "budget_codes", code)
 
@@ -1298,6 +1348,22 @@ def export_budget_codes_xlsx(conn, path):
 
 def import_budget_codes_xlsx(conn, path):
     return _import_plan_generic_xlsx(conn, path, "budget_codes", has_montant=True)
+
+
+def export_taux_tva_xlsx(conn, path):
+    return _export_plan_generic_xlsx(conn, path, "taux_tva", "Taux de TVA", has_montant=True)
+
+
+def import_taux_tva_xlsx(conn, path):
+    return _import_plan_generic_xlsx(conn, path, "taux_tva", has_montant=True)
+
+
+def export_taux_retenue_xlsx(conn, path):
+    return _export_plan_generic_xlsx(conn, path, "taux_retenue", "Retenues à la source", has_montant=True)
+
+
+def import_taux_retenue_xlsx(conn, path):
+    return _import_plan_generic_xlsx(conn, path, "taux_retenue", has_montant=True)
 
 
 def export_donor_codes_xlsx(conn, path):
@@ -3979,6 +4045,117 @@ def valider_facture_achat(conn, facture_id, exercice=None):
 
     update_facture_achat(conn, facture_id, statut="validee", piece=piece)
     return warnings
+
+
+def devalider_facture_achat(conn, facture_id):
+    """Repasse une facture d'achat VALIDÉE en brouillon modifiable, en cas
+    d'erreur sur les chiffres constatée après validation : supprime toutes
+    les écritures comptables générées par sa validation (débit achats,
+    crédit fournisseur, retenue à la source, entrées de stock — repérées
+    par le couple piece=numéro de facture / journal='AC', unique à cette
+    facture) puis remet son statut à « brouillon ». Refuse si l'exercice
+    comptable des écritures est clôturé. Retourne le nombre d'écritures
+    supprimées."""
+    facture = get_facture_achat(conn, facture_id)
+    if not facture:
+        raise ValueError("Facture introuvable.")
+    if facture["statut"] != "validee":
+        raise ValueError("Cette facture n'est pas validée — rien à corriger.")
+    exercice_facture = _exercice_of_date(facture["date_facture"])
+    if is_exercice_cloture(conn, exercice_facture):
+        raise ValueError(
+            f"L'exercice {exercice_facture} de cette facture est clôturé : impossible de la corriger."
+        )
+    ids = [r["id"] for r in conn.execute(
+        "SELECT id FROM entries WHERE piece = ? AND journal = 'AC'", (facture["numero"],)
+    ).fetchall()]
+    deleted, errors = delete_entries_bulk(conn, ids)
+    if errors:
+        raise ValueError("Impossible de corriger cette facture : " + " ; ".join(errors))
+    update_facture_achat(conn, facture_id, statut="brouillon")
+    return deleted
+
+
+def _html_facture(titre, numero, date_facture, tiers_label, entete, lignes_rows, pied_page, totaux_rows):
+    """Construit un document HTML simple, imprimable (Ctrl+P depuis le
+    navigateur), commun aux factures de vente et d'achat."""
+    lignes_html = "\n".join(
+        f"<tr><td>{l[0]}</td><td style='text-align:right'>{l[1]:,.2f}</td>"
+        f"<td style='text-align:right'>{l[2]:,.2f}</td><td style='text-align:right'>{l[3]:,.2f}</td></tr>"
+        for l in lignes_rows
+    )
+    totaux_html = "\n".join(
+        f"<tr><td colspan='3' style='text-align:right'><b>{label}</b></td>"
+        f"<td style='text-align:right'><b>{valeur:,.2f}</b></td></tr>"
+        for label, valeur in totaux_rows
+    )
+    return f"""<!DOCTYPE html>
+<html lang="fr"><head><meta charset="utf-8"><title>{titre} {numero}</title>
+<style>
+  body {{ font-family: Segoe UI, Arial, sans-serif; margin: 40px; color: #222; }}
+  h1 {{ font-size: 22px; margin-bottom: 0; }}
+  .meta {{ color: #595959; margin-bottom: 20px; }}
+  .entete, .pied {{ white-space: pre-line; margin: 16px 0; }}
+  table {{ width: 100%; border-collapse: collapse; margin-top: 16px; }}
+  th, td {{ border: 1px solid #ccc; padding: 6px 10px; font-size: 14px; }}
+  th {{ background: #1F4E78; color: white; text-align: left; }}
+  @media print {{ button {{ display: none; }} }}
+</style></head>
+<body>
+<button onclick="window.print()">Imprimer</button>
+<h1>{titre} n° {numero}</h1>
+<div class="meta">Date : {date_facture} — {tiers_label}</div>
+<div class="entete">{entete or ""}</div>
+<table>
+<tr><th>Libellé</th><th>Quantité</th><th>Prix unitaire</th><th>Montant HT</th></tr>
+{lignes_html}
+{totaux_html}
+</table>
+<div class="pied">{pied_page or ""}</div>
+</body></html>"""
+
+
+def export_facture_vente_html(conn, facture_id, path):
+    """Génère la facture de vente en HTML imprimable (bouton « Imprimer »
+    intégré, ou Ctrl+P depuis le navigateur)."""
+    facture = get_facture_vente(conn, facture_id)
+    if not facture:
+        raise ValueError("Facture introuvable.")
+    lignes = list_lignes_facture_vente(conn, facture_id)
+    totals = compute_facture_totals(conn, facture_id)
+    client = get_client(conn, facture["client_code"])
+    tiers_label = f"Client : {client['raison_sociale']}" if client else f"Client : {facture['client_code']}"
+    lignes_rows = [(l["libelle"], l["quantite"], l["prix_unitaire"], l["montant_ht"]) for l in lignes]
+    totaux_rows = [("TOTAL HT", totals["total_ht"]),
+                    (f"TVA ({totals['tva_taux']:g}%)", totals["tva_montant"]),
+                    ("TOTAL TTC", totals["total_ttc"])]
+    html = _html_facture("Facture de vente", facture["numero"], to_display_date(facture["date_facture"]),
+                          tiers_label, facture["entete"], lignes_rows, facture["pied_page"], totaux_rows)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(html)
+    return path
+
+
+def export_facture_achat_html(conn, facture_id, path):
+    """Génère la facture d'achat en HTML imprimable (bouton « Imprimer »
+    intégré, ou Ctrl+P depuis le navigateur)."""
+    facture = get_facture_achat(conn, facture_id)
+    if not facture:
+        raise ValueError("Facture introuvable.")
+    lignes = list_lignes_facture_achat(conn, facture_id)
+    totals = compute_facture_achat_totals(conn, facture_id)
+    fournisseur = get_fournisseur(conn, facture["fournisseur_code"])
+    tiers_label = (f"Fournisseur : {fournisseur['raison_sociale']}" if fournisseur
+                   else f"Fournisseur : {facture['fournisseur_code']}")
+    lignes_rows = [(l["libelle"], l["quantite"], l["prix_unitaire"], l["montant_ht"]) for l in lignes]
+    totaux_rows = [("TOTAL HT", totals["total_ht"]),
+                    (f"Retenue à la source ({totals['retenue_taux']:g}%)", -totals["retenue_montant"]),
+                    ("NET À PAYER", totals["net_a_payer"])]
+    html = _html_facture("Facture d'achat", facture["numero"], to_display_date(facture["date_facture"]),
+                          tiers_label, facture["entete"], lignes_rows, facture["pied_page"], totaux_rows)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(html)
+    return path
 
 
 def compute_tft(conn, treso_ouverture=None, exercice=None):
