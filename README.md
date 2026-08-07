@@ -1253,3 +1253,25 @@ sont maintenant strictement cohérents entre eux (même palette à l'écran et
 dans le fichier exporté). Testé : les comptes 401100 (racine 40), 411100 et
 419100 (racine 41), 431300 (racine 43) ressortent avec les bonnes couleurs
 hexadécimales exactes dans l'export .xlsx.
+
+### Sous-totaux par groupe de comptes (racine) dans le Bilan détaillé
+
+**Demande** : « n'oublie pas de mettre les totaux par groupe de compte ».
+Le Bilan affiche desormais, pour Créances/Dettes/Trésorerie/Capitaux
+propres, un **sous-total après chaque groupe de racine** (ex. tous les
+comptes 401xxx/408xxx puis « Sous-total — Fournisseurs », avant de passer
+à la racine 41), en plus du total de section déjà existant — le pont
+manquant entre le détail compte par compte et les lignes agrégées du PDF de
+référence (qui, lui, n'affiche qu'UNE ligne par racine).
+
+`compute_bilan_detaille()` renvoie maintenant les créances, dettes,
+trésorerie (Actif et Passif) et capitaux propres sous forme de **groupes**
+`{label, comptes: [...], sous_total}` au lieu de listes plates — via le
+nouvel helper `_grouper_avec_sous_total()`. Trésorerie est groupée
+Banques (52) / Établissements financiers (53) / Caisse (57) / etc., comme
+le PDF qui sépare « Banq débitrices (50,56) » de « Caisse débitrice 57,59 »
+sur des lignes distinctes. `BilanTab` (écran) et `export_bilan_detaille_xlsx()`
+(fichier) affichent tous deux le sous-total avec la couleur de la racine
+correspondante (même couleur que ses comptes détaillés). Testé : sous-total
+« Fournisseurs » = somme exacte de 401100 + 401200, sous-total « Banques »
+et « Caisse » distincts, écart Bilan toujours à 0.

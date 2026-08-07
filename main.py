@@ -1141,36 +1141,61 @@ class BilanTab(ttk.Frame):
             return "stock"
         return "plain"
 
-    def _add_actif_section(self, titre, lignes, total_label, total_val, detail=False, tag=None):
-        """lignes : liste de dicts {label, montant} (ou {label, brut, amort, net} si detail=True).
-        `tag` fixe une couleur unique pour toute la section (immobilisations,
-        stocks, trésorerie) ; si None, la couleur est déterminée ligne par
-        ligne via _tag_for (créances : une couleur par racine de compte)."""
+    def _add_actif_section(self, titre, lignes, total_label, total_val, detail=False, tag=None, grouped=False):
+        """lignes : liste de dicts {label, montant} (ou {label, brut, amort, net}
+        si detail=True), OU si grouped=True, liste de GROUPES {label, key,
+        comptes:[...], sous_total} — un sous-total par groupe (racine de
+        compte) est alors inséré après chaque groupe, coloré comme les
+        comptes qu'il totalise, avant le total général de la section."""
         if not lignes and not total_val:
             return
         self.tree_actif.insert("", "end", tags=("plain_header",), values=(titre, "", "", ""))
-        for l in lignes:
-            row_tag = tag or self._tag_for(l, "actif")
-            if detail:
-                self.tree_actif.insert("", "end", tags=(row_tag,), values=(
-                    f"   {l['label']}", fmt_cfa(l["brut"]) if l["brut"] else "",
-                    fmt_cfa(l["amort"]) if l["amort"] else "", fmt_cfa(l["net"])))
-            else:
-                if not l["montant"]:
+        if grouped:
+            for g in lignes:
+                if not g["sous_total"] and not any(c["montant"] for c in g["comptes"]):
                     continue
-                self.tree_actif.insert("", "end", tags=(row_tag,), values=(f"   {l['label']}", "", "", fmt_cfa(l["montant"])))
+                row_tag = tag or self._tag_for(g["comptes"][0], "actif")
+                for c in g["comptes"]:
+                    if not c["montant"]:
+                        continue
+                    self.tree_actif.insert("", "end", tags=(row_tag,), values=(f"   {c['label']}", "", "", fmt_cfa(c["montant"])))
+                self.tree_actif.insert("", "end", tags=(row_tag,), values=(
+                    f"  Sous-total — {g['label']}", "", "", fmt_cfa(g["sous_total"])))
+        else:
+            for l in lignes:
+                row_tag = tag or self._tag_for(l, "actif")
+                if detail:
+                    self.tree_actif.insert("", "end", tags=(row_tag,), values=(
+                        f"   {l['label']}", fmt_cfa(l["brut"]) if l["brut"] else "",
+                        fmt_cfa(l["amort"]) if l["amort"] else "", fmt_cfa(l["net"])))
+                else:
+                    if not l["montant"]:
+                        continue
+                    self.tree_actif.insert("", "end", tags=(row_tag,), values=(f"   {l['label']}", "", "", fmt_cfa(l["montant"])))
         self.tree_actif.insert("", "end", tags=("soustotal",), values=(f"  {total_label}", "", "", fmt_cfa(total_val)))
         self.tree_actif.insert("", "end", values=("", "", "", ""))
 
-    def _add_passif_section(self, titre, lignes, total_label, total_val, tag=None):
+    def _add_passif_section(self, titre, lignes, total_label, total_val, tag=None, grouped=False):
         if not lignes and not total_val:
             return
         self.tree_passif.insert("", "end", tags=("plain_header",), values=(titre, ""))
-        for l in lignes:
-            if not l["montant"]:
-                continue
-            row_tag = tag or self._tag_for(l, "passif")
-            self.tree_passif.insert("", "end", tags=(row_tag,), values=(f"   {l['label']}", fmt_cfa(l["montant"])))
+        if grouped:
+            for g in lignes:
+                if not g["sous_total"] and not any(c["montant"] for c in g["comptes"]):
+                    continue
+                row_tag = tag or self._tag_for(g["comptes"][0], "passif")
+                for c in g["comptes"]:
+                    if not c["montant"]:
+                        continue
+                    self.tree_passif.insert("", "end", tags=(row_tag,), values=(f"   {c['label']}", fmt_cfa(c["montant"])))
+                self.tree_passif.insert("", "end", tags=(row_tag,), values=(
+                    f"  Sous-total — {g['label']}", fmt_cfa(g["sous_total"])))
+        else:
+            for l in lignes:
+                if not l["montant"]:
+                    continue
+                row_tag = tag or self._tag_for(l, "passif")
+                self.tree_passif.insert("", "end", tags=(row_tag,), values=(f"   {l['label']}", fmt_cfa(l["montant"])))
         self.tree_passif.insert("", "end", tags=("soustotal",), values=(f"  {total_label}", fmt_cfa(total_val)))
         self.tree_passif.insert("", "end", values=("", ""))
 
@@ -1188,17 +1213,19 @@ class BilanTab(ttk.Frame):
         self._add_actif_section("IMMOBILISATIONS", a["immobilisations"],
                                  "Total immobilisations nettes", a["total_immo_net"], detail=True, tag="plain")
         self._add_actif_section("STOCKS", a["stocks"], "Total stocks", a["total_stocks"], tag="stock")
-        self._add_actif_section("CRÉANCES", a["creances"], "Total créances", a["total_creances"])
+        self._add_actif_section("CRÉANCES", a["creances"], "Total créances", a["total_creances"], grouped=True)
         self._add_actif_section("TRÉSORERIE ACTIF", a["tresorerie"], "Total trésorerie actif",
-                                 a["total_tresorerie"], tag="treso")
+                                 a["total_tresorerie"], tag="treso", grouped=True)
         self.tree_actif.insert("", "end", tags=("grandtotal",), values=("TOTAL ACTIF", "", "", fmt_cfa(d["total_actif"])))
 
         # ---- PASSIF ----
         self._add_passif_section("CAPITAUX PROPRES ET RESSOURCES DURABLES", p["capitaux_propres"],
-                                  "Total capitaux propres et ressources durables", p["total_capitaux_propres"], tag="plain")
-        self._add_passif_section("DETTES CIRCULANTES", p["dettes"], "Total dettes circulantes", p["total_dettes"])
+                                  "Total capitaux propres et ressources durables", p["total_capitaux_propres"],
+                                  tag="plain", grouped=True)
+        self._add_passif_section("DETTES CIRCULANTES", p["dettes"], "Total dettes circulantes", p["total_dettes"],
+                                  grouped=True)
         self._add_passif_section("TRÉSORERIE PASSIF", p["tresorerie"], "Total trésorerie passif",
-                                  p["total_tresorerie"], tag="treso")
+                                  p["total_tresorerie"], tag="treso", grouped=True)
         self.tree_passif.insert("", "end", tags=("grandtotal",), values=("TOTAL PASSIF", fmt_cfa(d["total_passif"])))
 
         ecart = d["ecart"]
