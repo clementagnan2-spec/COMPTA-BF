@@ -1493,3 +1493,25 @@ FRS-01) : stock correctement à 1 200 unités pour 2 708,33 F/unité, ligne
 fournisseur bloquée tant que le fournisseur n'est pas choisi, Bilan
 équilibré. Non-régression vérifiée sur le mode « ligne par ligne » sans
 tiers ni stock global.
+
+### Correctifs UI : boutons invisibles + champ Tiers générique retiré
+
+**Bug repéré par l'utilisateur** : sur un écran de taille standard, la
+fenêtre multi-lignes avait grandi (ajout du champ Tiers par ligne) au
+point que les boutons « Enregistrer l'écriture »/« Annuler » n'étaient
+plus visibles en bas — aucun moyen de valider l'écriture sans redimensionner
+la fenêtre.
+
+**Corrigé** : réorganisation de l'empilement (`pack`) de la fenêtre —
+les boutons et la section « Compte stock » sont désormais ancrés en BAS de
+la fenêtre en premier (`side="bottom"`), et le tableau des lignes (au
+milieu) est la seule zone qui s'agrandit ou se réduit selon l'espace
+disponible, avec sa propre scrollbar verticale. Les boutons restent donc
+**toujours visibles**, quelle que soit la taille de l'écran ou le nombre
+de lignes ajoutées. Fenêtre également rendue redimensionnable (taille
+minimale 900×500), avec une hauteur par défaut plus généreuse (1080×680).
+
+**Champ « Tiers » générique retiré** de la section « Informations
+communes » : il faisait doublon et n'était plus pertinent maintenant que
+le tiers (Fournisseur/Client) se choisit ligne par ligne, de façon
+obligatoire et fiable, dès qu'un compte des racines 40/41 est utilisé.

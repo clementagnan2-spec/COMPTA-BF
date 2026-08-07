@@ -234,12 +234,14 @@ class MultiLigneDialog(tk.Toplevel):
         self.on_saved = on_saved
         self.lignes = []
         self.title("Saisie multi-lignes (plusieurs comptes au débit et au crédit)")
-        self.geometry("1050x620")
+        self.geometry("1080x680")
+        self.minsize(900, 500)
+        self.resizable(True, True)
         self.transient(parent)
         self.grab_set()
 
         header = ttk.LabelFrame(self, text="Informations communes à l'écriture")
-        header.pack(fill="x", padx=10, pady=8)
+        header.pack(fill="x", padx=10, pady=8, side="top")
         ttk.Label(header, text="Date (JJ/MM/AAAA) :").grid(row=0, column=0, sticky="w", padx=4, pady=4)
         self.date_var = tk.StringVar(value=date.today().strftime("%d/%m/%Y"))
         ttk.Entry(header, textvariable=self.date_var, width=14).grid(row=0, column=1, padx=4)
@@ -252,14 +254,44 @@ class MultiLigneDialog(tk.Toplevel):
                                       values=["AC", "VE", "OD", "BQ", "CA"])
         journal_combo.grid(row=0, column=5, padx=4)
         journal_combo.bind("<Button-1>", self._open_dropdown)
-        ttk.Label(header, text="Tiers :").grid(row=0, column=6, sticky="w", padx=(16, 4))
-        self.tiers_var = tk.StringVar()
-        ttk.Entry(header, textvariable=self.tiers_var, width=18).grid(row=0, column=7, padx=4)
+        # (Le champ « Tiers » générique a été retiré : le tiers se choisit
+        # désormais LIGNE PAR LIGNE, via Fournisseur/Client, dès qu'un compte
+        # de la racine 40 ou 41 est utilisé — plus fiable qu'un champ global.)
 
+        # ---- Boutons et section stock : ancrés en bas EN PREMIER, pour
+        # qu'ils restent toujours visibles même sur un petit écran — le
+        # tableau de lignes (au milieu) se réduit/scrolle si besoin, jamais
+        # les boutons d'enregistrement. ----
+        btns = ttk.Frame(self)
+        btns.pack(fill="x", padx=10, pady=10, side="bottom")
+        ttk.Button(btns, text="Enregistrer l'écriture", command=self.save).pack(side="left", padx=4)
+        ttk.Button(btns, text="Annuler", command=self.destroy).pack(side="left", padx=4)
+
+        stock_frame = ttk.LabelFrame(self, text=(
+            "Compte stock (optionnel) — pour une facture globale incluant transport/douane : "
+            "regroupe TOUTES les lignes au débit dans un seul stock, à la quantité réellement reçue"))
+        stock_frame.pack(fill="x", padx=10, pady=(0, 6), side="bottom")
+        ttk.Label(stock_frame, text="Compte stock :").grid(row=0, column=0, sticky="w", padx=4, pady=4)
+        self.stock_compte_var = tk.StringVar()
+        self.stock_compte_combo = ttk.Combobox(stock_frame, textvariable=self.stock_compte_var, width=30)
+        self.stock_compte_combo.grid(row=0, column=1, padx=4)
+        self.stock_compte_combo.bind("<KeyRelease>", self._on_stock_compte_keyrelease)
+        self.stock_compte_combo.bind("<Button-1>", self._open_dropdown)
+        self.stock_compte_combo["values"] = [
+            f"{s['code']} — {s['label']}" for s in core.compute_stocks_detail(self.conn, prefixes=["31", "32", "33", "36"])]
+        ttk.Label(stock_frame, text="Quantité réellement reçue :").grid(row=0, column=2, sticky="w", padx=(16, 4))
+        self.stock_qte_var = tk.StringVar()
+        ttk.Entry(stock_frame, textvariable=self.stock_qte_var, width=12).grid(row=0, column=3, padx=4)
+        ttk.Label(stock_frame, text=(
+            "Laissez « Compte stock » vide pour revenir au comportement ligne par ligne "
+            "(chaque ligne avec sa propre quantité génère son propre mouvement de stock)."
+        ), foreground="#595959", wraplength=950).grid(row=1, column=0, columnspan=4, sticky="w", padx=4, pady=(2, 4))
+
+        # ---- Lignes de l'écriture : occupe tout l'espace restant, au milieu ----
         lignes_frame = ttk.LabelFrame(self, text=(
             "Lignes de l'écriture — autant de comptes que nécessaire au débit ET au crédit "
             "(renseignez Débit OU Crédit par ligne, pas les deux)"))
-        lignes_frame.pack(fill="both", expand=True, padx=10, pady=6)
+        lignes_frame.pack(fill="both", expand=True, padx=10, pady=6, side="top")
 
         form = ttk.Frame(lignes_frame)
         form.pack(fill="x", padx=6, pady=4)
@@ -311,44 +343,22 @@ class MultiLigneDialog(tk.Toplevel):
             row=1, column=6, columnspan=2, padx=4, pady=(4, 0), sticky="e")
 
         cols = ("compte", "libelle", "debit", "credit", "quantite", "analytique", "tiers")
-        self.tree = ttk.Treeview(lignes_frame, columns=cols, show="headings", height=12)
+        self.tree = ttk.Treeview(lignes_frame, columns=cols, show="headings", height=10)
         headers = ["Compte", "Libellé", "Débit", "Crédit", "Quantité", "Code analytique", "Tiers"]
         widths = [90, 200, 100, 100, 80, 150, 110]
         for c, h, w in zip(cols, headers, widths):
             self.tree.heading(c, text=h)
             self.tree.column(c, width=w, anchor="w")
-        self.tree.pack(fill="both", expand=True, padx=6, pady=6)
+        tree_scroll = ttk.Scrollbar(lignes_frame, orient="vertical", command=self.tree.yview)
+        self.tree.configure(yscrollcommand=tree_scroll.set)
+        self.tree.pack(side="left", fill="both", expand=True, padx=(6, 0), pady=6)
+        tree_scroll.pack(side="left", fill="y", padx=(0, 6), pady=6)
         ttk.Button(lignes_frame, text="Supprimer la ligne sélectionnée", command=self.delete_ligne).pack(
             anchor="w", padx=6, pady=(0, 6))
 
         self.total_var = tk.StringVar(value="Total Débit : 0     Total Crédit : 0     Écart : 0")
         self.total_label = ttk.Label(lignes_frame, textvariable=self.total_var, font=("Segoe UI", 10, "bold"))
         self.total_label.pack(anchor="w", padx=6, pady=(0, 6))
-
-        stock_frame = ttk.LabelFrame(self, text=(
-            "Compte stock (optionnel) — pour une facture globale incluant transport/douane : "
-            "regroupe TOUTES les lignes au débit dans un seul stock, à la quantité réellement reçue"))
-        stock_frame.pack(fill="x", padx=10, pady=(0, 6))
-        ttk.Label(stock_frame, text="Compte stock :").grid(row=0, column=0, sticky="w", padx=4, pady=4)
-        self.stock_compte_var = tk.StringVar()
-        self.stock_compte_combo = ttk.Combobox(stock_frame, textvariable=self.stock_compte_var, width=30)
-        self.stock_compte_combo.grid(row=0, column=1, padx=4)
-        self.stock_compte_combo.bind("<KeyRelease>", self._on_stock_compte_keyrelease)
-        self.stock_compte_combo.bind("<Button-1>", self._open_dropdown)
-        self.stock_compte_combo["values"] = [
-            f"{s['code']} — {s['label']}" for s in core.compute_stocks_detail(self.conn, prefixes=["31", "32", "33", "36"])]
-        ttk.Label(stock_frame, text="Quantité réellement reçue :").grid(row=0, column=2, sticky="w", padx=(16, 4))
-        self.stock_qte_var = tk.StringVar()
-        ttk.Entry(stock_frame, textvariable=self.stock_qte_var, width=12).grid(row=0, column=3, padx=4)
-        ttk.Label(stock_frame, text=(
-            "Laissez « Compte stock » vide pour revenir au comportement ligne par ligne "
-            "(chaque ligne avec sa propre quantité génère son propre mouvement de stock)."
-        ), foreground="#595959", wraplength=950).grid(row=1, column=0, columnspan=4, sticky="w", padx=4, pady=(2, 4))
-
-        btns = ttk.Frame(self)
-        btns.pack(fill="x", padx=10, pady=10)
-        ttk.Button(btns, text="Enregistrer l'écriture", command=self.save).pack(side="left", padx=4)
-        ttk.Button(btns, text="Annuler", command=self.destroy).pack(side="left", padx=4)
 
     @staticmethod
     def _open_dropdown(event=None):
@@ -541,7 +551,6 @@ class MultiLigneDialog(tk.Toplevel):
             messagebox.showwarning("Champ manquant", "Le N° de pièce est obligatoire.", parent=self)
             return
         journal = self.journal_var.get().strip() or "OD"
-        tiers = self.tiers_var.get().strip()
         compte_stock_global = self._extract_code(self.stock_compte_var.get()) or None
         if compte_stock_global and not core.account_exists(self.conn, compte_stock_global):
             messagebox.showerror("Compte invalide", f"Le compte stock « {compte_stock_global} » n'existe pas.",
@@ -565,7 +574,7 @@ class MultiLigneDialog(tk.Toplevel):
                                       parent=self)
                 return
         try:
-            core.add_ecriture_multi_lignes(self.conn, date_str, piece, journal, self.lignes, tiers=tiers,
+            core.add_ecriture_multi_lignes(self.conn, date_str, piece, journal, self.lignes, tiers="",
                                             compte_stock_global=compte_stock_global,
                                             quantite_stock_global=quantite_stock_global)
         except ValueError as exc:
