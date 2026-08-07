@@ -1855,6 +1855,17 @@ def add_ecriture_multi_lignes(conn, date_str, piece, journal, lignes, tiers="",
             raise ValueError(f"La ligne « {l['compte']} » ne peut pas être à la fois au débit et au crédit.")
         if not d and not c:
             raise ValueError(f"La ligne « {l['compte']} » doit avoir un montant au débit ou au crédit.")
+        racine = account_racine(l["compte"])
+        if racine == RACINE_FOURNISSEURS and not (l.get("fournisseur_code") or fournisseur_code):
+            raise ValueError(
+                f"La ligne « {l['compte']} » relève des Fournisseurs (racine 40) : "
+                f"vous devez choisir le fournisseur concerné."
+            )
+        if racine == RACINE_CLIENTS and not (l.get("client_code") or client_code):
+            raise ValueError(
+                f"La ligne « {l['compte']} » relève des Clients (racine 41) : "
+                f"vous devez choisir le client concerné."
+            )
         total_debit += d
         total_credit += c
     if total_debit <= 0:
@@ -1866,12 +1877,18 @@ def add_ecriture_multi_lignes(conn, date_str, piece, journal, lignes, tiers="",
         )
     if compte_stock_global and not account_exists(conn, compte_stock_global):
         raise ValueError(f"Le compte stock « {compte_stock_global} » n'existe pas.")
+    if compte_stock_global and not quantite_stock_global:
+        raise ValueError(
+            "La quantité réellement reçue est obligatoire quand un compte stock est choisi "
+            "(sinon le stock serait mis à jour avec une quantité de 0)."
+        )
     _check_exercice_editable(conn, date_str)
     for l in lignes:
-        add_entry(conn, date_str, piece, journal, l["compte"], tiers, l.get("libelle") or "",
+        add_entry(conn, date_str, piece, journal, l["compte"], l.get("tiers") or tiers, l.get("libelle") or "",
                   l.get("debit") or 0, l.get("credit") or 0, analytic_code=l.get("analytic_code") or "",
                   budget_code=budget_code, donor_code=donor_code, quantite=l.get("quantite") or 0,
-                  fournisseur_code=fournisseur_code, client_code=client_code)
+                  fournisseur_code=l.get("fournisseur_code") or fournisseur_code,
+                  client_code=l.get("client_code") or client_code)
 
     if compte_stock_global:
         # ---- Coût global : toutes les lignes débit forment le coût d'un

@@ -269,6 +269,7 @@ class MultiLigneDialog(tk.Toplevel):
         self.ligne_compte_combo.grid(row=0, column=1, padx=4)
         self.ligne_compte_combo.bind("<KeyRelease>", self._on_compte_keyrelease)
         self.ligne_compte_combo.bind("<Button-1>", self._open_dropdown)
+        self.ligne_compte_combo.bind("<<ComboboxSelected>>", self._on_compte_selected)
         self._refresh_compte_values(self.ligne_compte_combo)
 
         ttk.Label(form, text="Libellé :").grid(row=0, column=2, sticky="w", padx=(12, 0))
@@ -297,13 +298,22 @@ class MultiLigneDialog(tk.Toplevel):
         self.ligne_analytic_combo.bind("<<ComboboxSelected>>", self._on_analytic_changed)
         self.ligne_analytic_combo.bind("<Button-1>", self._open_dropdown)
 
+        self.ligne_tiers_label = ttk.Label(form, text="")
+        self.ligne_tiers_label.grid(row=2, column=0, sticky="w", pady=(4, 0))
+        self.ligne_tiers_var = tk.StringVar()
+        self.ligne_tiers_combo = ttk.Combobox(form, textvariable=self.ligne_tiers_var, width=30)
+        self.ligne_tiers_combo.grid(row=2, column=1, columnspan=3, padx=4, pady=(4, 0), sticky="w")
+        self.ligne_tiers_combo.bind("<KeyRelease>", self._on_tiers_keyrelease)
+        self.ligne_tiers_combo.bind("<Button-1>", self._open_dropdown)
+        self._ligne_tiers_kind = None  # None / "fournisseur" / "client", selon le compte choisi
+
         ttk.Button(form, text="Ajouter la ligne", command=self.add_ligne).grid(
             row=1, column=6, columnspan=2, padx=4, pady=(4, 0), sticky="e")
 
-        cols = ("compte", "libelle", "debit", "credit", "quantite", "analytique")
+        cols = ("compte", "libelle", "debit", "credit", "quantite", "analytique", "tiers")
         self.tree = ttk.Treeview(lignes_frame, columns=cols, show="headings", height=12)
-        headers = ["Compte", "Libellé", "Débit", "Crédit", "Quantité", "Code analytique"]
-        widths = [90, 240, 110, 110, 90, 180]
+        headers = ["Compte", "Libellé", "Débit", "Crédit", "Quantité", "Code analytique", "Tiers"]
+        widths = [90, 200, 100, 100, 80, 150, 110]
         for c, h, w in zip(cols, headers, widths):
             self.tree.heading(c, text=h)
             self.tree.column(c, width=w, anchor="w")
@@ -359,6 +369,41 @@ class MultiLigneDialog(tk.Toplevel):
         query = self.ligne_compte_var.get().strip()
         matches = core.search_accounts(self.conn, query, limit=50)
         self.ligne_compte_combo["values"] = [f"{m['code']} — {m['label']}" for m in matches]
+        self._update_tiers_field()
+
+    def _on_compte_selected(self, event=None):
+        self._update_tiers_field()
+
+    def _update_tiers_field(self):
+        """Détecte si le compte choisi relève des Fournisseurs (racine 40)
+        ou des Clients (racine 41) et impose alors de choisir le tiers
+        auxiliaire correspondant avant de pouvoir ajouter la ligne."""
+        compte = self._extract_code(self.ligne_compte_var.get())
+        racine = core.account_racine(compte) if compte else None
+        self.ligne_tiers_var.set("")
+        if racine == core.RACINE_FOURNISSEURS:
+            self._ligne_tiers_kind = "fournisseur"
+            self.ligne_tiers_label.configure(text="Fournisseur (obligatoire) :")
+            self.ligne_tiers_combo["values"] = [
+                f"{f['code']} — {f['raison_sociale']}" for f in core.list_fournisseurs(self.conn)]
+        elif racine == core.RACINE_CLIENTS:
+            self._ligne_tiers_kind = "client"
+            self.ligne_tiers_label.configure(text="Client (obligatoire) :")
+            self.ligne_tiers_combo["values"] = [
+                f"{c['code']} — {c['raison_sociale']}" for c in core.list_clients(self.conn)]
+        else:
+            self._ligne_tiers_kind = None
+            self.ligne_tiers_label.configure(text="")
+            self.ligne_tiers_combo["values"] = []
+
+    def _on_tiers_keyrelease(self, event=None):
+        query = self._extract_code(self.ligne_tiers_var.get())
+        if self._ligne_tiers_kind == "fournisseur":
+            items = core.list_fournisseurs(self.conn, query)
+            self.ligne_tiers_combo["values"] = [f"{f['code']} — {f['raison_sociale']}" for f in items]
+        elif self._ligne_tiers_kind == "client":
+            items = core.list_clients(self.conn, query)
+            self.ligne_tiers_combo["values"] = [f"{c['code']} — {c['raison_sociale']}" for c in items]
 
     def _on_stock_compte_keyrelease(self, event=None):
         query = self.stock_compte_var.get().strip()
@@ -379,6 +424,42 @@ class MultiLigneDialog(tk.Toplevel):
             messagebox.showerror("Compte invalide", f"Le compte « {compte} » n'existe pas dans le Plan comptable.",
                                   parent=self)
             return
+
+        racine = core.account_racine(compte)
+        fournisseur_code = client_code = None
+        tiers_label = ""
+        if racine == core.RACINE_FOURNISSEURS:
+            fournisseur_code = self._extract_code(self.ligne_tiers_var.get())
+            if not fournisseur_code:
+                messagebox.showwarning(
+                    "Fournisseur obligatoire",
+                    f"Le compte « {compte} » relève des Fournisseurs (racine 40) : "
+                    f"choisissez le fournisseur concerné avant d'ajouter cette ligne.",
+                    parent=self)
+                self.ligne_tiers_combo.focus_set()
+                return
+            if not core.fournisseur_exists(self.conn, fournisseur_code):
+                messagebox.showerror("Fournisseur introuvable",
+                                      f"Le fournisseur « {fournisseur_code} » n'existe pas (créez-le d'abord dans "
+                                      f"l'onglet Fournisseurs).", parent=self)
+                return
+            tiers_label = fournisseur_code
+        elif racine == core.RACINE_CLIENTS:
+            client_code = self._extract_code(self.ligne_tiers_var.get())
+            if not client_code:
+                messagebox.showwarning(
+                    "Client obligatoire",
+                    f"Le compte « {compte} » relève des Clients (racine 41) : "
+                    f"choisissez le client concerné avant d'ajouter cette ligne.",
+                    parent=self)
+                self.ligne_tiers_combo.focus_set()
+                return
+            if not core.client_exists(self.conn, client_code):
+                messagebox.showerror("Client introuvable",
+                                      f"Le client « {client_code} » n'existe pas (créez-le d'abord dans "
+                                      f"l'onglet Clients).", parent=self)
+                return
+            tiers_label = client_code
 
         def parse_montant(raw):
             raw = (raw or "").strip()
@@ -410,17 +491,20 @@ class MultiLigneDialog(tk.Toplevel):
         analytic_code = self._extract_code(self.ligne_analytic_var.get()) or None
         libelle = self.ligne_libelle_var.get().strip()
         self.lignes.append({"compte": compte, "libelle": libelle, "debit": debit, "credit": credit,
-                             "quantite": qte, "analytic_code": analytic_code})
+                             "quantite": qte, "analytic_code": analytic_code,
+                             "fournisseur_code": fournisseur_code, "client_code": client_code})
         self.tree.insert("", "end", values=(
             compte, libelle, f"{debit:,.2f}" if debit else "", f"{credit:,.2f}" if credit else "",
-            f"{qte:g}" if qte else "", analytic_code or ""))
+            f"{qte:g}" if qte else "", analytic_code or "", tiers_label))
         self.ligne_compte_var.set("")
         self.ligne_libelle_var.set("")
         self.ligne_debit_var.set("")
         self.ligne_credit_var.set("")
         self.ligne_qte_var.set("")
         self.ligne_analytic_var.set("")
+        self.ligne_tiers_var.set("")
         self.ligne_qte_label.configure(text="Quantité :")
+        self._update_tiers_field()
         self._update_totaux()
 
     def delete_ligne(self):
@@ -464,11 +548,21 @@ class MultiLigneDialog(tk.Toplevel):
                                   parent=self)
             return
         quantite_stock_global = 0.0
-        if compte_stock_global and self.stock_qte_var.get().strip():
+        if compte_stock_global:
+            if not self.stock_qte_var.get().strip():
+                messagebox.showwarning(
+                    "Quantité obligatoire",
+                    "Vous avez choisi un compte stock : la quantité réellement reçue est obligatoire "
+                    "(sinon le stock serait mis à jour avec une quantité de 0).", parent=self)
+                return
             try:
                 quantite_stock_global = float(self.stock_qte_var.get())
             except ValueError:
                 messagebox.showerror("Erreur", "La quantité réellement reçue doit être un nombre.", parent=self)
+                return
+            if quantite_stock_global <= 0:
+                messagebox.showerror("Erreur", "La quantité réellement reçue doit être strictement positive.",
+                                      parent=self)
                 return
         try:
             core.add_ecriture_multi_lignes(self.conn, date_str, piece, journal, self.lignes, tiers=tiers,

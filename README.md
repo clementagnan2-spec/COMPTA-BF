@@ -1457,3 +1457,39 @@ stock à 3 250 000 F pour 1 200 unités, coût unitaire moyen 2 708,33 F/unité
 (au lieu de 3 600 unités comptées à tort). Non-régression vérifiée : le
 mode « ligne par ligne » (sans compte stock global) continue de fonctionner
 normalement pour des lignes réellement indépendantes.
+
+### Correctifs : quantité de stock ignorée + tiers non forcé dans la saisie multi-lignes
+
+**Deux bugs repérés par l'utilisateur sur son propre usage réel** :
+
+1. **La quantité n'était pas prise en compte lors de la génération du
+   stock** : le champ « Quantité réellement reçue » n'était pas obligatoire
+   — laissé vide, l'entrée de stock automatique se comptabilisait quand
+   même, avec une quantité de 0 (visible dans le formulaire : la ligne
+   générée montrait un montant mais aucune quantité). **Corrigé** : ce
+   champ est désormais obligatoire (et strictement positif) dès qu'un
+   compte stock est choisi, aussi bien côté interface (bloque
+   l'enregistrement avec un message clair) que côté moteur
+   (`add_ecriture_multi_lignes` refuse maintenant l'appel si
+   `compte_stock_global` est renseigné sans `quantite_stock_global`).
+
+2. **Le choix d'un fournisseur ou d'un client n'était pas forcé** dans la
+   fenêtre multi-lignes (contrairement au formulaire de Saisie standard).
+   **Corrigé** : dès qu'une ligne utilise un compte de la racine 40
+   (Fournisseurs) ou 41 (Clients), un champ « Fournisseur »/« Client »
+   apparaît automatiquement et devient obligatoire pour pouvoir ajouter la
+   ligne (avec recherche par code ou raison sociale, liste déroulante
+   auto-ouverte au clic) — le tiers choisi est stocké PAR LIGNE (pas un
+   seul tiers global pour toute l'écriture, puisqu'une écriture peut
+   régler plusieurs fournisseurs différents). Le moteur refuse aussi
+   maintenant, en dernier recours, tout enregistrement d'une ligne 40/41
+   sans le tiers correspondant renseigné.
+   Une nouvelle colonne « Tiers » a été ajoutée au tableau des lignes
+   pour visualiser directement qui est concerné par chaque ligne.
+
+Testé avec le scénario exact de l'utilisateur (CLINKER + TRANSPORT +
+DOUANE en compte stock global 321001, quantité 1200, réglé au fournisseur
+FRS-01) : stock correctement à 1 200 unités pour 2 708,33 F/unité, ligne
+fournisseur bloquée tant que le fournisseur n'est pas choisi, Bilan
+équilibré. Non-régression vérifiée sur le mode « ligne par ligne » sans
+tiers ni stock global.
