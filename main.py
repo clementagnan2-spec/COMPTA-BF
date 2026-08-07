@@ -3649,6 +3649,7 @@ class FacturationTab(ttk.Frame):
         self.client_combo = ttk.Combobox(info, textvariable=self.client_var, width=26)
         self.client_combo.grid(row=0, column=5, padx=4)
         self.client_combo.bind("<KeyRelease>", self._on_client_keyrelease)
+        self.client_combo.bind("<Button-1>", self._open_dropdown)
         self._refresh_client_values()
         ttk.Label(info, text="TVA % (compte 44) :").grid(row=0, column=6, sticky="w", padx=(12, 4))
         self.tva_var = tk.StringVar(value=str(core.get_setting(conn, "tva_taux_defaut", core.TVA_TAUX_DEFAUT)))
@@ -3658,6 +3659,8 @@ class FacturationTab(ttk.Frame):
         self.tva_preset_combo = ttk.Combobox(info, textvariable=self.tva_preset_var, width=18, state="readonly")
         self.tva_preset_combo.grid(row=1, column=7, padx=4, pady=(4, 0))
         self.tva_preset_combo.bind("<<ComboboxSelected>>", self._on_tva_preset_selected)
+        self.tva_preset_combo.bind("<Button-1>", self._open_dropdown)
+        self.tva_compte_var = tk.StringVar(value=core.get_text_setting(conn, "tva_compte_defaut", core.COMPTE_TVA_VENTES))
         self._refresh_tva_presets()
 
         # ---- Lignes ----
@@ -3668,6 +3671,7 @@ class FacturationTab(ttk.Frame):
         self.ligne_compte_combo = ttk.Combobox(form, textvariable=self.ligne_compte_var, width=34)
         self.ligne_compte_combo.grid(row=0, column=1, padx=4)
         self.ligne_compte_combo.bind("<KeyRelease>", self._on_ligne_compte_keyrelease)
+        self.ligne_compte_combo.bind("<Button-1>", self._open_dropdown)
         self._refresh_ligne_compte_values()
         ttk.Label(form, text="Libellé :").grid(row=0, column=2, sticky="w", padx=(12, 4))
         self.ligne_libelle_var = tk.StringVar()
@@ -3678,12 +3682,18 @@ class FacturationTab(ttk.Frame):
         ttk.Label(form, text="Prix unitaire :").grid(row=1, column=2, sticky="w", padx=(12, 4))
         self.ligne_prix_var = tk.StringVar()
         ttk.Entry(form, textvariable=self.ligne_prix_var, width=14).grid(row=1, column=3, sticky="w", padx=4)
-        ttk.Button(form, text="Ajouter la ligne", command=self.add_ligne).grid(row=1, column=4, padx=12)
+        ttk.Label(form, text="Code analytique :").grid(row=1, column=4, sticky="w", padx=(12, 4))
+        self.ligne_analytic_var = tk.StringVar()
+        self.ligne_analytic_combo = ttk.Combobox(form, textvariable=self.ligne_analytic_var, width=20)
+        self.ligne_analytic_combo.grid(row=1, column=5, padx=4, sticky="w")
+        self.ligne_analytic_combo.bind("<Button-1>", self._open_dropdown)
+        self._refresh_ligne_analytic_values()
+        ttk.Button(form, text="Ajouter la ligne", command=self.add_ligne).grid(row=1, column=6, padx=12)
 
-        cols = ("id", "compte", "libelle", "type_stock", "qte", "prix", "montant")
+        cols = ("id", "compte", "libelle", "type_stock", "qte", "prix", "analytique", "montant")
         self.tree = ttk.Treeview(self, columns=cols, show="headings", height=6)
-        headers = ["ID", "Compte", "Libellé", "Impact stock", "Qté", "Prix unit.", "Montant HT"]
-        widths = [40, 90, 220, 110, 70, 100, 110]
+        headers = ["ID", "Compte", "Libellé", "Impact stock", "Qté", "Prix unit.", "Analytique", "Montant HT"]
+        widths = [40, 90, 200, 110, 60, 90, 130, 110]
         for c, h, w in zip(cols, headers, widths):
             self.tree.heading(c, text=h)
             self.tree.column(c, width=w, anchor="w")
@@ -3729,6 +3739,15 @@ class FacturationTab(ttk.Frame):
             items = [a for a in core.search_accounts(self.conn, query, limit=50) if a["classe"] == "7"]
             self.ligne_compte_combo["values"] = [f"{a['code']} — {a['label']}" for a in items]
 
+    def _refresh_ligne_analytic_values(self):
+        codes = core.list_analytic_codes(self.conn)
+        self.ligne_analytic_combo["values"] = [f"{c['code']} — {c['label']}" for c in codes]
+
+    @staticmethod
+    def _open_dropdown(event=None):
+        if event is not None:
+            event.widget.event_generate("<Down>")
+
     @staticmethod
     def _extract_code(raw):
         raw = (raw or "").strip()
@@ -3754,7 +3773,8 @@ class FacturationTab(ttk.Frame):
             messagebox.showinfo("Client requis", "Choisissez d'abord un client existant dans le champ Client.")
             return
         date_str = core.to_iso_date(self.date_var.get().strip()) or date.today().strftime("%Y-%m-%d")
-        fid = core.create_facture_vente(self.conn, numero, date_str, client_code)
+        fid = core.create_facture_vente(self.conn, numero, date_str, client_code,
+                                         tva_compte=self.tva_compte_var.get().strip() or None)
         self.current_facture_id = fid
         self.refresh_factures_list()
 
@@ -3785,6 +3805,7 @@ class FacturationTab(ttk.Frame):
         client = core.get_client(self.conn, f["client_code"])
         self.client_var.set(f"{f['client_code']} — {client['raison_sociale']}" if client else f["client_code"])
         self.tva_var.set(str(f["tva_taux"]))
+        self.tva_compte_var.set(f.get("tva_compte") or core.COMPTE_TVA_VENTES)
         self.entete_text.insert("1.0", f["entete"] or "")
         self.pied_text.insert("1.0", f["pied_page"] or "")
         statut_label = "VALIDÉE (écritures envoyées en Saisie)" if f["statut"] == "validee" else "Brouillon"
@@ -3805,7 +3826,8 @@ class FacturationTab(ttk.Frame):
                 l["type_stock"], "Aucun (service)")
             self.tree.insert("", "end", values=(
                 l["id"], l["compte_vente"], l["libelle"], impact,
-                f"{l['quantite']:g}", f"{l['prix_unitaire']:,.2f}", f"{l['montant_ht']:,.2f}",
+                f"{l['quantite']:g}", f"{l['prix_unitaire']:,.2f}", l.get("analytic_code") or "",
+                f"{l['montant_ht']:,.2f}",
             ))
         totals = core.compute_facture_totals(self.conn, self.current_facture_id)
         self.totals_var.set(
@@ -3844,10 +3866,13 @@ class FacturationTab(ttk.Frame):
         except ValueError:
             messagebox.showerror("Erreur", "Quantité et Prix unitaire doivent être des nombres.")
             return
-        core.add_ligne_facture_vente(self.conn, self.current_facture_id, compte, libelle, qte, prix)
+        analytic_code = self._extract_code(self.ligne_analytic_var.get()) or None
+        core.add_ligne_facture_vente(self.conn, self.current_facture_id, compte, libelle, qte, prix,
+                                      analytic_code=analytic_code)
         self.ligne_libelle_var.set("")
         self.ligne_qte_var.set("1")
         self.ligne_prix_var.set("")
+        self.ligne_analytic_var.set("")
         self.load_facture()
 
     def delete_ligne(self):
@@ -3881,9 +3906,10 @@ class FacturationTab(ttk.Frame):
             numero=self.numero_var.get().strip(), date_facture=date_str, client_code=client_code,
             entete=self.entete_text.get("1.0", "end").strip(),
             pied_page=self.pied_text.get("1.0", "end").strip(),
-            tva_taux=tva,
+            tva_taux=tva, tva_compte=self.tva_compte_var.get().strip() or core.COMPTE_TVA_VENTES,
         )
         core.set_setting(self.conn, "tva_taux_defaut", tva)
+        core.set_text_setting(self.conn, "tva_compte_defaut", self.tva_compte_var.get().strip() or core.COMPTE_TVA_VENTES)
         messagebox.showinfo("Enregistré", "Facture enregistrée (brouillon).")
         self.refresh_factures_list()
 
@@ -3954,7 +3980,10 @@ class FacturationTab(ttk.Frame):
     def _on_tva_preset_selected(self, event=None):
         idx = self.tva_preset_combo.current()
         if idx is not None and 0 <= idx < len(getattr(self, "_tva_presets", [])):
-            self.tva_var.set(str(self._tva_presets[idx]["montant"]))
+            preset = self._tva_presets[idx]
+            self.tva_var.set(str(preset["montant"]))
+            if preset.get("compte"):
+                self.tva_compte_var.set(preset["compte"])
 
     def imprimer_facture(self):
         """Génère la facture en HTML imprimable (bouton « Imprimer » intégré,
@@ -3975,6 +4004,7 @@ class FacturationTab(ttk.Frame):
     def refresh(self):
         self._refresh_client_values()
         self._refresh_ligne_compte_values()
+        self._refresh_ligne_analytic_values()
         self._refresh_tva_presets()
         self.refresh_factures_list()
 
@@ -4172,6 +4202,7 @@ class FacturesFrsTab(ttk.Frame):
         self.fournisseur_combo = ttk.Combobox(info, textvariable=self.fournisseur_var, width=26)
         self.fournisseur_combo.grid(row=0, column=5, padx=4)
         self.fournisseur_combo.bind("<KeyRelease>", self._on_fournisseur_keyrelease)
+        self.fournisseur_combo.bind("<Button-1>", self._open_dropdown)
         self._refresh_fournisseur_values()
 
         ttk.Label(info, text="Retenue % :").grid(row=1, column=0, sticky="w", padx=4, pady=(6, 0))
@@ -4184,12 +4215,14 @@ class FacturesFrsTab(ttk.Frame):
         self.retenue_compte_combo = ttk.Combobox(info, textvariable=self.retenue_compte_var, width=30)
         self.retenue_compte_combo.grid(row=1, column=3, columnspan=2, sticky="w", padx=4, pady=(6, 0))
         self.retenue_compte_combo.bind("<KeyRelease>", self._on_retenue_compte_keyrelease)
+        self.retenue_compte_combo.bind("<Button-1>", self._open_dropdown)
         self._refresh_retenue_compte_values()
         ttk.Label(info, text="Préréglage (ADMIN) :").grid(row=2, column=2, sticky="w", padx=(12, 4), pady=(4, 0))
         self.retenue_preset_var = tk.StringVar()
         self.retenue_preset_combo = ttk.Combobox(info, textvariable=self.retenue_preset_var, width=22, state="readonly")
         self.retenue_preset_combo.grid(row=2, column=3, columnspan=2, sticky="w", padx=4, pady=(4, 0))
         self.retenue_preset_combo.bind("<<ComboboxSelected>>", self._on_retenue_preset_selected)
+        self.retenue_preset_combo.bind("<Button-1>", self._open_dropdown)
         self._refresh_retenue_presets()
 
         form = ttk.LabelFrame(self, text="Ajouter une ligne (produit/service acheté — compte 6x)")
@@ -4199,6 +4232,7 @@ class FacturesFrsTab(ttk.Frame):
         self.ligne_compte_combo = ttk.Combobox(form, textvariable=self.ligne_compte_var, width=34)
         self.ligne_compte_combo.grid(row=0, column=1, padx=4)
         self.ligne_compte_combo.bind("<KeyRelease>", self._on_ligne_compte_keyrelease)
+        self.ligne_compte_combo.bind("<Button-1>", self._open_dropdown)
         self._refresh_ligne_compte_values()
         ttk.Label(form, text="Libellé :").grid(row=0, column=2, sticky="w", padx=(12, 4))
         self.ligne_libelle_var = tk.StringVar()
@@ -4209,9 +4243,15 @@ class FacturesFrsTab(ttk.Frame):
         ttk.Label(form, text="Prix unitaire :").grid(row=1, column=2, sticky="w", padx=(12, 4))
         self.ligne_prix_var = tk.StringVar()
         ttk.Entry(form, textvariable=self.ligne_prix_var, width=14).grid(row=1, column=3, sticky="w", padx=4)
-        ttk.Button(form, text="Ajouter la ligne", command=self.add_ligne).grid(row=1, column=4, padx=12)
+        ttk.Label(form, text="Code analytique :").grid(row=1, column=4, sticky="w", padx=(12, 4))
+        self.ligne_analytic_var = tk.StringVar()
+        self.ligne_analytic_combo = ttk.Combobox(form, textvariable=self.ligne_analytic_var, width=20)
+        self.ligne_analytic_combo.grid(row=1, column=5, padx=4, sticky="w")
+        self.ligne_analytic_combo.bind("<Button-1>", self._open_dropdown)
+        self._refresh_ligne_analytic_values()
+        ttk.Button(form, text="Ajouter la ligne", command=self.add_ligne).grid(row=1, column=6, padx=12)
 
-        cols = ("id", "compte", "libelle", "type_stock", "qte", "prix", "montant")
+        cols = ("id", "compte", "libelle", "type_stock", "qte", "prix", "analytique", "montant")
         self.tree = ttk.Treeview(self, columns=cols, show="headings", height=6)
         headers = ["ID", "Compte", "Libellé", "Impact stock", "Qté", "Prix unit.", "Montant HT"]
         widths = [40, 90, 220, 110, 70, 100, 110]
@@ -4268,6 +4308,15 @@ class FacturesFrsTab(ttk.Frame):
         if query:
             items = [a for a in core.search_accounts(self.conn, query, limit=50) if a["classe"] == "6"]
             self.ligne_compte_combo["values"] = [f"{a['code']} — {a['label']}" for a in items]
+
+    def _refresh_ligne_analytic_values(self):
+        codes = core.list_analytic_codes(self.conn)
+        self.ligne_analytic_combo["values"] = [f"{c['code']} — {c['label']}" for c in codes]
+
+    @staticmethod
+    def _open_dropdown(event=None):
+        if event is not None:
+            event.widget.event_generate("<Down>")
 
     @staticmethod
     def _extract_code(raw):
@@ -4345,7 +4394,8 @@ class FacturesFrsTab(ttk.Frame):
                 l["type_stock"], "Aucun (service)")
             self.tree.insert("", "end", values=(
                 l["id"], l["compte_achat"], l["libelle"], impact,
-                f"{l['quantite']:g}", f"{l['prix_unitaire']:,.2f}", f"{l['montant_ht']:,.2f}",
+                f"{l['quantite']:g}", f"{l['prix_unitaire']:,.2f}", l.get("analytic_code") or "",
+                f"{l['montant_ht']:,.2f}",
             ))
         totals = core.compute_facture_achat_totals(self.conn, self.current_facture_id)
         self.totals_var.set(
@@ -4384,10 +4434,13 @@ class FacturesFrsTab(ttk.Frame):
         except ValueError:
             messagebox.showerror("Erreur", "Quantité et Prix unitaire doivent être des nombres.")
             return
-        core.add_ligne_facture_achat(self.conn, self.current_facture_id, compte, libelle, qte, prix)
+        analytic_code = self._extract_code(self.ligne_analytic_var.get()) or None
+        core.add_ligne_facture_achat(self.conn, self.current_facture_id, compte, libelle, qte, prix,
+                                      analytic_code=analytic_code)
         self.ligne_libelle_var.set("")
         self.ligne_qte_var.set("1")
         self.ligne_prix_var.set("")
+        self.ligne_analytic_var.set("")
         self.load_facture()
 
     def delete_ligne(self):
@@ -4496,7 +4549,10 @@ class FacturesFrsTab(ttk.Frame):
     def _on_retenue_preset_selected(self, event=None):
         idx = self.retenue_preset_combo.current()
         if idx is not None and 0 <= idx < len(getattr(self, "_retenue_presets", [])):
-            self.retenue_taux_var.set(str(self._retenue_presets[idx]["montant"]))
+            preset = self._retenue_presets[idx]
+            self.retenue_taux_var.set(str(preset["montant"]))
+            if preset.get("compte"):
+                self.retenue_compte_var.set(preset["compte"])
 
     def imprimer_facture(self):
         """Génère la facture d'achat en HTML imprimable (bouton « Imprimer »
@@ -4520,6 +4576,7 @@ class FacturesFrsTab(ttk.Frame):
         self._refresh_ligne_compte_values()
         self._refresh_retenue_compte_values()
         self._refresh_retenue_presets()
+        self._refresh_ligne_analytic_values()
         self.refresh_factures_list()
 
 
@@ -4954,15 +5011,23 @@ class _SimplePlanTab(ttk.Frame):
             ttk.Label(form, text="Taux (%) :").grid(row=0, column=4, sticky="w", padx=(16, 0))
             self.taux_var = tk.StringVar()
             ttk.Entry(form, textvariable=self.taux_var, width=10).grid(row=0, column=5, padx=6)
+            ttk.Label(form, text="Compte fiscal (classe 44) :").grid(row=1, column=4, sticky="w", padx=(16, 0), pady=(4, 0))
+            self.compte_var = tk.StringVar()
+            self.compte_combo = ttk.Combobox(form, textvariable=self.compte_var, width=30)
+            self.compte_combo.grid(row=1, column=5, padx=6, pady=(4, 0), sticky="w")
+            self.compte_combo.bind("<KeyRelease>", self._on_compte_keyrelease)
+            self.compte_combo.bind("<Button-1>", self._open_dropdown)
+            self._refresh_compte_values()
             next_col = 6
         ttk.Button(form, text="Créer / Modifier", command=self.save).grid(row=0, column=next_col, padx=6)
         ttk.Button(form, text="Supprimer", command=self.delete).grid(row=0, column=next_col + 1, padx=6)
 
         cols = ("code", "label", "unite") if self.HAS_UNITE else (
-            ("code", "label", "taux") if self.HAS_TAUX else ("code", "label"))
+            ("code", "label", "taux", "compte") if self.HAS_TAUX else ("code", "label"))
         headers = ([self.CODE_LABEL, "Libellé", "Unité"] if self.HAS_UNITE else
-                   ([self.CODE_LABEL, "Libellé", "Taux (%)"] if self.HAS_TAUX else [self.CODE_LABEL, "Libellé"]))
-        widths = [140, 460, 80] if self.HAS_UNITE else ([140, 460, 90] if self.HAS_TAUX else [140, 500])
+                   ([self.CODE_LABEL, "Libellé", "Taux (%)", "Compte fiscal"] if self.HAS_TAUX
+                    else [self.CODE_LABEL, "Libellé"]))
+        widths = [140, 460, 80] if self.HAS_UNITE else ([140, 380, 80, 220] if self.HAS_TAUX else [140, 500])
         self.tree = ttk.Treeview(self, columns=cols, show="headings")
         for c, h, w in zip(cols, headers, widths):
             self.tree.heading(c, text=h)
@@ -4970,6 +5035,25 @@ class _SimplePlanTab(ttk.Frame):
         self.tree.pack(fill="both", expand=True, padx=16, pady=8)
         self.tree.bind("<<TreeviewSelect>>", self._on_select)
         self.refresh()
+
+    @staticmethod
+    def _open_dropdown(event=None):
+        if event is not None:
+            event.widget.event_generate("<Down>")
+
+    @staticmethod
+    def _extract_code(raw):
+        raw = (raw or "").strip()
+        return raw.split(" — ", 1)[0].strip() if " — " in raw else raw
+
+    def _refresh_compte_values(self):
+        items = [a for a in core.search_accounts(self.conn, "44", limit=100) if core.account_racine(a["code"]) == "44"]
+        self.compte_combo["values"] = [f"{a['code']} — {a['label']}" for a in items]
+
+    def _on_compte_keyrelease(self, event=None):
+        query = self._extract_code(self.compte_var.get())
+        items = [a for a in core.search_accounts(self.conn, query, limit=100) if core.account_racine(a["code"]) == "44"]
+        self.compte_combo["values"] = [f"{a['code']} — {a['label']}" for a in items]
 
     def _on_select(self, event=None):
         sel = self.tree.selection()
@@ -4982,6 +5066,7 @@ class _SimplePlanTab(ttk.Frame):
             self.unite_var.set(values[2] if len(values) > 2 else "")
         if self.HAS_TAUX:
             self.taux_var.set(values[2] if len(values) > 2 else "")
+            self.compte_var.set(values[3] if len(values) > 3 else "")
 
     def save(self):
         code = self.code_var.get().strip()
@@ -4997,7 +5082,8 @@ class _SimplePlanTab(ttk.Frame):
             except ValueError:
                 messagebox.showerror("Erreur", "Le taux doit être un nombre.")
                 return
-            self.add_fn(self.conn, code, label, montant=taux)
+            compte = self._extract_code(self.compte_var.get()) or None
+            self.add_fn(self.conn, code, label, montant=taux, compte=compte)
         else:
             self.add_fn(self.conn, code, label)
         self.refresh()
@@ -5015,6 +5101,7 @@ class _SimplePlanTab(ttk.Frame):
                 self.unite_var.set("")
             if self.HAS_TAUX:
                 self.taux_var.set("")
+                self.compte_var.set("")
             self.refresh()
 
     def refresh(self):
@@ -5024,7 +5111,8 @@ class _SimplePlanTab(ttk.Frame):
             if self.HAS_UNITE:
                 self.tree.insert("", "end", values=(item["code"], item["label"], item.get("unite") or ""))
             elif self.HAS_TAUX:
-                self.tree.insert("", "end", values=(item["code"], item["label"], item.get("montant") or 0))
+                self.tree.insert("", "end", values=(item["code"], item["label"], item.get("montant") or 0,
+                                                      item.get("compte") or ""))
             else:
                 self.tree.insert("", "end", values=(item["code"], item["label"]))
 
@@ -5109,8 +5197,8 @@ class TauxTVATab(_SimplePlanTab):
     def list_fn(self, conn):
         return core.list_taux_tva(conn)
 
-    def add_fn(self, conn, code, label, montant=0):
-        core.add_taux_tva(conn, code, label, montant=montant)
+    def add_fn(self, conn, code, label, montant=0, compte=None):
+        core.add_taux_tva(conn, code, label, montant=montant, compte=compte)
 
     def delete_fn(self, conn, code):
         core.delete_taux_tva(conn, code)
@@ -5133,8 +5221,8 @@ class TauxRetenueTab(_SimplePlanTab):
     def list_fn(self, conn):
         return core.list_taux_retenue(conn)
 
-    def add_fn(self, conn, code, label, montant=0):
-        core.add_taux_retenue(conn, code, label, montant=montant)
+    def add_fn(self, conn, code, label, montant=0, compte=None):
+        core.add_taux_retenue(conn, code, label, montant=montant, compte=compte)
 
     def delete_fn(self, conn, code):
         core.delete_taux_retenue(conn, code)

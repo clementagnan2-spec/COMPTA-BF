@@ -1595,3 +1595,39 @@ Testé de bout en bout : taux TVA et retenue paramétrés dans ADMIN, facture
 de vente et facture d'achat créées/validées avec ces taux, export HTML des
 deux imprimable, dévalidation des deux types de factures (simulant le
 bouton ADMIN consolidé), Bilan resté équilibré à chaque étape.
+
+### Comptes fiscaux liés aux taxes (ADMIN) + code analytique par ligne de facture
+
+**Demande confirmée** : présenter dans ADMIN les comptes fiscaux liés aux
+différentes taxes, et reproduire dans Facturation/Factures frs le même
+type d'interaction que la fenêtre multi-lignes (listes déroulantes qui
+s'ouvrent au clic).
+
+**Réalisé** :
+- **Colonne `compte`** ajoutée aux tables `taux_tva` et `taux_retenue`
+  (migration automatique) : chaque taux paramétrable dans ADMIN est
+  maintenant lié à son compte fiscal réel (classe 44), avec un champ dédié
+  filtré à cette classe (recherche par code ou libellé, liste déroulante
+  auto-ouverte au clic).
+- **`factures_vente.tva_compte`** (nouveau, migration incluse) : le compte
+  de TVA n'est plus figé sur `443100` — sélectionner un préréglage TVA dans
+  Facturation renseigne maintenant AUSSI le compte fiscal utilisé à la
+  validation (au lieu du taux seul). Testé : une facture avec compte TVA
+  personnalisé poste bien dessus.
+- **Même principe côté retenue à la source** (Factures frs) : sélectionner
+  un préréglage renseigne le taux ET le compte de retenue.
+- **Code analytique par ligne de facture** (vente ET achat) : nouvelle
+  colonne `analytic_code` sur `facture_vente_lignes`/`facture_achat_lignes`
+  (migration incluse), champ dédié dans le formulaire d'ajout de ligne,
+  colonne affichée dans le tableau — permet de rattacher une ligne de
+  facture à un code Énergie/Maintenance comme partout ailleurs dans
+  l'application.
+- **Listes déroulantes auto-ouvertes au clic** (client/fournisseur, compte
+  de vente/achat, préréglages TVA/retenue, code analytique) dans
+  Facturation et Factures frs, reproduisant l'interaction de la fenêtre
+  Saisie multi-lignes.
+
+Testé de bout en bout : facture de vente avec compte TVA personnalisé et
+code analytique sur sa ligne, facture d'achat avec compte de retenue
+personnalisé et code analytique sur sa ligne, toutes deux validées,
+export HTML des deux, Bilan resté équilibré (écart = 0).

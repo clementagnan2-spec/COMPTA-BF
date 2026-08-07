@@ -408,14 +408,16 @@ def init_db(conn):
         CREATE TABLE IF NOT EXISTS taux_tva (
             code TEXT PRIMARY KEY,
             label TEXT NOT NULL,
-            montant REAL NOT NULL DEFAULT 0
+            montant REAL NOT NULL DEFAULT 0,
+            compte TEXT
         )
     """)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS taux_retenue (
             code TEXT PRIMARY KEY,
             label TEXT NOT NULL,
-            montant REAL NOT NULL DEFAULT 0
+            montant REAL NOT NULL DEFAULT 0,
+            compte TEXT
         )
     """)
     conn.execute("""
@@ -502,6 +504,7 @@ def init_db(conn):
             entete TEXT,
             pied_page TEXT,
             tva_taux REAL NOT NULL DEFAULT 0,
+            tva_compte TEXT,
             statut TEXT NOT NULL DEFAULT 'brouillon',
             piece TEXT
         )
@@ -513,7 +516,8 @@ def init_db(conn):
             compte_vente TEXT NOT NULL,
             libelle TEXT NOT NULL,
             quantite REAL NOT NULL DEFAULT 0,
-            prix_unitaire REAL NOT NULL DEFAULT 0
+            prix_unitaire REAL NOT NULL DEFAULT 0,
+            analytic_code TEXT
         )
     """)
     conn.execute("""
@@ -537,7 +541,8 @@ def init_db(conn):
             compte_achat TEXT NOT NULL,
             libelle TEXT NOT NULL,
             quantite REAL NOT NULL DEFAULT 0,
-            prix_unitaire REAL NOT NULL DEFAULT 0
+            prix_unitaire REAL NOT NULL DEFAULT 0,
+            analytic_code TEXT
         )
     """)
     conn.commit()
@@ -574,6 +579,21 @@ def _migrate(conn):
     ac_cols = [r["name"] for r in conn.execute("PRAGMA table_info(analytic_codes)")]
     if ac_cols and "unite" not in ac_cols:
         conn.execute("ALTER TABLE analytic_codes ADD COLUMN unite TEXT")
+
+    for table in ("taux_tva", "taux_retenue"):
+        t_cols = [r["name"] for r in conn.execute(f"PRAGMA table_info({table})")]
+        if t_cols and "compte" not in t_cols:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN compte TEXT")
+
+    fvl_cols = [r["name"] for r in conn.execute("PRAGMA table_info(facture_vente_lignes)")]
+    if fvl_cols and "analytic_code" not in fvl_cols:
+        conn.execute("ALTER TABLE facture_vente_lignes ADD COLUMN analytic_code TEXT")
+    fal_cols = [r["name"] for r in conn.execute("PRAGMA table_info(facture_achat_lignes)")]
+    if fal_cols and "analytic_code" not in fal_cols:
+        conn.execute("ALTER TABLE facture_achat_lignes ADD COLUMN analytic_code TEXT")
+    fv_cols = [r["name"] for r in conn.execute("PRAGMA table_info(factures_vente)")]
+    if fv_cols and "tva_compte" not in fv_cols:
+        conn.execute("ALTER TABLE factures_vente ADD COLUMN tva_compte TEXT")
 
     # Migre l'ancien mécanisme "stock_initial_<compte>" (settings) vers opening_balances
     default_exercice = str(datetime.today().year)
@@ -1187,16 +1207,16 @@ def add_budget_code(conn, code, label, montant=0):
 
 
 def list_taux_tva(conn):
-    return _plan_list(conn, "taux_tva", extra_cols="montant")
+    return _plan_list(conn, "taux_tva", extra_cols="montant, compte")
 
 
 def taux_tva_exists(conn, code):
     return _plan_exists(conn, "taux_tva", code)
 
 
-def add_taux_tva(conn, code, label, montant=0):
-    conn.execute("INSERT OR REPLACE INTO taux_tva (code, label, montant) VALUES (?, ?, ?)",
-                 (code.strip(), label.strip(), montant or 0))
+def add_taux_tva(conn, code, label, montant=0, compte=None):
+    conn.execute("INSERT OR REPLACE INTO taux_tva (code, label, montant, compte) VALUES (?, ?, ?, ?)",
+                 (code.strip(), label.strip(), montant or 0, compte or None))
     conn.commit()
 
 
@@ -1205,16 +1225,16 @@ def delete_taux_tva(conn, code):
 
 
 def list_taux_retenue(conn):
-    return _plan_list(conn, "taux_retenue", extra_cols="montant")
+    return _plan_list(conn, "taux_retenue", extra_cols="montant, compte")
 
 
 def taux_retenue_exists(conn, code):
     return _plan_exists(conn, "taux_retenue", code)
 
 
-def add_taux_retenue(conn, code, label, montant=0):
-    conn.execute("INSERT OR REPLACE INTO taux_retenue (code, label, montant) VALUES (?, ?, ?)",
-                 (code.strip(), label.strip(), montant or 0))
+def add_taux_retenue(conn, code, label, montant=0, compte=None):
+    conn.execute("INSERT OR REPLACE INTO taux_retenue (code, label, montant, compte) VALUES (?, ?, ?, ?)",
+                 (code.strip(), label.strip(), montant or 0, compte or None))
     conn.commit()
 
 
@@ -1244,7 +1264,7 @@ def delete_donor_code(conn, code):
     _plan_delete(conn, "donor_codes", code)
 
 
-def _export_plan_generic_xlsx(conn, path, table, title, has_montant=False, has_unite=False):
+def _export_plan_generic_xlsx(conn, path, table, title, has_montant=False, has_unite=False, has_compte=False):
     import openpyxl
     from openpyxl.styles import Font, PatternFill
 
@@ -1253,12 +1273,14 @@ def _export_plan_generic_xlsx(conn, path, table, title, has_montant=False, has_u
     ws.title = title[:31]
     header_font = Font(bold=True, color="FFFFFFFF")
     header_fill = PatternFill("solid", fgColor="1F4E78")
-    headers = ["Code", "Libellé"] + (["Montant"] if has_montant else []) + (["Unité"] if has_unite else [])
+    headers = (["Code", "Libellé"] + (["Montant"] if has_montant else []) + (["Unité"] if has_unite else [])
+               + (["Compte"] if has_compte else []))
     for i, label in enumerate(headers, start=1):
         c = ws.cell(row=1, column=i, value=label)
         c.font = header_font
         c.fill = header_fill
-    cols = "code, label" + (", montant" if has_montant else "") + (", unite" if has_unite else "")
+    cols = ("code, label" + (", montant" if has_montant else "") + (", unite" if has_unite else "")
+            + (", compte" if has_compte else ""))
     for r, row in enumerate(conn.execute(f"SELECT {cols} FROM {table} ORDER BY code"), start=2):
         ws.cell(row=r, column=1, value=row["code"])
         ws.cell(row=r, column=2, value=row["label"])
@@ -1268,16 +1290,19 @@ def _export_plan_generic_xlsx(conn, path, table, title, has_montant=False, has_u
             col += 1
         if has_unite:
             ws.cell(row=r, column=col, value=row["unite"])
-    widths = [16, 40] + ([16] if has_montant else []) + ([12] if has_unite else [])
+            col += 1
+        if has_compte:
+            ws.cell(row=r, column=col, value=row["compte"])
+    widths = [16, 40] + ([16] if has_montant else []) + ([12] if has_unite else []) + ([16] if has_compte else [])
     for i, w in enumerate(widths, start=1):
         ws.column_dimensions[chr(64 + i)].width = w
     wb.save(path)
     return path
 
 
-def _import_plan_generic_xlsx(conn, path, table, has_montant=False, has_unite=False):
-    """Importe un plan (code/libellé[/montant][/unité]) depuis un .xlsx et
-    ÉCRASE l'ancien contenu de la table."""
+def _import_plan_generic_xlsx(conn, path, table, has_montant=False, has_unite=False, has_compte=False):
+    """Importe un plan (code/libellé[/montant][/unité][/compte]) depuis un
+    .xlsx et ÉCRASE l'ancien contenu de la table."""
     import openpyxl
 
     wb = openpyxl.load_workbook(path, data_only=True)
@@ -1285,7 +1310,7 @@ def _import_plan_generic_xlsx(conn, path, table, has_montant=False, has_unite=Fa
     header_cells = next(ws.iter_rows(min_row=1, max_row=1))
     headers = [str(c.value).strip().lower() if c.value is not None else "" for c in header_cells]
     aliases = {"code": ["code"], "label": ["libellé", "libelle"], "montant": ["montant"],
-               "unite": ["unité", "unite"]}
+               "unite": ["unité", "unite"], "compte": ["compte"]}
     colmap = {}
     for key, alist in aliases.items():
         for i, h in enumerate(headers):
@@ -1318,13 +1343,20 @@ def _import_plan_generic_xlsx(conn, path, table, has_montant=False, has_unite=Fa
             if "unite" in colmap and colmap["unite"] < len(values):
                 unite = str(values[colmap["unite"]] or "").strip() or None
             row.append(unite)
+        if has_compte:
+            compte = None
+            if "compte" in colmap and colmap["compte"] < len(values):
+                compte = str(values[colmap["compte"]] or "").strip() or None
+            row.append(compte)
         rows.append(tuple(row))
 
     if not rows:
         raise ValueError("Le fichier ne contient aucune ligne valide.")
 
     conn.execute(f"DELETE FROM {table}")
-    if has_montant:
+    if has_montant and has_compte:
+        conn.executemany(f"INSERT INTO {table} (code, label, montant, compte) VALUES (?, ?, ?, ?)", rows)
+    elif has_montant:
         conn.executemany(f"INSERT INTO {table} (code, label, montant) VALUES (?, ?, ?)", rows)
     elif has_unite:
         conn.executemany(f"INSERT INTO {table} (code, label, unite) VALUES (?, ?, ?)", rows)
@@ -1351,19 +1383,19 @@ def import_budget_codes_xlsx(conn, path):
 
 
 def export_taux_tva_xlsx(conn, path):
-    return _export_plan_generic_xlsx(conn, path, "taux_tva", "Taux de TVA", has_montant=True)
+    return _export_plan_generic_xlsx(conn, path, "taux_tva", "Taux de TVA", has_montant=True, has_compte=True)
 
 
 def import_taux_tva_xlsx(conn, path):
-    return _import_plan_generic_xlsx(conn, path, "taux_tva", has_montant=True)
+    return _import_plan_generic_xlsx(conn, path, "taux_tva", has_montant=True, has_compte=True)
 
 
 def export_taux_retenue_xlsx(conn, path):
-    return _export_plan_generic_xlsx(conn, path, "taux_retenue", "Retenues à la source", has_montant=True)
+    return _export_plan_generic_xlsx(conn, path, "taux_retenue", "Retenues à la source", has_montant=True, has_compte=True)
 
 
 def import_taux_retenue_xlsx(conn, path):
-    return _import_plan_generic_xlsx(conn, path, "taux_retenue", has_montant=True)
+    return _import_plan_generic_xlsx(conn, path, "taux_retenue", has_montant=True, has_compte=True)
 
 
 def export_donor_codes_xlsx(conn, path):
@@ -3719,13 +3751,16 @@ def valider_fabrication(conn, produit_code, date_str=None, piece=None, exercice=
 # de stock automatique (Débit compte de coût / Crédit compte de stock).
 # ---------------------------------------------------------------------------
 def create_facture_vente(conn, numero, date_facture, client_code, entete="", pied_page="",
-                          tva_taux=None):
+                          tva_taux=None, tva_compte=None):
     if tva_taux is None:
         tva_taux = get_setting(conn, "tva_taux_defaut", TVA_TAUX_DEFAUT)
+    if tva_compte is None:
+        tva_compte = get_text_setting(conn, "tva_compte_defaut", COMPTE_TVA_VENTES)
     cur = conn.execute(
-        """INSERT INTO factures_vente (numero, date_facture, client_code, entete, pied_page, tva_taux, statut)
-           VALUES (?, ?, ?, ?, ?, ?, 'brouillon')""",
-        (numero, date_facture, client_code, entete, pied_page, tva_taux),
+        """INSERT INTO factures_vente (numero, date_facture, client_code, entete, pied_page, tva_taux,
+                                        tva_compte, statut)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 'brouillon')""",
+        (numero, date_facture, client_code, entete, pied_page, tva_taux, tva_compte),
     )
     conn.commit()
     return cur.lastrowid
@@ -3762,11 +3797,12 @@ def list_factures_vente(conn):
     return [dict(r) for r in rows]
 
 
-def add_ligne_facture_vente(conn, facture_id, compte_vente, libelle, quantite, prix_unitaire):
+def add_ligne_facture_vente(conn, facture_id, compte_vente, libelle, quantite, prix_unitaire, analytic_code=None):
     conn.execute(
-        """INSERT INTO facture_vente_lignes (facture_id, compte_vente, libelle, quantite, prix_unitaire)
-           VALUES (?, ?, ?, ?, ?)""",
-        (facture_id, compte_vente, libelle, quantite or 0, prix_unitaire or 0),
+        """INSERT INTO facture_vente_lignes (facture_id, compte_vente, libelle, quantite, prix_unitaire,
+                                               analytic_code)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        (facture_id, compte_vente, libelle, quantite or 0, prix_unitaire or 0, analytic_code or None),
     )
     conn.commit()
 
@@ -3866,7 +3902,8 @@ def valider_facture_vente(conn, facture_id, exercice=None):
 
     # Crédit TVA facturée
     if totals["tva_montant"]:
-        add_entry(conn, date_str, piece, "VE", COMPTE_TVA_VENTES, "", f"TVA {totals['tva_taux']:g}% facture {piece}",
+        add_entry(conn, date_str, piece, "VE", facture.get("tva_compte") or COMPTE_TVA_VENTES, "",
+                  f"TVA {totals['tva_taux']:g}% facture {piece}",
                   0, totals["tva_montant"])
 
     # Sortie de stock automatique pour les lignes liées aux marchandises/produits finis
@@ -3952,11 +3989,12 @@ def list_factures_achat(conn):
     return [dict(r) for r in rows]
 
 
-def add_ligne_facture_achat(conn, facture_id, compte_achat, libelle, quantite, prix_unitaire):
+def add_ligne_facture_achat(conn, facture_id, compte_achat, libelle, quantite, prix_unitaire, analytic_code=None):
     conn.execute(
-        """INSERT INTO facture_achat_lignes (facture_id, compte_achat, libelle, quantite, prix_unitaire)
-           VALUES (?, ?, ?, ?, ?)""",
-        (facture_id, compte_achat, libelle, quantite or 0, prix_unitaire or 0),
+        """INSERT INTO facture_achat_lignes (facture_id, compte_achat, libelle, quantite, prix_unitaire,
+                                               analytic_code)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        (facture_id, compte_achat, libelle, quantite or 0, prix_unitaire or 0, analytic_code or None),
     )
     conn.commit()
 
