@@ -4966,6 +4966,8 @@ class _SimplePlanTab(ttk.Frame):
     CODE_LABEL = "Code"
     HAS_UNITE = False  # PlanAnalytiqueTab l'active pour gérer L / Kw / H...
     HAS_TAUX = False    # TauxTVATab/TauxRetenueTab l'activent pour gérer un taux (%)
+    SUGGESTIONS_FN = None     # core.ajouter_xxx_suggeres(conn) -> nb ajoutés, si applicable
+    SUGGESTIONS_LABEL = None  # texte du bouton, si SUGGESTIONS_FN est défini
 
     def list_fn(self, conn):
         raise NotImplementedError
@@ -4992,6 +4994,9 @@ class _SimplePlanTab(ttk.Frame):
         ttk.Button(import_bar, text="Importer (.xlsx) — ÉCRASE le plan actuel",
                    command=self.import_xlsx).pack(side="left", padx=2)
         ttk.Button(import_bar, text="Exporter (.xlsx)", command=self.export_xlsx).pack(side="left", padx=2)
+        if self.SUGGESTIONS_FN is not None:
+            ttk.Button(import_bar, text=self.SUGGESTIONS_LABEL or "Ajouter les catégories courantes",
+                       command=self._add_suggestions).pack(side="left", padx=8)
 
         form = ttk.Frame(self)
         form.pack(fill="x", padx=16, pady=6)
@@ -5145,6 +5150,18 @@ class _SimplePlanTab(ttk.Frame):
         self.refresh()
         messagebox.showinfo("Import terminé", f"{n} ligne(s) importée(s). Le plan précédent a été remplacé.")
 
+    def _add_suggestions(self):
+        n = self.SUGGESTIONS_FN(self.conn)
+        if n:
+            messagebox.showinfo(
+                "Catégories ajoutées",
+                f"{n} catégorie(s) ajoutée(s), à 0% et sans compte — complétez le taux et le compte "
+                f"fiscal exacts pour chacune avant utilisation."
+            )
+        else:
+            messagebox.showinfo("Rien à ajouter", "Toutes les catégories courantes existent déjà.")
+        self.refresh()
+
 
 class PlanAnalytiqueTab(_SimplePlanTab):
     TITLE = "PLAN ANALYTIQUE"
@@ -5217,6 +5234,8 @@ class TauxRetenueTab(_SimplePlanTab):
     TITLE = "TAUX DE RETENUE À LA SOURCE"
     CODE_LABEL = "Code"
     HAS_TAUX = True
+    SUGGESTIONS_FN = staticmethod(core.ajouter_taux_retenue_suggeres)
+    SUGGESTIONS_LABEL = "Ajouter les catégories courantes (BIC, IS, TVA...)"
 
     def list_fn(self, conn):
         return core.list_taux_retenue(conn)

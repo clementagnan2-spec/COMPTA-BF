@@ -1242,6 +1242,37 @@ def delete_taux_retenue(conn, code):
     return _plan_delete(conn, "taux_retenue", code)
 
 
+# Catégories de retenues à la source reconnues par la DGI du Burkina Faso
+# (voir la liste officielle des formulaires de déclaration sur dgi.bf) — SANS
+# taux ni compte pré-remplis : les taux et seuils exacts dépendent du régime
+# du fournisseur, du type de prestation et de la loi de finances en vigueur
+# (ex. la retenue à la source de la TVA est passée de 20% à 30% en 2026),
+# et doivent être vérifiés par l'utilisateur avant usage.
+SUGGESTIONS_RETENUE = [
+    ("RET-BIC", "Retenue BIC (fournisseurs non attributaires)"),
+    ("RET-IS", "Retenue Impôt sur les Sociétés (IS)"),
+    ("RET-TVA", "Retenue à la source de la TVA"),
+    ("RET-LOYER", "Retenue sur loyers d'immeuble"),
+    ("RET-PRESTA-BF", "Retenue sur sommes versées aux prestataires établis au Burkina Faso"),
+    ("RET-PRESTA-ETR", "Retenue sur sommes versées aux personnes sans installation professionnelle au Burkina Faso"),
+    ("RET-CMD-PUB", "Retenue sur commandes publiques"),
+]
+
+
+def ajouter_taux_retenue_suggeres(conn):
+    """Ajoute les catégories de retenue à la source courantes (reconnues par
+    la DGI du Burkina Faso) qui n'existent pas encore, à 0% et sans compte —
+    à compléter par l'utilisateur avec le taux et le compte fiscal exacts,
+    SANS écraser une catégorie déjà personnalisée. Retourne le nombre de
+    catégories effectivement ajoutées."""
+    ajoutes = 0
+    for code, label in SUGGESTIONS_RETENUE:
+        if not taux_retenue_exists(conn, code):
+            add_taux_retenue(conn, code, label, montant=0, compte=None)
+            ajoutes += 1
+    return ajoutes
+
+
 def delete_budget_code(conn, code):
     _plan_delete(conn, "budget_codes", code)
 

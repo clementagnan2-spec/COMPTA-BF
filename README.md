@@ -1631,3 +1631,35 @@ Testé de bout en bout : facture de vente avec compte TVA personnalisé et
 code analytique sur sa ligne, facture d'achat avec compte de retenue
 personnalisé et code analytique sur sa ligne, toutes deux validées,
 export HTML des deux, Bilan resté équilibré (écart = 0).
+
+### Catégories de retenue à la source courantes (ADMIN)
+
+**Demande** : lister les nombreuses retenues à la source possibles dans
+ADMIN, à choisir ensuite dans la facture. Recherche effectuée sur les
+taux réels en vigueur au Burkina Faso : la législation a changé en 2026
+(retenue TVA passée de 20% à 30%) et les sources disponibles se
+contredisent sur d'autres taux (BIC cité à 2% ou 5% selon le cas) — les
+taux n'ont donc **volontairement pas été inventés**.
+
+**Réalisé** : nouveau bouton **« Ajouter les catégories courantes (BIC,
+IS, TVA...) »** dans l'écran ADMIN > Taux de retenue à la source. Ajoute 7
+catégories reconnues officiellement par la DGI du Burkina Faso (d'après la
+liste de leurs formulaires de déclaration officiels sur dgi.bf) — **à 0%
+et sans compte fiscal pré-rempli**, à compléter par l'utilisateur avec le
+taux et le compte exacts applicables à son cas :
+- Retenue BIC (fournisseurs non attributaires)
+- Retenue Impôt sur les Sociétés (IS)
+- Retenue à la source de la TVA
+- Retenue sur loyers d'immeuble
+- Retenue sur sommes versées aux prestataires établis au Burkina Faso
+- Retenue sur sommes versées aux personnes sans installation professionnelle au Burkina Faso
+- Retenue sur commandes publiques
+
+N'écrase jamais une catégorie déjà personnalisée (même mécanisme que les
+codes analytiques Énergie/Maintenance). Ce bouton (`SUGGESTIONS_FN`) est
+généralisé dans `_SimplePlanTab` — réutilisable pour n'importe quel futur
+plan à catégories courantes, sans dupliquer le code.
+
+Testé : les 7 catégories s'ajoutent correctement, une retenue déjà
+personnalisée par l'utilisateur (« 5% » / 447810) n'est jamais touchée par
+un second appel.
