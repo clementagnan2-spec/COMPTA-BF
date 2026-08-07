@@ -832,6 +832,11 @@ class SaisieTab(ttk.Frame):
 
     def refresh(self):
         self._refresh_compte_values()
+        self._refresh_plan_values("analytique")
+        self._refresh_plan_values("budgetaire")
+        self._refresh_plan_values("bailleur")
+        self._refresh_fournisseur_values()
+        self._refresh_client_values()
         for row in self.tree.get_children():
             self.tree.delete(row)
         entries = core.list_entries(self.conn, exercice=core.get_current_exercice(self.conn))

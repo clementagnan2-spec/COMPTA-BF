@@ -1314,3 +1314,22 @@ résultat, Liasse fiscale, TFT, Situation financière, Production, Stocks,
 Trésorerie, Impôts/Déclarations sociales, Énergie/Maintenance, diagnostic
 d'écart, rapprochement bancaire) sur une base neuve, sans aucune exception :
 plus aucune constante orpheline détectée suite à la modification précédente.
+
+### Correctif : liste « Code analytique » figée dans l'onglet Saisie
+
+**Bug repéré par l'utilisateur** : le Plan analytique affichait bien tous
+les codes (ENERGIE-EAU, MAINT-MACH...), mais le menu déroulant « Code
+analytique » de l'onglet Saisie n'en proposait que deux, restés figés
+depuis le tout premier lancement de l'application.
+
+**Cause** : `SaisieTab.refresh()` — appelé à chaque fois qu'on revient sur
+l'onglet Saisie (`App.show()`) — ne rafraîchissait que la liste des
+comptes (`_refresh_compte_values()`). Les listes Code analytique, Code
+budgétaire, Code bailleur, Fournisseur et Client n'étaient peuplées
+qu'une seule fois, à la création du formulaire au démarrage de l'app :
+tout code ajouté ensuite (via Plan analytique, ou via les nouveaux boutons
+« Ajouter les codes courants » d'Énergie/Maintenance) n'apparaissait donc
+jamais dans Saisie tant que l'application n'était pas redémarrée.
+
+**Corrigé** : `SaisieTab.refresh()` rafraîchit désormais aussi ces cinq
+listes à chaque retour sur l'onglet Saisie.
