@@ -1814,44 +1814,54 @@ def add_entry(conn, date_str, piece, journal, compte, tiers, libelle, debit, cre
     conn.commit()
 
 
-def add_multi_ligne_entry(conn, date_str, piece, journal, compte_credit, lignes_debit,
-                           tiers="", libelle_credit="", fournisseur_code="", client_code="",
-                           budget_code="", donor_code=""):
-    """Écriture à PLUSIEURS comptes au débit et un SEUL compte au crédit (ex.
-    plusieurs charges de classe 6 — eau, entretien, fournitures... — payées
-    en une seule fois depuis la banque) : reste équilibrée par construction,
-    le crédit unique = somme exacte des débits.
+def add_ecriture_multi_lignes(conn, date_str, piece, journal, lignes, tiers="",
+                               fournisseur_code="", client_code="", budget_code="", donor_code=""):
+    """Écriture comptable à un nombre libre de lignes, chacune au débit OU
+    au crédit (jamais les deux sur la même ligne) — la vraie saisie
+    multi-lignes façon journal général : autant de comptes que nécessaire
+    des deux côtés (ex. plusieurs charges de classe 6 au débit, réglées par
+    plusieurs comptes de trésorerie au crédit). Reste équilibrée par
+    construction : le total des débits DOIT être strictement égal au total
+    des crédits, sous peine de refus — impossible d'enregistrer un
+    déséquilibre.
 
-    `lignes_debit` : liste de dicts {compte, montant, libelle, analytic_code,
-    quantite} — chaque ligne débit peut porter son propre code analytique et
-    sa propre quantité (utile pour Énergie/Maintenance : coût unitaire moyen
-    pondéré par litre/kWh/heure).
+    `lignes` : liste de dicts {compte, libelle, debit, credit, quantite,
+    analytic_code} — chaque ligne renseigne SOIT debit SOIT credit (l'autre
+    valant 0 ou absent). Chaque ligne peut porter son propre code
+    analytique et sa propre quantité (utile pour Énergie/Maintenance : coût
+    unitaire moyen pondéré par litre/kWh/heure).
 
     NE déclenche PAS l'entrée automatique de stock (achat 601x/602x avec
     quantité) que fait add_balanced_entry pour une écriture à paire simple —
     si une ligne concerne un achat de stock, utilisez le formulaire standard
     à la place."""
-    if not lignes_debit:
-        raise ValueError("Ajoutez au moins une ligne au débit.")
-    for l in lignes_debit:
+    if len(lignes) < 2:
+        raise ValueError("Une écriture multi-lignes nécessite au moins 2 lignes (au moins une au débit, une au crédit).")
+    total_debit = total_credit = 0.0
+    for l in lignes:
         if not l.get("compte"):
-            raise ValueError("Chaque ligne débit doit avoir un compte.")
-        if not l.get("montant") or l["montant"] <= 0:
-            raise ValueError(f"Le montant de la ligne « {l.get('compte')} » doit être strictement positif.")
-        if l["compte"] == compte_credit:
-            raise ValueError(f"Le compte {l['compte']} ne peut pas être à la fois au débit et au crédit.")
-    total = sum(l["montant"] for l in lignes_debit)
+            raise ValueError("Chaque ligne doit avoir un compte.")
+        d, c = l.get("debit") or 0, l.get("credit") or 0
+        if d and c:
+            raise ValueError(f"La ligne « {l['compte']} » ne peut pas être à la fois au débit et au crédit.")
+        if not d and not c:
+            raise ValueError(f"La ligne « {l['compte']} » doit avoir un montant au débit ou au crédit.")
+        total_debit += d
+        total_credit += c
+    if total_debit <= 0:
+        raise ValueError("Le montant total de l'écriture doit être strictement positif.")
+    if abs(total_debit - total_credit) >= 0.01:
+        raise ValueError(
+            f"Écriture déséquilibrée : Total Débit = {total_debit:,.2f}, Total Crédit = {total_credit:,.2f} "
+            f"(écart de {total_debit - total_credit:,.2f}) — corrigez avant d'enregistrer."
+        )
     _check_exercice_editable(conn, date_str)
-    for l in lignes_debit:
+    for l in lignes:
         add_entry(conn, date_str, piece, journal, l["compte"], tiers, l.get("libelle") or "",
-                  l["montant"], 0, analytic_code=l.get("analytic_code") or "",
+                  l.get("debit") or 0, l.get("credit") or 0, analytic_code=l.get("analytic_code") or "",
                   budget_code=budget_code, donor_code=donor_code, quantite=l.get("quantite") or 0,
                   fournisseur_code=fournisseur_code, client_code=client_code)
-    add_entry(conn, date_str, piece, journal, compte_credit, tiers,
-              libelle_credit or "Règlement — écriture multi-lignes", 0, total,
-              budget_code=budget_code, donor_code=donor_code,
-              fournisseur_code=fournisseur_code, client_code=client_code)
-    return total
+    return total_debit
 
 
 def add_balanced_entry(conn, date_str, piece, journal, compte_debit, compte_credit, montant,

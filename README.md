@@ -1377,32 +1377,33 @@ fabrication complète (matière + main-d'œuvre analytique) comptabilisée avec
 succès, Bilan resté équilibré (écart = 0) ; export/import du Plan analytique
 préserve les unités.
 
-### Saisie multi-lignes (plusieurs comptes au débit, un seul au crédit)
 
-**Demande** : pouvoir saisir en une seule écriture plusieurs comptes de
-charges (classe 6 typiquement) au débit, réglés par un seul compte au
-crédit (ex. la banque), via un bouton dédié.
+### Saisie multi-lignes — révisée : plusieurs comptes au débit ET au crédit
+
+**Correction suite au retour utilisateur** : la première version de la
+fenêtre multi-lignes n'acceptait qu'un SEUL compte au crédit. La demande
+était en réalité une vraie écriture à lignes multiples des DEUX côtés (ex.
+plusieurs charges de classe 6 au débit, réglées par plusieurs comptes de
+trésorerie au crédit) — comme un journal général classique.
 
 **Réalisé** :
-- `core.add_multi_ligne_entry()` (nouveau) : poste N lignes au débit + 1
-  seule ligne au crédit, équilibrée par construction (le crédit = somme
-  exacte des débits — impossible de créer un déséquilibre). Chaque ligne
-  débit peut porter son propre libellé, code analytique et quantité (utile
-  pour Énergie/Maintenance — coût unitaire moyen pondéré). Ne déclenche PAS
-  les mouvements de stock automatiques de la saisie standard (achat
-  601x/602x avec quantité) — pour un achat de stock, utiliser le formulaire
-  habituel.
-- **Nouveau bouton « Saisie multi-lignes (plusieurs comptes au débit, un
-  seul au crédit) »** dans l'onglet Saisie, qui ouvre une fenêtre dédiée
-  (`MultiLigneDialog`) : informations communes (date, pièce, journal,
-  tiers), un tableau de lignes débit qu'on alimente une à une (compte avec
-  recherche, libellé, montant, quantité, code analytique — avec l'unité qui
-  s'affiche automatiquement comme dans le reste de l'app), un total débit
-  en temps réel, puis le compte créditeur unique dont le montant (affiché,
-  non modifiable) est calculé automatiquement comme la somme des lignes.
+- `core.add_ecriture_multi_lignes()` remplace l'ancienne fonction
+  restrictive : accepte un nombre libre de lignes, chacune au débit OU au
+  crédit (jamais les deux sur la même ligne), et refuse l'enregistrement
+  tant que Total Débit ≠ Total Crédit (message d'erreur explicite avec
+  l'écart exact).
+- **Fenêtre `MultiLigneDialog` reconstruite** : une seule grille avec
+  colonnes Compte / Libellé / Débit / Crédit / Quantité / Code analytique.
+  On ajoute les lignes une à une (au débit ou au crédit, au choix), avec un
+  total Débit / total Crédit / Écart affiché en temps réel (vert si
+  équilibré, rouge sinon).
+- **Listes déroulantes qui s'ouvrent automatiquement au clic** (comptes,
+  journal, code analytique) — comme demandé, plus besoin de cliquer sur la
+  petite flèche. Le champ Compte est pré-rempli avec les 200 premiers
+  comptes et se filtre en tapant (recherche par code ou libellé), comme le
+  formulaire de Saisie standard.
 
-Testé : 2 lignes débit (Eau taguée ENERGIE-EAU avec quantité, Entretien)
-réglées par un seul crédit banque — écriture correctement équilibrée,
-Bilan resté équilibré (écart = 0), et le coût unitaire moyen pondéré du
-code analytique se recalcule bien à partir de cette écriture multi-lignes
-comme depuis n'importe quelle autre saisie.
+Testé : 2 lignes débit (Eau taguée ENERGIE-EAU avec quantité, Entretien) +
+2 lignes crédit (Banque, Caisse) — écriture à 4 lignes correctement
+équilibrée et enregistrée, Bilan resté équilibré (écart = 0), coût unitaire
+moyen pondéré de l'eau recalculé correctement à partir de cette écriture.

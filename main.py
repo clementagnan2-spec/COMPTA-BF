@@ -219,21 +219,22 @@ class App(tk.Tk):
 
 
 class MultiLigneDialog(tk.Toplevel):
-    """Fenêtre de saisie multi-lignes : plusieurs comptes au DÉBIT (ex.
-    plusieurs charges de classe 6 — eau, entretien, fournitures...) et un
-    SEUL compte au CRÉDIT (ex. la banque qui règle le tout) — reste
-    équilibrée par construction, le crédit = somme exacte des débits.
+    """Fenêtre de saisie multi-lignes : un nombre libre de comptes au DÉBIT
+    ET un nombre libre de comptes au CRÉDIT dans la même écriture (ex.
+    plusieurs charges de classe 6 réglées par plusieurs comptes de
+    trésorerie) — une seule grille, chaque ligne renseignée au débit OU au
+    crédit, le tout devant s'équilibrer avant l'enregistrement.
     N'entraîne pas les mouvements de stock automatiques que fait la saisie
-    standard pour un achat 601x/602x avec quantité — pour un achat de stock,
-    utilisez le formulaire habituel."""
+    standard pour un achat 601x/602x avec quantité — pour un achat de
+    stock, utilisez le formulaire habituel."""
 
     def __init__(self, parent, conn, on_saved):
         super().__init__(parent)
         self.conn = conn
         self.on_saved = on_saved
         self.lignes = []
-        self.title("Saisie multi-lignes (plusieurs comptes au débit, un seul au crédit)")
-        self.geometry("1000x600")
+        self.title("Saisie multi-lignes (plusieurs comptes au débit et au crédit)")
+        self.geometry("1050x620")
         self.transient(parent)
         self.grab_set()
 
@@ -247,30 +248,40 @@ class MultiLigneDialog(tk.Toplevel):
         ttk.Entry(header, textvariable=self.piece_var, width=16).grid(row=0, column=3, padx=4)
         ttk.Label(header, text="Journal :").grid(row=0, column=4, sticky="w", padx=(16, 4))
         self.journal_var = tk.StringVar(value="OD")
-        ttk.Combobox(header, textvariable=self.journal_var, width=8,
-                     values=["AC", "VE", "OD", "BQ", "CA"]).grid(row=0, column=5, padx=4)
+        journal_combo = ttk.Combobox(header, textvariable=self.journal_var, width=8, state="readonly",
+                                      values=["AC", "VE", "OD", "BQ", "CA"])
+        journal_combo.grid(row=0, column=5, padx=4)
+        journal_combo.bind("<Button-1>", self._open_dropdown)
         ttk.Label(header, text="Tiers :").grid(row=0, column=6, sticky="w", padx=(16, 4))
         self.tiers_var = tk.StringVar()
         ttk.Entry(header, textvariable=self.tiers_var, width=18).grid(row=0, column=7, padx=4)
 
-        debit_frame = ttk.LabelFrame(self, text="Lignes au DÉBIT (autant de comptes que nécessaire — ex. classe 6)")
-        debit_frame.pack(fill="both", expand=True, padx=10, pady=6)
+        lignes_frame = ttk.LabelFrame(self, text=(
+            "Lignes de l'écriture — autant de comptes que nécessaire au débit ET au crédit "
+            "(renseignez Débit OU Crédit par ligne, pas les deux)"))
+        lignes_frame.pack(fill="both", expand=True, padx=10, pady=6)
 
-        form = ttk.Frame(debit_frame)
+        form = ttk.Frame(lignes_frame)
         form.pack(fill="x", padx=6, pady=4)
         ttk.Label(form, text="Compte :").grid(row=0, column=0, sticky="w")
         self.ligne_compte_var = tk.StringVar()
         self.ligne_compte_combo = ttk.Combobox(form, textvariable=self.ligne_compte_var, width=24)
         self.ligne_compte_combo.grid(row=0, column=1, padx=4)
         self.ligne_compte_combo.bind("<KeyRelease>", self._on_compte_keyrelease)
+        self.ligne_compte_combo.bind("<Button-1>", self._open_dropdown)
+        self._refresh_compte_values(self.ligne_compte_combo)
 
         ttk.Label(form, text="Libellé :").grid(row=0, column=2, sticky="w", padx=(12, 0))
         self.ligne_libelle_var = tk.StringVar()
-        ttk.Entry(form, textvariable=self.ligne_libelle_var, width=22).grid(row=0, column=3, padx=4)
+        ttk.Entry(form, textvariable=self.ligne_libelle_var, width=20).grid(row=0, column=3, padx=4)
 
-        ttk.Label(form, text="Montant :").grid(row=0, column=4, sticky="w", padx=(12, 0))
-        self.ligne_montant_var = tk.StringVar()
-        ttk.Entry(form, textvariable=self.ligne_montant_var, width=12).grid(row=0, column=5, padx=4)
+        ttk.Label(form, text="Débit :").grid(row=0, column=4, sticky="w", padx=(12, 0))
+        self.ligne_debit_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.ligne_debit_var, width=11).grid(row=0, column=5, padx=4)
+
+        ttk.Label(form, text="Crédit :").grid(row=0, column=6, sticky="w", padx=(12, 0))
+        self.ligne_credit_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.ligne_credit_var, width=11).grid(row=0, column=7, padx=4)
 
         self.ligne_qte_label = ttk.Label(form, text="Quantité :")
         self.ligne_qte_label.grid(row=1, column=0, sticky="w", pady=(4, 0))
@@ -280,46 +291,44 @@ class MultiLigneDialog(tk.Toplevel):
 
         ttk.Label(form, text="Code analytique :").grid(row=1, column=2, sticky="w", padx=(12, 0), pady=(4, 0))
         self.ligne_analytic_var = tk.StringVar()
-        self.ligne_analytic_combo = ttk.Combobox(form, textvariable=self.ligne_analytic_var, width=22)
+        self.ligne_analytic_combo = ttk.Combobox(form, textvariable=self.ligne_analytic_var, width=20)
         self.ligne_analytic_combo.grid(row=1, column=3, padx=4, pady=(4, 0))
         self.ligne_analytic_combo["values"] = [f"{c['code']} — {c['label']}" for c in core.list_analytic_codes(conn)]
         self.ligne_analytic_combo.bind("<<ComboboxSelected>>", self._on_analytic_changed)
+        self.ligne_analytic_combo.bind("<Button-1>", self._open_dropdown)
 
-        ttk.Button(form, text="Ajouter la ligne", command=self.add_ligne).grid(row=1, column=5, padx=4, pady=(4, 0))
+        ttk.Button(form, text="Ajouter la ligne", command=self.add_ligne).grid(
+            row=1, column=6, columnspan=2, padx=4, pady=(4, 0), sticky="e")
 
-        cols = ("compte", "libelle", "montant", "quantite", "analytique")
-        self.tree = ttk.Treeview(debit_frame, columns=cols, show="headings", height=10)
-        headers = ["Compte", "Libellé", "Montant", "Quantité", "Code analytique"]
-        widths = [90, 260, 120, 90, 180]
+        cols = ("compte", "libelle", "debit", "credit", "quantite", "analytique")
+        self.tree = ttk.Treeview(lignes_frame, columns=cols, show="headings", height=12)
+        headers = ["Compte", "Libellé", "Débit", "Crédit", "Quantité", "Code analytique"]
+        widths = [90, 240, 110, 110, 90, 180]
         for c, h, w in zip(cols, headers, widths):
             self.tree.heading(c, text=h)
             self.tree.column(c, width=w, anchor="w")
         self.tree.pack(fill="both", expand=True, padx=6, pady=6)
-        ttk.Button(debit_frame, text="Supprimer la ligne sélectionnée", command=self.delete_ligne).pack(
+        ttk.Button(lignes_frame, text="Supprimer la ligne sélectionnée", command=self.delete_ligne).pack(
             anchor="w", padx=6, pady=(0, 6))
 
-        self.total_var = tk.StringVar(value="Total débit : 0")
-        ttk.Label(debit_frame, textvariable=self.total_var, font=("Segoe UI", 10, "bold")).pack(
-            anchor="w", padx=6, pady=(0, 6))
-
-        credit_frame = ttk.LabelFrame(self, text="Compte au CRÉDIT (un seul, contrepartie de toutes les lignes débit)")
-        credit_frame.pack(fill="x", padx=10, pady=6)
-        ttk.Label(credit_frame, text="Compte créditeur :").grid(row=0, column=0, sticky="w", padx=4, pady=4)
-        self.credit_compte_var = tk.StringVar()
-        self.credit_compte_combo = ttk.Combobox(credit_frame, textvariable=self.credit_compte_var, width=26)
-        self.credit_compte_combo.grid(row=0, column=1, padx=4)
-        self.credit_compte_combo.bind("<KeyRelease>", self._on_credit_keyrelease)
-        ttk.Label(credit_frame, text="Libellé crédit :").grid(row=0, column=2, sticky="w", padx=(16, 4))
-        self.credit_libelle_var = tk.StringVar()
-        ttk.Entry(credit_frame, textvariable=self.credit_libelle_var, width=32).grid(row=0, column=3, padx=4)
-        self.credit_montant_var = tk.StringVar(value="Montant crédit (auto, = total débit) : 0")
-        ttk.Label(credit_frame, textvariable=self.credit_montant_var, font=("Segoe UI", 10, "bold")).grid(
-            row=1, column=0, columnspan=4, sticky="w", padx=4, pady=(4, 4))
+        self.total_var = tk.StringVar(value="Total Débit : 0     Total Crédit : 0     Écart : 0")
+        self.total_label = ttk.Label(lignes_frame, textvariable=self.total_var, font=("Segoe UI", 10, "bold"))
+        self.total_label.pack(anchor="w", padx=6, pady=(0, 6))
 
         btns = ttk.Frame(self)
         btns.pack(fill="x", padx=10, pady=10)
         ttk.Button(btns, text="Enregistrer l'écriture", command=self.save).pack(side="left", padx=4)
         ttk.Button(btns, text="Annuler", command=self.destroy).pack(side="left", padx=4)
+
+    @staticmethod
+    def _open_dropdown(event=None):
+        """Ouvre automatiquement la liste déroulante d'un Combobox au clic."""
+        widget = event.widget if event else None
+        if widget is not None:
+            widget.event_generate("<Down>")
+
+    def _refresh_compte_values(self, combo):
+        combo["values"] = [f"{a['code']} — {a['label']}" for a in core.search_accounts(self.conn, "", limit=200)]
 
     @staticmethod
     def _extract_code(raw):
@@ -328,15 +337,8 @@ class MultiLigneDialog(tk.Toplevel):
 
     def _on_compte_keyrelease(self, event=None):
         query = self.ligne_compte_var.get().strip()
-        if query:
-            matches = core.search_accounts(self.conn, query, limit=30)
-            self.ligne_compte_combo["values"] = [f"{m['code']} — {m['label']}" for m in matches]
-
-    def _on_credit_keyrelease(self, event=None):
-        query = self.credit_compte_var.get().strip()
-        if query:
-            matches = core.search_accounts(self.conn, query, limit=30)
-            self.credit_compte_combo["values"] = [f"{m['code']} — {m['label']}" for m in matches]
+        matches = core.search_accounts(self.conn, query, limit=50)
+        self.ligne_compte_combo["values"] = [f"{m['code']} — {m['label']}" for m in matches]
 
     def _on_analytic_changed(self, event=None):
         code = self._extract_code(self.ligne_analytic_var.get())
@@ -352,13 +354,26 @@ class MultiLigneDialog(tk.Toplevel):
             messagebox.showerror("Compte invalide", f"Le compte « {compte} » n'existe pas dans le Plan comptable.",
                                   parent=self)
             return
-        try:
-            montant = float(self.ligne_montant_var.get())
-        except (TypeError, ValueError):
-            messagebox.showerror("Erreur", "Le montant doit être un nombre.", parent=self)
+
+        def parse_montant(raw):
+            raw = (raw or "").strip()
+            if not raw:
+                return 0.0
+            try:
+                return float(raw)
+            except ValueError:
+                return None
+
+        debit = parse_montant(self.ligne_debit_var.get())
+        credit = parse_montant(self.ligne_credit_var.get())
+        if debit is None or credit is None:
+            messagebox.showerror("Erreur", "Débit et Crédit doivent être des nombres.", parent=self)
             return
-        if montant <= 0:
-            messagebox.showerror("Erreur", "Le montant doit être strictement positif.", parent=self)
+        if debit and credit:
+            messagebox.showerror("Erreur", "Renseignez Débit OU Crédit sur cette ligne, pas les deux.", parent=self)
+            return
+        if not debit and not credit:
+            messagebox.showerror("Erreur", "Renseignez un montant au débit ou au crédit.", parent=self)
             return
         qte = 0.0
         if self.ligne_qte_var.get().strip():
@@ -369,17 +384,19 @@ class MultiLigneDialog(tk.Toplevel):
                 return
         analytic_code = self._extract_code(self.ligne_analytic_var.get()) or None
         libelle = self.ligne_libelle_var.get().strip()
-        self.lignes.append({"compte": compte, "montant": montant, "libelle": libelle,
+        self.lignes.append({"compte": compte, "libelle": libelle, "debit": debit, "credit": credit,
                              "quantite": qte, "analytic_code": analytic_code})
         self.tree.insert("", "end", values=(
-            compte, libelle, f"{montant:,.2f}", f"{qte:g}" if qte else "", analytic_code or ""))
+            compte, libelle, f"{debit:,.2f}" if debit else "", f"{credit:,.2f}" if credit else "",
+            f"{qte:g}" if qte else "", analytic_code or ""))
         self.ligne_compte_var.set("")
         self.ligne_libelle_var.set("")
-        self.ligne_montant_var.set("")
+        self.ligne_debit_var.set("")
+        self.ligne_credit_var.set("")
         self.ligne_qte_var.set("")
         self.ligne_analytic_var.set("")
         self.ligne_qte_label.configure(text="Quantité :")
-        self._update_total()
+        self._update_totaux()
 
     def delete_ligne(self):
         sel = self.tree.selection()
@@ -389,23 +406,20 @@ class MultiLigneDialog(tk.Toplevel):
         idx = self.tree.index(sel[0])
         del self.lignes[idx]
         self.tree.delete(sel[0])
-        self._update_total()
+        self._update_totaux()
 
-    def _update_total(self):
-        total = sum(l["montant"] for l in self.lignes)
-        self.total_var.set(f"Total débit : {total:,.2f}")
-        self.credit_montant_var.set(f"Montant crédit (auto, = total débit) : {total:,.2f}")
+    def _update_totaux(self):
+        total_debit = sum(l["debit"] for l in self.lignes)
+        total_credit = sum(l["credit"] for l in self.lignes)
+        ecart = total_debit - total_credit
+        self.total_var.set(f"Total Débit : {total_debit:,.2f}     Total Crédit : {total_credit:,.2f}     "
+                            f"Écart : {ecart:,.2f}")
+        self.total_label.configure(foreground="#1F7A1F" if abs(ecart) < 0.01 and total_debit > 0 else "#B00020")
 
     def save(self):
-        if not self.lignes:
-            messagebox.showwarning("Aucune ligne", "Ajoutez au moins une ligne au débit.", parent=self)
-            return
-        compte_credit = self._extract_code(self.credit_compte_var.get())
-        if not compte_credit:
-            messagebox.showwarning("Champ manquant", "Choisissez le compte créditeur.", parent=self)
-            return
-        if not core.account_exists(self.conn, compte_credit):
-            messagebox.showerror("Compte invalide", f"Le compte « {compte_credit} » n'existe pas.", parent=self)
+        if len(self.lignes) < 2:
+            messagebox.showwarning("Lignes insuffisantes",
+                                    "Ajoutez au moins une ligne au débit et une ligne au crédit.", parent=self)
             return
         date_str = core.to_iso_date(self.date_var.get())
         try:
@@ -419,16 +433,14 @@ class MultiLigneDialog(tk.Toplevel):
             return
         journal = self.journal_var.get().strip() or "OD"
         tiers = self.tiers_var.get().strip()
-        libelle_credit = self.credit_libelle_var.get().strip()
         try:
-            core.add_multi_ligne_entry(self.conn, date_str, piece, journal, compte_credit, self.lignes,
-                                        tiers=tiers, libelle_credit=libelle_credit)
+            core.add_ecriture_multi_lignes(self.conn, date_str, piece, journal, self.lignes, tiers=tiers)
         except ValueError as exc:
             messagebox.showerror("Erreur", str(exc), parent=self)
             return
         messagebox.showinfo(
             "Écriture enregistrée",
-            f"{len(self.lignes)} ligne(s) au débit + 1 ligne au crédit enregistrées (pièce {piece}).",
+            f"{len(self.lignes)} ligne(s) enregistrées (pièce {piece}).",
             parent=self,
         )
         self.on_saved()
