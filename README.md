@@ -1254,24 +1254,46 @@ dans le fichier exporté). Testé : les comptes 401100 (racine 40), 411100 et
 419100 (racine 41), 431300 (racine 43) ressortent avec les bonnes couleurs
 hexadécimales exactes dans l'export .xlsx.
 
-### Sous-totaux par groupe de comptes (racine) dans le Bilan détaillé
+### Menu MAINTENANCE-ÉNERGIE + scrollbar Saisie
 
-**Demande** : « n'oublie pas de mettre les totaux par groupe de compte ».
-Le Bilan affiche desormais, pour Créances/Dettes/Trésorerie/Capitaux
-propres, un **sous-total après chaque groupe de racine** (ex. tous les
-comptes 401xxx/408xxx puis « Sous-total — Fournisseurs », avant de passer
-à la racine 41), en plus du total de section déjà existant — le pont
-manquant entre le détail compte par compte et les lignes agrégées du PDF de
-référence (qui, lui, n'affiche qu'UNE ligne par racine).
+**Nouveau menu « MAINTENANCE-ÉNERGIE »**, avec deux sous-menus :
+- **Énergie** : coûts par code analytique (eau, électricité, essence, gasoil,
+  gaz...) sur une période choisie — bouton « Ajouter les codes courants »
+  pour pré-remplir `ENERGIE-EAU`, `ENERGIE-ELEC`, etc. (n'écrase jamais un
+  code déjà personnalisé).
+- **Maintenance** : même principe avec des codes `MAINT-` (véhicules,
+  bâtiments, machines, informatique...).
 
-`compute_bilan_detaille()` renvoie maintenant les créances, dettes,
-trésorerie (Actif et Passif) et capitaux propres sous forme de **groupes**
-`{label, comptes: [...], sous_total}` au lieu de listes plates — via le
-nouvel helper `_grouper_avec_sous_total()`. Trésorerie est groupée
-Banques (52) / Établissements financiers (53) / Caisse (57) / etc., comme
-le PDF qui sépare « Banq débitrices (50,56) » de « Caisse débitrice 57,59 »
-sur des lignes distinctes. `BilanTab` (écran) et `export_bilan_detaille_xlsx()`
-(fichier) affichent tous deux le sous-total avec la couleur de la racine
-correspondante (même couleur que ses comptes détaillés). Testé : sous-total
-« Fournisseurs » = somme exacte de 401100 + 401200, sous-total « Banques »
-et « Caisse » distincts, écart Bilan toujours à 0.
+Ces écrans utilisent le champ **Code analytique** déjà présent dans
+l'onglet Saisie : renseignez-le sur la ligne du compte de charge (classe 6)
+pour qu'elle remonte automatiquement dans le bon écran, groupée par code,
+avec solde de début de période / mouvements / solde cumulé.
+
+**Bug découvert et corrigé pendant les tests** : `add_balanced_entry` pose
+le même code analytique sur les DEUX lignes d'une écriture (la charge ET sa
+contrepartie, ex. la banque) — un calcul naïf du solde net par code
+analytique donne donc toujours 0. `compute_couts_analytiques_categorie()`
+ne comptabilise désormais QUE le côté charge (classe 6), comme le fait déjà
+`compute_production()`/AN-FAB pour les coûts de fabrication — même
+principe, appliqué de façon cohérente.
+
+**Sous-menu Fabrication mis à jour** : les lignes de recette de type
+Main-d'œuvre, Énergie et Autre charge peuvent désormais être associées à un
+code analytique (nouveau champ dans le formulaire d'ajout de composant,
+nouvelle colonne dans le tableau de la recette). Colonne `analytic_code`
+ajoutée à la table `recette_lignes` (migration automatique pour les bases
+existantes). Nouvelle fonction `compute_couts_analytiques_fabrication()`
+pour croiser les lignes de recette d'une catégorie avec les coûts réels
+comptabilisés sous le même code.
+
+Testé de bout en bout : ligne de recette « Main-d'œuvre » taguée
+`MAINT-MACH`, ligne « Énergie » taguée `ENERGIE-EAU`, écritures réelles de
+Saisie sur ces mêmes codes — tout remonte correctement dans les écrans
+Énergie/Maintenance, et le Bilan reste équilibré (écart = 0) après
+fabrication et facturation. Non-régression vérifiée : une recette sans
+aucun code analytique (comportement d'avant) fonctionne toujours à
+l'identique.
+
+**Onglet Saisie** : la plage des écritures a maintenant une vraie
+scrollbar verticale à droite (déplaçable à la souris), en plus du défilement
+au clavier/molette déjà existant.

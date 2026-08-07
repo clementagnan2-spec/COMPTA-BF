@@ -99,6 +99,17 @@ class App(tk.Tk):
                                           "assimilés), en solde de début de période, mouvements Débit/Crédit "
                                           "et solde de fin de période.", "43")
         register("rapprochements", RapprochementBancaireTab)
+        register("energie", AnalytiquePeriodeTab,
+                 "Énergie", "Coûts d'énergie (eau, électricité, essence, gasoil, gaz...) par code analytique, "
+                            "sur une période choisie — alimentés par les écritures de Saisie taguées avec un "
+                            "code « ENERGIE- » et par les lignes « Énergie » des recettes de Fabrication.",
+                 core.PREFIX_ENERGIE, core.SUGGESTIONS_ENERGIE)
+        register("maintenance", AnalytiquePeriodeTab,
+                 "Maintenance", "Coûts de maintenance (véhicules, bâtiments, machines, informatique...) par "
+                                "code analytique, sur une période choisie — alimentés par les écritures de "
+                                "Saisie taguées avec un code « MAINT- » et par les lignes « Autre charge » "
+                                "des recettes de Fabrication qui leur sont associées.",
+                 core.PREFIX_MAINTENANCE, core.SUGGESTIONS_MAINTENANCE)
 
         # ---- Barre de menu ----
         menubar = tk.Menu(self)
@@ -147,6 +158,10 @@ class App(tk.Tk):
             ("Impôts", "impots"),
             ("Déclarations sociales", "declarations_sociales"),
             ("Rapprochements bancaires", "rapprochements"),
+        ])
+        add_top_menu("MAINTENANCE-ÉNERGIE", [
+            ("Énergie", "energie"),
+            ("Maintenance", "maintenance"),
         ])
         add_top_menu("PARAMÈTRES", [
             ("Exercices comptables (clôture)", "exercices"),
@@ -350,7 +365,11 @@ class SaisieTab(ttk.Frame):
         cols = ("id", "date", "piece", "journal", "compte", "libelle_compte",
                 "tiers", "libelle", "debit", "credit", "quantite", "analytique", "budget", "bailleur",
                 "fournisseur", "client")
-        self.tree = ttk.Treeview(self, columns=cols, show="headings", height=15, selectmode="extended")
+        tree_frame = ttk.Frame(self)
+        tree_frame.pack(fill="both", expand=True, padx=8, pady=(0, 8))
+        tree_frame.columnconfigure(0, weight=1)
+        tree_frame.rowconfigure(0, weight=1)
+        self.tree = ttk.Treeview(tree_frame, columns=cols, show="headings", height=15, selectmode="extended")
         headers = ["ID", "Date", "Pièce", "Journal", "Compte", "Libellé du compte",
                    "Tiers", "Libellé écriture", "Débit", "Crédit", "Qté", "Analytique", "Budget", "Bailleur",
                    "Fournisseur", "Client"]
@@ -358,7 +377,10 @@ class SaisieTab(ttk.Frame):
         for c, h, w in zip(cols, headers, widths):
             self.tree.heading(c, text=h)
             self.tree.column(c, width=w, anchor="w")
-        self.tree.pack(fill="both", expand=True, padx=8, pady=(0, 8))
+        tree_scroll_y = ttk.Scrollbar(tree_frame, orient="vertical", command=self.tree.yview)
+        self.tree.configure(yscrollcommand=tree_scroll_y.set)
+        self.tree.grid(row=0, column=0, sticky="nsew")
+        tree_scroll_y.grid(row=0, column=1, sticky="ns")
         self.tree.bind("<<TreeviewSelect>>", self._on_select)
         self.tree.bind("<Control-a>", self._select_all)
         self.tree.bind("<Control-A>", self._select_all)
@@ -1141,61 +1163,36 @@ class BilanTab(ttk.Frame):
             return "stock"
         return "plain"
 
-    def _add_actif_section(self, titre, lignes, total_label, total_val, detail=False, tag=None, grouped=False):
-        """lignes : liste de dicts {label, montant} (ou {label, brut, amort, net}
-        si detail=True), OU si grouped=True, liste de GROUPES {label, key,
-        comptes:[...], sous_total} — un sous-total par groupe (racine de
-        compte) est alors inséré après chaque groupe, coloré comme les
-        comptes qu'il totalise, avant le total général de la section."""
+    def _add_actif_section(self, titre, lignes, total_label, total_val, detail=False, tag=None):
+        """lignes : liste de dicts {label, montant} (ou {label, brut, amort, net} si detail=True).
+        `tag` fixe une couleur unique pour toute la section (immobilisations,
+        stocks, trésorerie) ; si None, la couleur est déterminée ligne par
+        ligne via _tag_for (créances : une couleur par racine de compte)."""
         if not lignes and not total_val:
             return
         self.tree_actif.insert("", "end", tags=("plain_header",), values=(titre, "", "", ""))
-        if grouped:
-            for g in lignes:
-                if not g["sous_total"] and not any(c["montant"] for c in g["comptes"]):
-                    continue
-                row_tag = tag or self._tag_for(g["comptes"][0], "actif")
-                for c in g["comptes"]:
-                    if not c["montant"]:
-                        continue
-                    self.tree_actif.insert("", "end", tags=(row_tag,), values=(f"   {c['label']}", "", "", fmt_cfa(c["montant"])))
+        for l in lignes:
+            row_tag = tag or self._tag_for(l, "actif")
+            if detail:
                 self.tree_actif.insert("", "end", tags=(row_tag,), values=(
-                    f"  Sous-total — {g['label']}", "", "", fmt_cfa(g["sous_total"])))
-        else:
-            for l in lignes:
-                row_tag = tag or self._tag_for(l, "actif")
-                if detail:
-                    self.tree_actif.insert("", "end", tags=(row_tag,), values=(
-                        f"   {l['label']}", fmt_cfa(l["brut"]) if l["brut"] else "",
-                        fmt_cfa(l["amort"]) if l["amort"] else "", fmt_cfa(l["net"])))
-                else:
-                    if not l["montant"]:
-                        continue
-                    self.tree_actif.insert("", "end", tags=(row_tag,), values=(f"   {l['label']}", "", "", fmt_cfa(l["montant"])))
+                    f"   {l['label']}", fmt_cfa(l["brut"]) if l["brut"] else "",
+                    fmt_cfa(l["amort"]) if l["amort"] else "", fmt_cfa(l["net"])))
+            else:
+                if not l["montant"]:
+                    continue
+                self.tree_actif.insert("", "end", tags=(row_tag,), values=(f"   {l['label']}", "", "", fmt_cfa(l["montant"])))
         self.tree_actif.insert("", "end", tags=("soustotal",), values=(f"  {total_label}", "", "", fmt_cfa(total_val)))
         self.tree_actif.insert("", "end", values=("", "", "", ""))
 
-    def _add_passif_section(self, titre, lignes, total_label, total_val, tag=None, grouped=False):
+    def _add_passif_section(self, titre, lignes, total_label, total_val, tag=None):
         if not lignes and not total_val:
             return
         self.tree_passif.insert("", "end", tags=("plain_header",), values=(titre, ""))
-        if grouped:
-            for g in lignes:
-                if not g["sous_total"] and not any(c["montant"] for c in g["comptes"]):
-                    continue
-                row_tag = tag or self._tag_for(g["comptes"][0], "passif")
-                for c in g["comptes"]:
-                    if not c["montant"]:
-                        continue
-                    self.tree_passif.insert("", "end", tags=(row_tag,), values=(f"   {c['label']}", fmt_cfa(c["montant"])))
-                self.tree_passif.insert("", "end", tags=(row_tag,), values=(
-                    f"  Sous-total — {g['label']}", fmt_cfa(g["sous_total"])))
-        else:
-            for l in lignes:
-                if not l["montant"]:
-                    continue
-                row_tag = tag or self._tag_for(l, "passif")
-                self.tree_passif.insert("", "end", tags=(row_tag,), values=(f"   {l['label']}", fmt_cfa(l["montant"])))
+        for l in lignes:
+            if not l["montant"]:
+                continue
+            row_tag = tag or self._tag_for(l, "passif")
+            self.tree_passif.insert("", "end", tags=(row_tag,), values=(f"   {l['label']}", fmt_cfa(l["montant"])))
         self.tree_passif.insert("", "end", tags=("soustotal",), values=(f"  {total_label}", fmt_cfa(total_val)))
         self.tree_passif.insert("", "end", values=("", ""))
 
@@ -1213,19 +1210,18 @@ class BilanTab(ttk.Frame):
         self._add_actif_section("IMMOBILISATIONS", a["immobilisations"],
                                  "Total immobilisations nettes", a["total_immo_net"], detail=True, tag="plain")
         self._add_actif_section("STOCKS", a["stocks"], "Total stocks", a["total_stocks"], tag="stock")
-        self._add_actif_section("CRÉANCES", a["creances"], "Total créances", a["total_creances"], grouped=True)
+        self._add_actif_section("CRÉANCES", a["creances"], "Total créances", a["total_creances"])
         self._add_actif_section("TRÉSORERIE ACTIF", a["tresorerie"], "Total trésorerie actif",
-                                 a["total_tresorerie"], tag="treso", grouped=True)
+                                 a["total_tresorerie"], tag="treso")
         self.tree_actif.insert("", "end", tags=("grandtotal",), values=("TOTAL ACTIF", "", "", fmt_cfa(d["total_actif"])))
 
         # ---- PASSIF ----
         self._add_passif_section("CAPITAUX PROPRES ET RESSOURCES DURABLES", p["capitaux_propres"],
                                   "Total capitaux propres et ressources durables", p["total_capitaux_propres"],
-                                  tag="plain", grouped=True)
-        self._add_passif_section("DETTES CIRCULANTES", p["dettes"], "Total dettes circulantes", p["total_dettes"],
-                                  grouped=True)
+                                  tag="plain")
+        self._add_passif_section("DETTES CIRCULANTES", p["dettes"], "Total dettes circulantes", p["total_dettes"])
         self._add_passif_section("TRÉSORERIE PASSIF", p["tresorerie"], "Total trésorerie passif",
-                                  p["total_tresorerie"], tag="treso", grouped=True)
+                                  p["total_tresorerie"], tag="treso")
         self.tree_passif.insert("", "end", tags=("grandtotal",), values=("TOTAL PASSIF", fmt_cfa(d["total_passif"])))
 
         ecart = d["ecart"]
@@ -1861,12 +1857,20 @@ class RecetteFabricationTab(ttk.Frame):
         self.cout_entry = ttk.Entry(form, textvariable=self.ligne_cout_var, width=12)
         self.cout_entry.grid(row=1, column=3, padx=4, sticky="w")
 
-        ttk.Button(form, text="Ajouter le composant", command=self.add_ligne).grid(row=1, column=5, padx=4, pady=4)
+        self.analytic_label = ttk.Label(form, text="Code analytique (Énergie/Maintenance...) :")
+        self.analytic_label.grid(row=1, column=4, sticky="w", padx=(12, 4))
+        self.ligne_analytic_var = tk.StringVar()
+        self.analytic_combo = ttk.Combobox(form, textvariable=self.ligne_analytic_var, width=26)
+        self.analytic_combo.grid(row=1, column=5, padx=4, sticky="w")
+        self._refresh_analytic_values()
 
-        cols = ("id", "type", "libelle", "compte", "quantite", "cout_unitaire", "source", "montant")
+        ttk.Button(form, text="Ajouter le composant", command=self.add_ligne).grid(row=2, column=5, padx=4, pady=4)
+
+        cols = ("id", "type", "libelle", "compte", "quantite", "cout_unitaire", "analytique", "source", "montant")
         self.tree = ttk.Treeview(self, columns=cols, show="headings", height=8)
-        headers = ["ID", "Type", "Libellé", "Compte", "Quantité", "Coût unitaire", "Origine du coût", "Montant"]
-        widths = [40, 90, 180, 90, 80, 110, 170, 110]
+        headers = ["ID", "Type", "Libellé", "Compte", "Quantité", "Coût unitaire", "Code analytique",
+                   "Origine du coût", "Montant"]
+        widths = [40, 90, 180, 90, 80, 110, 130, 170, 110]
         for c, h, w in zip(cols, headers, widths):
             self.tree.heading(c, text=h)
             self.tree.column(c, width=w, anchor="w")
@@ -1887,6 +1891,10 @@ class RecetteFabricationTab(ttk.Frame):
     def _refresh_stock_accounts(self):
         stocks = core.compute_stocks_detail(self.conn, prefixes=["31", "32", "33", "36"])
         self.compte_combo["values"] = [f"{s['code']} — {s['label']}" for s in stocks]
+
+    def _refresh_analytic_values(self):
+        codes = core.list_analytic_codes(self.conn)
+        self.analytic_combo["values"] = [f"{c['code']} — {c['label']}" for c in codes]
 
     def _refresh_compte_pf_values(self):
         stocks = core.compute_stocks_detail(self.conn, prefixes=["36"])
@@ -2000,10 +2008,13 @@ class RecetteFabricationTab(ttk.Frame):
             messagebox.showwarning("Champ manquant",
                                     "Choisissez un compte de stock ou saisissez un coût unitaire manuel.")
             return
-        core.add_recette_ligne(self.conn, self.selected_produit, type_key, libelle, qte, compte, cout_unitaire)
+        analytic_code = self._extract_code(self.ligne_analytic_var.get()) or None
+        core.add_recette_ligne(self.conn, self.selected_produit, type_key, libelle, qte, compte, cout_unitaire,
+                                analytic_code=analytic_code)
         self.libelle_var.set("")
         self.ligne_qte_var.set("")
         self.ligne_cout_var.set("")
+        self.ligne_analytic_var.set("")
         self.refresh()
 
     def delete_ligne(self):
@@ -2017,6 +2028,7 @@ class RecetteFabricationTab(ttk.Frame):
 
     def refresh(self):
         self._refresh_stock_accounts()
+        self._refresh_analytic_values()
         for row in self.tree.get_children():
             self.tree.delete(row)
         self.result_text.delete("1.0", "end")
@@ -2034,6 +2046,7 @@ class RecetteFabricationTab(ttk.Frame):
             self.tree.insert("", "end", values=(
                 l["id"], core.LIGNE_TYPES.get(l["type_ligne"], l["type_ligne"]), l["libelle"],
                 l["compte"] or "", f"{l['quantite']:g}", f"{l['cout_unitaire_utilise']:,.2f}",
+                l.get("analytic_code") or "",
                 l["source_cout"], f"{l['montant']:,.2f}",
             ))
         lines = [
@@ -2460,6 +2473,93 @@ class PlaceholderTab(ttk.Frame):
         ttk.Label(self, text=description, wraplength=900, foreground="#595959").pack(anchor="w", padx=24)
         ttk.Label(self, text="Fonctionnalité pas encore développée — dites-moi si vous voulez que je "
                               "la construise en priorité.", foreground="#B00020").pack(anchor="w", padx=24, pady=(16, 0))
+
+
+class AnalytiquePeriodeTab(ttk.Frame):
+    """Coûts d'une catégorie de codes analytiques (Énergie ou Maintenance),
+    par code (eau, électricité, essence... / véhicules, bâtiments...), sur
+    une période librement choisie — alimenté par toute écriture de Saisie
+    taguée avec ce code analytique (champ « Code analytique »), ainsi que
+    par les lignes de recette de Fabrication qui lui sont associées (menu
+    PRODUCTION > Fabrication)."""
+
+    def __init__(self, parent, conn, title, description, prefix, suggestions):
+        super().__init__(parent)
+        self.conn = conn
+        self.prefix = prefix
+        self.suggestions = suggestions
+        ttk.Label(self, text=title, font=("Segoe UI", 14, "bold")).pack(anchor="w", padx=16, pady=(16, 4))
+        ttk.Label(self, text=description, foreground="#595959", wraplength=1050).pack(anchor="w", padx=16, pady=(0, 8))
+
+        filt = ttk.Frame(self)
+        filt.pack(fill="x", padx=16, pady=4)
+        ttk.Label(filt, text="Du (JJ/MM/AAAA) :").pack(side="left")
+        self.date_from_var = tk.StringVar()
+        ttk.Entry(filt, textvariable=self.date_from_var, width=12).pack(side="left", padx=4)
+        ttk.Label(filt, text="Au (JJ/MM/AAAA) :").pack(side="left", padx=(12, 0))
+        self.date_to_var = tk.StringVar()
+        ttk.Entry(filt, textvariable=self.date_to_var, width=12).pack(side="left", padx=4)
+        ttk.Button(filt, text="Afficher", command=self.refresh).pack(side="left", padx=8)
+        ttk.Button(filt, text="Exercice entier", command=self._reset_filter).pack(side="left", padx=2)
+        ttk.Button(filt, text="Ajouter les codes courants", command=self._add_suggestions).pack(side="left", padx=12)
+
+        cols = ("code", "libelle", "debut", "debit", "credit", "fin")
+        self.tree = ttk.Treeview(self, columns=cols, show="headings")
+        headers = ["Code analytique", "Libellé", "Charge début période", "Débit période",
+                   "Crédit période (avoir)", "Charge cumulée fin période"]
+        widths = [130, 280, 140, 120, 140, 160]
+        for c, h, w in zip(cols, headers, widths):
+            self.tree.heading(c, text=h)
+            self.tree.column(c, width=w, anchor="w")
+        self.tree.tag_configure("total", background="#1F4E78", foreground="white", font=("Segoe UI", 10, "bold"))
+        self.tree.pack(fill="both", expand=True, padx=16, pady=8)
+
+        ttk.Label(self, text=(
+            "Pour qu'une charge apparaisse ici : dans l'onglet Saisie, renseignez le champ "
+            "« Code analytique » avec l'un des codes ci-dessous, sur la ligne du compte de charge "
+            "(classe 6) — ex. 605100 Eau, électricité... Créez ou gérez ces codes dans PARAMÈTRES > "
+            "Plan analytique."
+        ), foreground="#595959", wraplength=1050).pack(anchor="w", padx=16)
+
+        self.total_var = tk.StringVar()
+        ttk.Label(self, textvariable=self.total_var, font=("Segoe UI", 10, "bold")).pack(anchor="w", padx=16, pady=(4, 12))
+        self.refresh()
+
+    def _reset_filter(self):
+        self.date_from_var.set("")
+        self.date_to_var.set("")
+        self.refresh()
+
+    def _add_suggestions(self):
+        n = core.ajouter_codes_analytiques_suggeres(self.conn, self.suggestions)
+        if n:
+            messagebox.showinfo("Codes ajoutés", f"{n} code(s) analytique(s) ajouté(s).")
+        else:
+            messagebox.showinfo("Rien à ajouter", "Tous les codes courants existent déjà.")
+        self.refresh()
+
+    def refresh(self):
+        for row in self.tree.get_children():
+            self.tree.delete(row)
+        date_from = core.to_iso_date(self.date_from_var.get()) if self.date_from_var.get().strip() else None
+        date_to = core.to_iso_date(self.date_to_var.get()) if self.date_to_var.get().strip() else None
+        codes = core.compute_couts_analytiques_categorie(self.conn, self.prefix, date_from=date_from, date_to=date_to)
+        total_debut = total_debit = total_credit = total_fin = 0.0
+        for c in codes:
+            self.tree.insert("", "end", values=(
+                c["code"], c["label"], f"{c['solde_debut_periode']:,.2f}",
+                f"{c['debit_periode']:,.2f}", f"{c['credit_periode']:,.2f}", f"{c['solde_fin_periode']:,.2f}",
+            ))
+            total_debut += c["solde_debut_periode"]
+            total_debit += c["debit_periode"]
+            total_credit += c["credit_periode"]
+            total_fin += c["solde_fin_periode"]
+        self.tree.insert("", "end", tags=("total",), values=(
+            "", "TOTAL", f"{total_debut:,.2f}", f"{total_debit:,.2f}", f"{total_credit:,.2f}", f"{total_fin:,.2f}",
+        ))
+        periode = f"du {self.date_from_var.get()} au {self.date_to_var.get()}" if date_from or date_to else \
+            f"exercice {core.get_current_exercice(self.conn)} entier"
+        self.total_var.set(f"{len(codes)} code(s) avec charge — période : {periode}.")
 
 
 class ClassePeriodeTab(ttk.Frame):
