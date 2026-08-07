@@ -1297,3 +1297,20 @@ l'identique.
 **Onglet Saisie** : la plage des écritures a maintenant une vraie
 scrollbar verticale à droite (déplaçable à la souris), en plus du défilement
 au clavier/molette déjà existant.
+
+### Correctif urgent : `NameError: name 'FLUX_FAB' is not defined`
+
+**Cause** : lors de l'insertion du nouveau bloc « Maintenance & Énergie »
+dans `core.py` (message précédent), la constante `FLUX_FAB = "AN-FAB"`
+(utilisée par `compute_production()`, appelée dès l'ouverture du menu
+PRODUCTION > Fabrication) a été supprimée par erreur pendant le
+remplacement de texte — un `NameError` bloquait donc le lancement de ce
+module dans le `.exe` compilé. **Corrigé** : `FLUX_FAB` restauré à sa place
+d'origine, juste avant `FAB_POSTES`.
+
+Vérifié par un test de fumée qui appelle toutes les fonctions de calcul
+principales de `core.py` (Balance, Bilan, Bilan détaillé, Compte de
+résultat, Liasse fiscale, TFT, Situation financière, Production, Stocks,
+Trésorerie, Impôts/Déclarations sociales, Énergie/Maintenance, diagnostic
+d'écart, rapprochement bancaire) sur une base neuve, sans aucune exception :
+plus aucune constante orpheline détectée suite à la modification précédente.

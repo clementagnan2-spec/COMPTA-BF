@@ -3185,7 +3185,10 @@ def compute_couts_analytiques_fabrication(conn, prefix):
     return [dict(r) for r in rows]
 
 
-
+# ---------------------------------------------------------------------------
+# Production / coûts de fabrication (écritures taguées analytic_code = AN-FAB)
+# ---------------------------------------------------------------------------
+FLUX_FAB = "AN-FAB"
 FAB_POSTES = [
     ("Matières premières et fournitures consommées", ["602", "604"]),
     ("Main-d'œuvre directe de production", ["661", "663", "664"]),
