@@ -1816,7 +1816,8 @@ def add_entry(conn, date_str, piece, journal, compte, tiers, libelle, debit, cre
 
 def add_ecriture_multi_lignes(conn, date_str, piece, journal, lignes, tiers="",
                                fournisseur_code="", client_code="", budget_code="", donor_code="",
-                               compte_stock_global=None, quantite_stock_global=0):
+                               compte_stock_global=None, quantite_stock_global=0,
+                               sens_stock_global="entree"):
     """Écriture comptable à un nombre libre de lignes, chacune au débit OU
     au crédit (jamais les deux sur la même ligne) — la vraie saisie
     multi-lignes façon journal général : autant de comptes que nécessaire
@@ -1831,13 +1832,19 @@ def add_ecriture_multi_lignes(conn, date_str, piece, journal, lignes, tiers="",
     valant 0 ou absent).
 
     Deux façons de générer le mouvement de stock automatique :
-    - `compte_stock_global` renseigné (ex. facture d'achat matière première
-      incluant transport et douane) : TOUTES les lignes au débit de cette
-      écriture sont considérées comme des composantes du coût d'acquisition
-      d'un même lot de stock — leurs montants sont additionnés en UNE SEULE
-      entrée de stock, à la quantité `quantite_stock_global` (la quantité
-      réellement reçue, pas une quantité par ligne). C'est le cas normal
-      pour une facture globale (matière + frais accessoires).
+    - `compte_stock_global` renseigné : TOUTES les lignes au débit de cette
+      écriture sont regroupées en UN SEUL mouvement de stock, à la quantité
+      `quantite_stock_global` (la quantité réellement concernée, pas une
+      quantité par ligne) — le sens dépend de `sens_stock_global` :
+        - "entree" (achat — matière première + transport + douane...) :
+          le COÛT du mouvement = somme des montants des lignes débit ;
+          le stock AUGMENTE.
+        - "sortie" (vente à un ou plusieurs clients réglés en une fois...) :
+          le COÛT du mouvement = quantité × coût unitaire moyen ACTUEL du
+          stock (même logique que pour une vente simple) ; le stock
+          DIMINUE. Les lignes débit de l'écriture (ex. comptes clients) ne
+          servent alors PAS de base de calcul du coût — c'est le coût de
+          revient réel du stock qui est utilisé, pas le prix de vente.
     - `compte_stock_global` absent (None) : comportement ligne par ligne —
       chaque ligne débit qui renseigne sa PROPRE quantité et porte un
       compte d'achat lié à un stock (601x/602x) génère sa propre entrée de
@@ -1875,13 +1882,16 @@ def add_ecriture_multi_lignes(conn, date_str, piece, journal, lignes, tiers="",
             f"Écriture déséquilibrée : Total Débit = {total_debit:,.2f}, Total Crédit = {total_credit:,.2f} "
             f"(écart de {total_debit - total_credit:,.2f}) — corrigez avant d'enregistrer."
         )
-    if compte_stock_global and not account_exists(conn, compte_stock_global):
-        raise ValueError(f"Le compte stock « {compte_stock_global} » n'existe pas.")
-    if compte_stock_global and not quantite_stock_global:
-        raise ValueError(
-            "La quantité réellement reçue est obligatoire quand un compte stock est choisi "
-            "(sinon le stock serait mis à jour avec une quantité de 0)."
-        )
+    if compte_stock_global:
+        if not account_exists(conn, compte_stock_global):
+            raise ValueError(f"Le compte stock « {compte_stock_global} » n'existe pas.")
+        if not quantite_stock_global:
+            raise ValueError(
+                "La quantité est obligatoire quand un compte stock est choisi "
+                "(sinon le stock serait mis à jour avec une quantité de 0)."
+            )
+        if sens_stock_global not in ("entree", "sortie"):
+            raise ValueError("Le sens du mouvement de stock doit être « entree » ou « sortie ».")
     _check_exercice_editable(conn, date_str)
     for l in lignes:
         add_entry(conn, date_str, piece, journal, l["compte"], l.get("tiers") or tiers, l.get("libelle") or "",
@@ -1891,16 +1901,39 @@ def add_ecriture_multi_lignes(conn, date_str, piece, journal, lignes, tiers="",
                   client_code=l.get("client_code") or client_code)
 
     if compte_stock_global:
-        # ---- Coût global : toutes les lignes débit forment le coût d'un
-        # même lot de stock (matière + transport + douane...), en UNE entrée
-        cout_total = sum(l.get("debit") or 0 for l in lignes)
-        if cout_total > 0:
-            contre_compte = _compte_variation_stock(compte_stock_global)
-            add_entry(conn, date_str, piece, journal, compte_stock_global, "",
-                      "Entrée stock (auto, coût global — matière + frais accessoires)",
-                      cout_total, 0, quantite=quantite_stock_global or 0)
-            add_entry(conn, date_str, piece, journal, contre_compte, "",
-                      "Entrée stock (auto, coût global — matière + frais accessoires)", 0, cout_total)
+        contre_compte = _compte_variation_stock(compte_stock_global)
+        if sens_stock_global == "entree":
+            # ---- Coût global d'achat : toutes les lignes débit forment le
+            # coût d'un même lot de stock (matière + frais accessoires...) ----
+            cout_total = sum(l.get("debit") or 0 for l in lignes)
+            if cout_total > 0:
+                add_entry(conn, date_str, piece, journal, compte_stock_global, "",
+                          "Entrée stock (auto, coût global — matière + frais accessoires)",
+                          cout_total, 0, quantite=quantite_stock_global or 0)
+                add_entry(conn, date_str, piece, journal, contre_compte, "",
+                          "Entrée stock (auto, coût global — matière + frais accessoires)", 0, cout_total)
+        else:
+            # ---- Sortie globale de vente : coût = quantité × coût unitaire
+            # moyen ACTUEL du stock (les lignes débit — ex. comptes clients —
+            # ne sont PAS le coût, ce sont des créances). compute_stocks_detail
+            # (pas compute_stocks, limité aux 4 comptes centralisateurs) pour
+            # couvrir tout compte de stock réel, y compris les sous-comptes
+            # granulaires (ex. 321001 CLINKER).
+            stocks_by_code = {s["code"]: s for s in compute_stocks_detail(conn, exercice=_exercice_of_date(date_str))}
+            stock = stocks_by_code.get(compte_stock_global)
+            cout_unitaire = stock["cout_unitaire_moyen"] if stock else None
+            if cout_unitaire is None:
+                raise ValueError(
+                    f"Coût unitaire moyen inconnu pour le compte stock « {compte_stock_global} » "
+                    f"(aucun stock ou aucune quantité en stock) — impossible de calculer la sortie."
+                )
+            montant_sortie = quantite_stock_global * cout_unitaire
+            if montant_sortie > 0:
+                add_entry(conn, date_str, piece, journal, contre_compte, "",
+                          "Sortie stock (auto, coût global — vente groupée)", montant_sortie, 0)
+                add_entry(conn, date_str, piece, journal, compte_stock_global, "",
+                          "Sortie stock (auto, coût global — vente groupée)", 0, montant_sortie,
+                          quantite=quantite_stock_global)
     else:
         # ---- Mouvements de stock automatiques, ligne par ligne (indépendantes) ----
         for l in lignes:

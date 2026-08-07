@@ -268,24 +268,33 @@ class MultiLigneDialog(tk.Toplevel):
         ttk.Button(btns, text="Annuler", command=self.destroy).pack(side="left", padx=4)
 
         stock_frame = ttk.LabelFrame(self, text=(
-            "Compte stock (optionnel) — pour une facture globale incluant transport/douane : "
-            "regroupe TOUTES les lignes au débit dans un seul stock, à la quantité réellement reçue"))
+            "Compte stock (optionnel) — pour une facture globale d'achat (matière + transport/douane) "
+            "ou une vente groupée à plusieurs clients : regroupe le mouvement de stock en un seul"))
         stock_frame.pack(fill="x", padx=10, pady=(0, 6), side="bottom")
         ttk.Label(stock_frame, text="Compte stock :").grid(row=0, column=0, sticky="w", padx=4, pady=4)
         self.stock_compte_var = tk.StringVar()
-        self.stock_compte_combo = ttk.Combobox(stock_frame, textvariable=self.stock_compte_var, width=30)
+        self.stock_compte_combo = ttk.Combobox(stock_frame, textvariable=self.stock_compte_var, width=28)
         self.stock_compte_combo.grid(row=0, column=1, padx=4)
         self.stock_compte_combo.bind("<KeyRelease>", self._on_stock_compte_keyrelease)
         self.stock_compte_combo.bind("<Button-1>", self._open_dropdown)
         self.stock_compte_combo["values"] = [
             f"{s['code']} — {s['label']}" for s in core.compute_stocks_detail(self.conn, prefixes=["31", "32", "33", "36"])]
-        ttk.Label(stock_frame, text="Quantité réellement reçue :").grid(row=0, column=2, sticky="w", padx=(16, 4))
+        ttk.Label(stock_frame, text="Sens :").grid(row=0, column=2, sticky="w", padx=(16, 4))
+        self.stock_sens_var = tk.StringVar(value="Entrée (achat)")
+        stock_sens_combo = ttk.Combobox(stock_frame, textvariable=self.stock_sens_var, width=16, state="readonly",
+                                         values=["Entrée (achat)", "Sortie (vente)"])
+        stock_sens_combo.grid(row=0, column=3, padx=4)
+        stock_sens_combo.bind("<Button-1>", self._open_dropdown)
+        stock_sens_combo.bind("<<ComboboxSelected>>", self._on_stock_sens_changed)
+        self.stock_qte_label = ttk.Label(stock_frame, text="Quantité reçue :")
+        self.stock_qte_label.grid(row=0, column=4, sticky="w", padx=(16, 4))
         self.stock_qte_var = tk.StringVar()
-        ttk.Entry(stock_frame, textvariable=self.stock_qte_var, width=12).grid(row=0, column=3, padx=4)
-        ttk.Label(stock_frame, text=(
-            "Laissez « Compte stock » vide pour revenir au comportement ligne par ligne "
-            "(chaque ligne avec sa propre quantité génère son propre mouvement de stock)."
-        ), foreground="#595959", wraplength=950).grid(row=1, column=0, columnspan=4, sticky="w", padx=4, pady=(2, 4))
+        ttk.Entry(stock_frame, textvariable=self.stock_qte_var, width=12).grid(row=0, column=5, padx=4)
+        self.stock_info_var = tk.StringVar(value=(
+            "Entrée : le coût du stock = somme des lignes au débit (matière + frais accessoires). "
+            "Laissez « Compte stock » vide pour revenir au comportement ligne par ligne."))
+        ttk.Label(stock_frame, textvariable=self.stock_info_var,
+                  foreground="#595959", wraplength=1000).grid(row=1, column=0, columnspan=6, sticky="w", padx=4, pady=(2, 4))
 
         # ---- Lignes de l'écriture : occupe tout l'espace restant, au milieu ----
         lignes_frame = ttk.LabelFrame(self, text=(
@@ -419,6 +428,19 @@ class MultiLigneDialog(tk.Toplevel):
         query = self.stock_compte_var.get().strip()
         matches = [a for a in core.search_accounts(self.conn, query, limit=50) if a["code"][:1] == "3"]
         self.stock_compte_combo["values"] = [f"{m['code']} — {m['label']}" for m in matches]
+
+    def _on_stock_sens_changed(self, event=None):
+        if self.stock_sens_var.get().startswith("Sortie"):
+            self.stock_qte_label.configure(text="Quantité vendue :")
+            self.stock_info_var.set(
+                "Sortie : le coût du stock = quantité × coût unitaire moyen ACTUEL du stock (pas le montant "
+                "des lignes débit, qui sont ici des créances clients, pas un coût). Laissez « Compte stock » "
+                "vide pour revenir au comportement ligne par ligne.")
+        else:
+            self.stock_qte_label.configure(text="Quantité reçue :")
+            self.stock_info_var.set(
+                "Entrée : le coût du stock = somme des lignes au débit (matière + frais accessoires). "
+                "Laissez « Compte stock » vide pour revenir au comportement ligne par ligne.")
 
     def _on_analytic_changed(self, event=None):
         code = self._extract_code(self.ligne_analytic_var.get())
@@ -574,9 +596,11 @@ class MultiLigneDialog(tk.Toplevel):
                                       parent=self)
                 return
         try:
+            sens_stock_global = "sortie" if self.stock_sens_var.get().startswith("Sortie") else "entree"
             core.add_ecriture_multi_lignes(self.conn, date_str, piece, journal, self.lignes, tiers="",
                                             compte_stock_global=compte_stock_global,
-                                            quantite_stock_global=quantite_stock_global)
+                                            quantite_stock_global=quantite_stock_global,
+                                            sens_stock_global=sens_stock_global)
         except ValueError as exc:
             messagebox.showerror("Erreur", str(exc), parent=self)
             return

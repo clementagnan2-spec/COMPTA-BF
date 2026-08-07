@@ -1515,3 +1515,38 @@ minimale 900×500), avec une hauteur par défaut plus généreuse (1080×680).
 communes » : il faisait doublon et n'était plus pertinent maintenant que
 le tiers (Fournisseur/Client) se choisit ligne par ligne, de façon
 obligatoire et fiable, dès qu'un compte des racines 40/41 est utilisé.
+
+### Correctif majeur : sens du mouvement de stock (entrée/sortie) dans le compte stock global
+
+**Bug repéré par l'utilisateur** : une VENTE à des clients (comptes 41xxx
+débités, banque créditée) générait quand même une **entrée** de stock
+(augmentation), alors que le stock aurait dû **diminuer** — le compte
+stock global ne savait faire que le sens « achat ».
+
+**Cause** : `add_ecriture_multi_lignes()` additionnait systématiquement les
+lignes au débit comme coût d'une ENTRÉE de stock, quel que soit le sens
+réel de l'opération. Pour une vente, les lignes au débit sont des
+créances clients (leur montant = prix de vente), pas un coût de revient —
+utiliser ce montant comme coût de sortie de stock aurait été doublement
+faux.
+
+**Corrigé** : nouveau paramètre `sens_stock_global` (« entree » ou
+« sortie ») :
+- **Entrée (achat)** : comportement inchangé — coût = somme des lignes
+  débit (matière + frais accessoires), le stock augmente.
+- **Sortie (vente)** : le coût = quantité × **coût unitaire moyen actuel**
+  du stock (même logique qu'une vente simple, via `compute_stocks_detail`
+  — pas `compute_stocks`, qui se limite aux 4 comptes centralisateurs et
+  ne couvre pas les sous-comptes granulaires comme `321001 CLINKER`), le
+  stock diminue.
+
+**Nouveau sélecteur « Sens » (Entrée (achat) / Sortie (vente))** dans la
+section « Compte stock » de la fenêtre multi-lignes, avec un texte
+explicatif qui s'adapte au sens choisi et un libellé de quantité qui
+change (« Quantité reçue » / « Quantité vendue »).
+
+Testé avec le scénario exact de l'utilisateur (vente à 3 clients CLI-0004/
+CLI-0009/CLI-0006, réglée par une banque, sortie de 10 unités de CLINKER) :
+le stock diminue bien de la bonne quantité, au coût unitaire moyen réel
+(pas au prix de vente), Bilan équilibré. Non-régression vérifiée sur le
+mode entrée (achat) et le mode ligne par ligne classique.
