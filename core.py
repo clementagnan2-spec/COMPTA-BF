@@ -2795,9 +2795,24 @@ def export_bilan_detaille_xlsx(conn, path, exercice=None):
 
     last_row = max(actif_end, passif_end) + 2
     ecart = d["ecart"]
-    ws.cell(row=last_row, column=1,
-            value=(f"Écart Actif - Passif : {ecart:,.2f}"
-                   + (" ✓ équilibré" if abs(ecart) < 1 else " ⚠ à corriger (soldes d'ouverture ?)"))).font = Font(bold=True)
+    if abs(ecart) < 1:
+        ws.cell(row=last_row, column=1, value=f"Écart Actif - Passif : {ecart:,.0f}  ✓ équilibré").font = Font(bold=True)
+    else:
+        diag = compute_ecart_diagnostic(conn, exercice=exercice)
+        ws.cell(row=last_row, column=1,
+                value=f"Écart Actif - Passif : {ecart:,.0f} ⚠ — cause(s) détectée(s) dans les données :"
+                ).font = Font(bold=True, color="FFB00020")
+        r = last_row + 1
+        if abs(diag["ecart_soldes_ouverture"]) >= 1:
+            ws.cell(row=r, column=1,
+                    value=f"• Soldes d'ouverture non nuls : {diag['ecart_soldes_ouverture']:,.0f} "
+                          f"(devrait être 0 — voir l'onglet « Soldes d'ouverture »)")
+            r += 1
+        if abs(diag["ecart_ecritures_periode"]) >= 1:
+            ws.cell(row=r, column=1,
+                    value=f"• Écritures de la période Débit ≠ Crédit : {diag['ecart_ecritures_periode']:,.0f} "
+                          f"(voir l'onglet « Écritures non équilibrées »)")
+            r += 1
 
     ws.column_dimensions["A"].width = 46
     ws.column_dimensions["B"].width = 16
