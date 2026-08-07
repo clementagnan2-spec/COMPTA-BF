@@ -1184,3 +1184,34 @@ l'euro (franc) près, dans tous les cas testés.
 - La fenêtre de l'application démarre désormais **maximisée**
   (`self.state("zoomed")`) au lieu d'une taille fixe 1200x720, pour laisser
   toute la place nécessaire aux écrans denses en chiffres (Bilan, Balance).
+
+### Classification Actif/Passif des comptes de tiers — correction par compte, pas par racine entière
+
+**Bug corrigé, repéré par l'utilisateur directement sur son export réel**
+(`Bila141141n.xlsx`) : le compte `419100 CLIENTS, VERSEMENT A VENTILLE`
+(solde créditeur) apparaissait avec un montant NÉGATIF dans la liste des
+Créances (Actif), au lieu de basculer au Passif comme « Clients créditeurs »
+— exactement la ligne que le PDF de référence isole séparément
+(`Clients créditeurs *411`).
+
+**Cause** : `compute_bilan()`/`compute_bilan_detaille()` traitaient la
+racine 41 (Clients) comme systématiquement à l'Actif EN BLOC (toute la
+racine, quel que soit le signe de chaque compte), et la racine 40
+(Fournisseurs) systématiquement au Passif en bloc — au lieu d'appliquer la
+même règle que les racines 42 à 49 : **chaque compte, individuellement,
+selon le signe de son propre solde de clôture** (débiteur → Actif,
+créditeur → Passif), conforme aux libellés du rapport de référence qui
+fait apparaître CHAQUE racine (40 à 49) potentiellement des deux côtés du
+Bilan (« Frs avances versées *40* » à l'Actif ET « Fournisseurs *40 » au
+Passif ; « Client débiteurs *411* » à l'Actif ET « Clients créditeurs *411 »
+au Passif).
+
+**Correctif** : `compute_bilan()` et `compute_bilan_detaille()` appliquent
+maintenant une seule règle uniforme pour TOUTES les racines de tiers (40 à
+49) : `_sum_racine(balance, racine, sign="pos")` pour les créances (Actif),
+`_sum_racine(balance, racine, sign="neg")` pour les dettes (Passif) —
+compte par compte, plus aucune racine traitée « en bloc ». Testé avec un
+scénario reproduisant exactement le cas réel (411100 débiteur, 419100
+créditeur, 409100 avance fournisseur débitrice, 401100 fournisseur
+créditeur normal) : chaque compte atterrit désormais du bon côté, le total
+détaillé somme exactement au total du Bilan, et l'écart reste à 0.

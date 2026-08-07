@@ -2449,18 +2449,16 @@ def compute_bilan(conn, stock_initial=0.0, exercice=None):
     # Bilan, sous peine de faire disparaître un solde réel du Total Actif.
     stocks = stock_initial + _sum_class(balance, "3")
 
-    # Comptes de tiers (classe 4) classés par racine plutôt que par simple signe :
-    # racine 41 (Clients) toujours en créances, racine 40 (Fournisseurs) toujours
-    # en dettes — les autres racines (42 Personnel à 49 Dépréciations) restent
-    # classées par signe du solde, car leur nature actif/passif varie selon le cas.
-    autres_racines_tiers = [str(r) for r in range(42, 50)]
-    creances_clients = _sum_racine(balance, RACINE_CLIENTS)
-    autres_creances = sum(_sum_racine(balance, r, sign="pos") for r in autres_racines_tiers)
-    creances = creances_clients + autres_creances
-
-    dettes_fournisseurs = -_sum_racine(balance, RACINE_FOURNISSEURS)
-    autres_dettes_tiers = sum(-_sum_racine(balance, r, sign="neg") for r in autres_racines_tiers)
-    dettes_circulantes = dettes_fournisseurs + autres_dettes_tiers
+    # Comptes de tiers (classe 4), classés PAR COMPTE selon le signe de son
+    # solde de clôture — comme l'indiquent les libellés du rapport financier
+    # de référence (chaque racine 40 à 49 apparaît potentiellement des DEUX
+    # côtés du Bilan : ex. « Frs avances versées *40* » à l'Actif ET
+    # « Fournisseurs *40 » au Passif) : un compte débiteur (solde > 0) va en
+    # créances, un compte créditeur (solde < 0) va en dettes — quelle que
+    # soit sa racine, y compris 40 (Fournisseurs) et 41 (Clients).
+    racines_tiers = [str(r) for r in range(40, 50)]
+    creances = sum(_sum_racine(balance, r, sign="pos") for r in racines_tiers)
+    dettes_circulantes = sum(-_sum_racine(balance, r, sign="neg") for r in racines_tiers)
 
     treso_actif = _sum_class(balance, "5", sign="pos")
     total_actif = immo_nettes + stocks + creances + treso_actif
@@ -2613,14 +2611,13 @@ def compute_bilan_detaille(conn, exercice=None):
     stocks = [{"label": f"Stocks {p} — {stocks_labels.get(p, 'Autres stocks')}", "montant": v}
               for p, v in sorted(stocks_par_prefixe.items()) if v]
 
-    # ---- ACTIF : Créances (racine 41 Clients, racine 40 avances (409),
-    # racines 42-49 débitrices — chaque compte listé séparément) ----
+    # ---- ACTIF : Créances — racines 40 à 49, CHAQUE COMPTE classé selon le
+    # signe de son propre solde (débiteur -> créances), comme l'indiquent
+    # les libellés du rapport de référence : une même racine (ex. 40
+    # Fournisseurs, 41 Clients) peut avoir des comptes des deux côtés du
+    # Bilan (ex. un compte fournisseur en avance est débiteur -> Actif).
     creances = []
-    for b in _detail_racine(balance, RACINE_CLIENTS):
-        creances.append({"label": f"{b['code']} {b['label']}", "montant": b["solde_cloture"]})
-    for b in _detail_racine(balance, RACINE_FOURNISSEURS, sign="pos"):
-        creances.append({"label": f"{b['code']} {b['label']} (avance)", "montant": b["solde_cloture"]})
-    for racine in [str(r) for r in range(42, 50)]:
+    for racine in [str(r) for r in range(40, 50)]:
         for b in _detail_racine(balance, racine, sign="pos"):
             creances.append({"label": f"{b['code']} {b['label']}", "montant": b["solde_cloture"]})
 
@@ -2654,19 +2651,12 @@ def compute_bilan_detaille(conn, exercice=None):
     resultat_net = bilan["passif"]["Résultat net de l'exercice"]
     capitaux_propres.append({"label": "Résultat net de l'exercice", "montant": resultat_net})
 
-    # ---- PASSIF : Dettes circulantes (fournisseurs, personnel, organismes
-    # sociaux, État, associés, HAO — chaque compte listé séparément) ----
+    # ---- PASSIF : Dettes circulantes — mêmes racines 40 à 49, chaque
+    # compte CRÉDITEUR (l'autre moitié du même principe que les créances
+    # ci-dessus). Un compte client créditeur (ex. avoir non lettré) atterrit
+    # ainsi correctement ici plutôt que de rester en négatif côté Actif.
     dettes = []
-    for b in _detail_racine(balance, RACINE_FOURNISSEURS, sign="neg"):
-        dettes.append({"label": f"{b['code']} {b['label']}", "montant": -b["solde_cloture"]})
-    racines_labels_dettes = {
-        "42": "Personnel", "43": "Organismes sociaux (CNSS...)",
-        "44": "État et collectivités publiques (impôts, TVA...)",
-        "45": "Organismes internationaux", "46": "Associés et groupe",
-        "47": "Débiteurs et créditeurs divers (HAO)", "48": "Comptes de régularisation",
-        "49": "Dépréciations et provisions sur tiers",
-    }
-    for racine in ["42", "43", "44", "45", "46", "47", "48", "49"]:
+    for racine in [str(r) for r in range(40, 50)]:
         for b in _detail_racine(balance, racine, sign="neg"):
             dettes.append({"label": f"{b['code']} {b['label']}", "montant": -b["solde_cloture"]})
 
