@@ -1136,3 +1136,51 @@ relecture attentive et compilation (`python3 -m py_compile`), pas par un
 lancement réel de l'application. Un premier test sur votre PC Windows reste
 la vérification finale à faire pour ces trois nouveaux écrans — signalez-moi
 tout affichage inattendu.
+
+### Diagnostic de l'écart Bilan + lisibilité (import comptable Sage — vérifié sur données réelles)
+
+**L'écart Actif-Passif de -8 175 989 544 constaté par l'utilisateur sur ses
+vraies données (exports `Balance222.xlsx` / `Bila141141n.xlsx` du 07/08/2026)
+a été analysé en détail — ce n'est PAS un bug du calcul du Bilan** (déjà
+garanti mathématiquement équilibré par construction, voir plus haut), mais
+un problème dans les DONNÉES elles-mêmes, avec deux causes identifiées et
+quantifiées directement depuis l'export réel de l'utilisateur :
+1. **Somme des soldes d'ouverture de l'exercice 2026 = -9 098 750 409**
+   (devrait être nulle par partie double).
+2. **Cumul Débit ≠ Cumul Crédit des écritures de la période** : 62 053 285 001
+   contre 61 130 524 136, écart de 922 760 865 — des écritures existent en
+   base où Débit ≠ Crédit pour une même pièce (source très probable : un
+   import massif d'écritures qui n'a pas respecté la partie double, risque
+   déjà documenté dans ce README).
+
+**Nouveaux outils construits pour que l'utilisateur puisse corriger cela
+lui-même :**
+- `core.compute_ecart_diagnostic()` : décompose l'écart du Bilan en ces deux
+  causes exactes, avec leurs montants réels tirés de la base.
+- `core.compute_pieces_non_equilibrees()` + nouvel onglet **« Écritures non
+  équilibrées »** (ÉTATS ET RAPPORTS) : liste chaque pièce (regroupement
+  Pièce + Journal) dont Débit ≠ Crédit, triée par écart décroissant, avec
+  date, nombre de lignes, et l'écart exact — permet de retrouver et corriger
+  précisément la ou les pièces fautives dans la Saisie.
+- Le message d'écart du Bilan n'affiche plus un simple point d'exclamation
+  générique : il affiche maintenant les VRAIES causes avec leurs montants,
+  et un bouton « Voir le détail des pièces non équilibrées → » ouvre
+  directement ce nouvel onglet.
+
+Testé avec un scénario reproduisant exactement le cas réel (soldes
+d'ouverture non nuls + pièce d'import Débit ≠ Crédit) : le diagnostic
+retrouve exactement la pièce fautive, et
+`ecart_soldes_ouverture + ecart_ecritures_periode == écart du Bilan` à
+l'euro (franc) près, dans tous les cas testés.
+
+**Lisibilité du Bilan corrigée** (« les chiffres coincés sur les côtés ») :
+- Nouveau formatage `fmt_cfa()` façon rapport SYSCOHADA : espace comme
+  séparateur de milliers (ex. `27 556 378 280`), plus proche du PDF de
+  référence que l'ancien séparateur virgule.
+- Colonnes Actif/Passif élargies (Brut/Amortissements 150px, Net/Montant
+  170-180px, au lieu de 110-140px), hauteur de ligne et police du Bilan
+  augmentées, barre de défilement horizontale ajoutée en plus de la
+  verticale.
+- La fenêtre de l'application démarre désormais **maximisée**
+  (`self.state("zoomed")`) au lieu d'une taille fixe 1200x720, pour laisser
+  toute la place nécessaire aux écrans denses en chiffres (Bilan, Balance).

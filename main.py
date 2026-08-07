@@ -13,11 +13,24 @@ from datetime import date
 import core
 
 
+def fmt_cfa(v):
+    """Formate un montant façon rapport financier SYSCOHADA (espace comme
+    séparateur de milliers, pas de décimales — les francs CFA n'ont pas de
+    subdivision usuelle en comptabilité) : 10100000000 -> « 10 100 000 000 »."""
+    if v is None:
+        return ""
+    return f"{v:,.0f}".replace(",", " ")
+
+
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("Saisie Comptable SYSCOHADA")
-        self.geometry("1200x720")
+        self.geometry("1400x820")
+        try:
+            self.state("zoomed")  # démarre maximisée (Windows) — plus de place pour les Bilan/Balance denses en chiffres
+        except tk.TclError:
+            pass
         self.conn = core.get_connection()
 
         # ---- Barre d'exercice comptable (toujours visible, en haut) ----
@@ -63,6 +76,7 @@ class App(tk.Tk):
         register("grand_livre", GrandLivreTab)
         register("balance", BalanceTab)
         register("bilan", BilanTab)
+        register("pieces_non_equilibrees", PiecesNonEquilibreesTab)
         register("liasse", LiasseFiscaleTab)
         register("ventes", VentesTab)
         register("clients", ClientsTab)
@@ -124,6 +138,7 @@ class App(tk.Tk):
             ("Grand livre", "grand_livre"),
             ("Balance", "balance"),
             ("Bilan", "bilan"),
+            ("Écritures non équilibrées (diagnostic)", "pieces_non_equilibrees"),
             ("Compte de résultat", "cr"),
             ("TFT", "tft"),
             ("Situation financière", "situation_financiere"),
@@ -1015,7 +1030,8 @@ class BilanTab(ttk.Frame):
         ttk.Label(self, text=(
             "Calculé compte par compte à partir de la même Balance générale que l'onglet Balance "
             "(États et rapports) — les deux sont donc toujours cohérents, et l'Actif est toujours "
-            "égal au Passif (sauf soldes d'ouverture incomplets)."
+            "égal au Passif (sauf soldes d'ouverture ou écritures importées incomplets — voir le "
+            "diagnostic ci-dessous le cas échéant)."
         ), foreground="#595959").pack(anchor="w", padx=8, pady=(0, 4))
 
         btn_bar = ttk.Frame(self)
@@ -1037,40 +1053,57 @@ class BilanTab(ttk.Frame):
         self.tree_actif.heading("brut", text="Brut")
         self.tree_actif.heading("amort", text="Amortissements")
         self.tree_actif.heading("net", text="Net")
-        self.tree_actif.column("libelle", width=320, anchor="w")
-        self.tree_actif.column("brut", width=110, anchor="e")
-        self.tree_actif.column("amort", width=110, anchor="e")
-        self.tree_actif.column("net", width=120, anchor="e")
+        self.tree_actif.column("libelle", width=300, anchor="w", stretch=True)
+        self.tree_actif.column("brut", width=150, anchor="e", stretch=False)
+        self.tree_actif.column("amort", width=150, anchor="e", stretch=False)
+        self.tree_actif.column("net", width=170, anchor="e", stretch=False)
 
         passif_cols = ("libelle", "montant")
         self.tree_passif = ttk.Treeview(columns_frame, columns=passif_cols, show="headings", height=26)
         self.tree_passif.heading("libelle", text="Libellé")
         self.tree_passif.heading("montant", text="Montant")
-        self.tree_passif.column("libelle", width=320, anchor="w")
-        self.tree_passif.column("montant", width=140, anchor="e")
+        self.tree_passif.column("libelle", width=340, anchor="w", stretch=True)
+        self.tree_passif.column("montant", width=180, anchor="e", stretch=False)
 
         for tree in (self.tree_passif, self.tree_actif):
+            tree.configure(style="Bilan.Treeview")
             for key, color in self.MASSES.items():
                 fg = "white" if key == "total" else "black"
-                font = ("Segoe UI", 9, "bold") if key == "total" else ("Segoe UI", 9)
+                font = ("Segoe UI", 10, "bold") if key == "total" else ("Segoe UI", 10)
                 tree.tag_configure(key, background=color, foreground=fg, font=font)
-                tree.tag_configure(key + "_header", background=color, foreground=fg, font=("Segoe UI", 9, "bold"))
+                tree.tag_configure(key + "_header", background=color, foreground=fg, font=("Segoe UI", 10, "bold"))
+        style = ttk.Style()
+        style.configure("Bilan.Treeview", rowheight=22, font=("Segoe UI", 10))
 
-        actif_scroll = ttk.Scrollbar(columns_frame, orient="vertical", command=self.tree_actif.yview)
-        self.tree_actif.configure(yscrollcommand=actif_scroll.set)
-        passif_scroll = ttk.Scrollbar(columns_frame, orient="vertical", command=self.tree_passif.yview)
-        self.tree_passif.configure(yscrollcommand=passif_scroll.set)
+        actif_scroll_y = ttk.Scrollbar(columns_frame, orient="vertical", command=self.tree_actif.yview)
+        self.tree_actif.configure(yscrollcommand=actif_scroll_y.set)
+        actif_scroll_x = ttk.Scrollbar(columns_frame, orient="horizontal", command=self.tree_actif.xview)
+        self.tree_actif.configure(xscrollcommand=actif_scroll_x.set)
+        passif_scroll_y = ttk.Scrollbar(columns_frame, orient="vertical", command=self.tree_passif.yview)
+        self.tree_passif.configure(yscrollcommand=passif_scroll_y.set)
+        passif_scroll_x = ttk.Scrollbar(columns_frame, orient="horizontal", command=self.tree_passif.xview)
+        self.tree_passif.configure(xscrollcommand=passif_scroll_x.set)
 
         self.tree_actif.grid(row=1, column=0, sticky="nsew", padx=(0, 2))
-        actif_scroll.grid(row=1, column=0, sticky="nse", padx=(0, 2))
+        actif_scroll_y.grid(row=1, column=0, sticky="nse", padx=(0, 2))
+        actif_scroll_x.grid(row=2, column=0, sticky="ew", padx=(0, 2))
         self.tree_passif.grid(row=1, column=1, sticky="nsew", padx=(4, 2))
-        passif_scroll.grid(row=1, column=1, sticky="nse")
+        passif_scroll_y.grid(row=1, column=1, sticky="nse")
+        passif_scroll_x.grid(row=2, column=1, sticky="ew")
         columns_frame.rowconfigure(1, weight=1)
 
         self.ecart_var = tk.StringVar()
-        self.ecart_label = ttk.Label(self, textvariable=self.ecart_var, font=("Segoe UI", 10, "bold"))
-        self.ecart_label.pack(anchor="w", padx=8, pady=8)
+        self.ecart_label = ttk.Label(self, textvariable=self.ecart_var, font=("Segoe UI", 10, "bold"),
+                                      wraplength=1300, justify="left")
+        self.ecart_label.pack(anchor="w", padx=8, pady=(4, 2))
+        self.diag_link = ttk.Button(self, text="Voir le détail des pièces non équilibrées →",
+                                     command=self._open_diagnostic)
         self.refresh()
+
+    def _open_diagnostic(self):
+        app = self.winfo_toplevel()
+        if hasattr(app, "show"):
+            app.show("pieces_non_equilibrees")
 
     def _add_actif_masse(self, titre, key, lignes, total_label, total_val, detail=False):
         """lignes : liste de dicts {label, montant} (ou {label, brut, amort, net} si detail)."""
@@ -1080,13 +1113,13 @@ class BilanTab(ttk.Frame):
         for l in lignes:
             if detail:
                 self.tree_actif.insert("", "end", tags=(key,), values=(
-                    f"   {l['label']}", f"{l['brut']:,.0f}" if l["brut"] else "",
-                    f"{l['amort']:,.0f}" if l["amort"] else "", f"{l['net']:,.0f}"))
+                    f"   {l['label']}", fmt_cfa(l["brut"]) if l["brut"] else "",
+                    fmt_cfa(l["amort"]) if l["amort"] else "", fmt_cfa(l["net"])))
             else:
                 if not l["montant"]:
                     continue
-                self.tree_actif.insert("", "end", tags=(key,), values=(f"   {l['label']}", "", "", f"{l['montant']:,.0f}"))
-        self.tree_actif.insert("", "end", tags=(key,), values=(f"  {total_label}", "", "", f"{total_val:,.0f}"))
+                self.tree_actif.insert("", "end", tags=(key,), values=(f"   {l['label']}", "", "", fmt_cfa(l["montant"])))
+        self.tree_actif.insert("", "end", tags=(key,), values=(f"  {total_label}", "", "", fmt_cfa(total_val)))
         self.tree_actif.insert("", "end", values=("", "", "", ""))
 
     def _add_passif_masse(self, titre, key, lignes, total_label, total_val):
@@ -1096,8 +1129,8 @@ class BilanTab(ttk.Frame):
         for l in lignes:
             if not l["montant"]:
                 continue
-            self.tree_passif.insert("", "end", tags=(key,), values=(f"   {l['label']}", f"{l['montant']:,.0f}"))
-        self.tree_passif.insert("", "end", tags=(key,), values=(f"  {total_label}", f"{total_val:,.0f}"))
+            self.tree_passif.insert("", "end", tags=(key,), values=(f"   {l['label']}", fmt_cfa(l["montant"])))
+        self.tree_passif.insert("", "end", tags=(key,), values=(f"  {total_label}", fmt_cfa(total_val)))
         self.tree_passif.insert("", "end", values=("", ""))
 
     def refresh(self):
@@ -1115,20 +1148,32 @@ class BilanTab(ttk.Frame):
         self._add_actif_masse("STOCKS", "stocks", a["stocks"], "Total stocks", a["total_stocks"])
         self._add_actif_masse("CRÉANCES", "creances", a["creances"], "Total créances", a["total_creances"])
         self._add_actif_masse("TRÉSORERIE ACTIF", "treso", a["tresorerie"], "Total trésorerie actif", a["total_tresorerie"])
-        self.tree_actif.insert("", "end", tags=("total",), values=("TOTAL ACTIF", "", "", f"{d['total_actif']:,.0f}"))
+        self.tree_actif.insert("", "end", tags=("total",), values=("TOTAL ACTIF", "", "", fmt_cfa(d["total_actif"])))
 
         # ---- PASSIF ----
         self._add_passif_masse("CAPITAUX PROPRES ET RESSOURCES DURABLES", "capital", p["capitaux_propres"],
                                 "Total capitaux propres et ressources durables", p["total_capitaux_propres"])
         self._add_passif_masse("DETTES CIRCULANTES", "dettes_circ", p["dettes"], "Total dettes circulantes", p["total_dettes"])
         self._add_passif_masse("TRÉSORERIE PASSIF", "treso", p["tresorerie"], "Total trésorerie passif", p["total_tresorerie"])
-        self.tree_passif.insert("", "end", tags=("total",), values=("TOTAL PASSIF", f"{d['total_passif']:,.0f}"))
+        self.tree_passif.insert("", "end", tags=("total",), values=("TOTAL PASSIF", fmt_cfa(d["total_passif"])))
 
         ecart = d["ecart"]
         couleur = "#B00020" if abs(ecart) >= 1 else "#1F7A1F"
         self.ecart_label.configure(foreground=couleur)
-        self.ecart_var.set(f"Écart Actif - Passif : {ecart:,.2f}"
-                            + (" ✓ équilibré" if abs(ecart) < 1 else " ⚠ à corriger (soldes d'ouverture ?)"))
+        if abs(ecart) < 1:
+            self.ecart_var.set(f"Écart Actif - Passif : {fmt_cfa(ecart)}  ✓ équilibré")
+            self.diag_link.pack_forget()
+        else:
+            diag = core.compute_ecart_diagnostic(self.conn)
+            parts = [f"Écart Actif - Passif : {fmt_cfa(ecart)} ⚠ — cause(s) détectée(s) dans vos données :"]
+            if abs(diag["ecart_soldes_ouverture"]) >= 1:
+                parts.append(f"• Soldes d'ouverture non nuls : {fmt_cfa(diag['ecart_soldes_ouverture'])} "
+                              f"(devrait être 0 — voir l'onglet « Soldes d'ouverture »)")
+            if abs(diag["ecart_ecritures_periode"]) >= 1:
+                parts.append(f"• Écritures de la période Débit ≠ Crédit : {fmt_cfa(diag['ecart_ecritures_periode'])} "
+                              f"(voir le détail ci-dessous)")
+            self.ecart_var.set("\n".join(parts))
+            self.diag_link.pack(anchor="w", padx=8, pady=(0, 8))
 
     def export_xlsx(self):
         path = filedialog.asksaveasfilename(
@@ -1139,6 +1184,68 @@ class BilanTab(ttk.Frame):
             return
         core.export_bilan_detaille_xlsx(self.conn, path)
         messagebox.showinfo("Export terminé", f"Bilan exporté :\n{path}")
+
+
+class PiecesNonEquilibreesTab(ttk.Frame):
+    """Diagnostic : liste toutes les pièces (regroupement Pièce + Journal)
+    dont le total Débit ne correspond pas au total Crédit — la cause la plus
+    fréquente d'un Bilan qui ne s'équilibre pas, typiquement issue d'un
+    import en masse d'écritures qui n'a pas respecté la partie double.
+    Chaque pièce listée ici doit être corrigée dans l'onglet Saisie."""
+
+    def __init__(self, parent, conn):
+        super().__init__(parent)
+        self.conn = conn
+        ttk.Label(self, text="ÉCRITURES NON ÉQUILIBRÉES", font=("Segoe UI", 14, "bold")).pack(
+            anchor="w", padx=16, pady=(16, 4))
+        ttk.Label(self, text=(
+            "Chaque pièce comptable doit avoir un total Débit strictement égal à son total Crédit "
+            "(partie double). Les pièces listées ci-dessous ne le sont pas — corrigez-les dans "
+            "l'onglet Saisie (filtrez par numéro de pièce) pour rééquilibrer le Bilan."
+        ), foreground="#595959", wraplength=1100).pack(anchor="w", padx=16, pady=(0, 8))
+
+        filt = ttk.Frame(self)
+        filt.pack(fill="x", padx=16, pady=4)
+        self.toutes_dates_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(filt, text="Chercher sur toutes les dates (pas seulement l'exercice en cours)",
+                        variable=self.toutes_dates_var, command=self.refresh).pack(side="left")
+        ttk.Button(filt, text="Actualiser", command=self.refresh).pack(side="left", padx=12)
+
+        cols = ("piece", "journal", "date_min", "date_max", "nb", "debit", "credit", "ecart")
+        self.tree = ttk.Treeview(self, columns=cols, show="headings", height=22)
+        headers = ["Pièce", "Journal", "Date min", "Date max", "Nb lignes", "Total Débit", "Total Crédit", "Écart"]
+        widths = [130, 80, 90, 90, 80, 140, 140, 140]
+        for c, h, w in zip(cols, headers, widths):
+            self.tree.heading(c, text=h)
+            self.tree.column(c, width=w, anchor="w" if c in ("piece", "journal") else "e")
+        self.tree.tag_configure("total", background="#1F4E78", foreground="white", font=("Segoe UI", 10, "bold"))
+        self.tree.pack(fill="both", expand=True, padx=16, pady=8)
+
+        self.total_var = tk.StringVar()
+        ttk.Label(self, textvariable=self.total_var, font=("Segoe UI", 10, "bold")).pack(
+            anchor="w", padx=16, pady=(0, 16))
+        self.refresh()
+
+    def refresh(self):
+        for row in self.tree.get_children():
+            self.tree.delete(row)
+        pieces = core.compute_pieces_non_equilibrees(self.conn, toutes_dates=self.toutes_dates_var.get())
+        total_ecart = 0.0
+        for p in pieces:
+            self.tree.insert("", "end", values=(
+                p["piece"] or "(sans n° de pièce)", p["journal"] or "", core.to_display_date(p["date_min"]),
+                core.to_display_date(p["date_max"]), p["nb"], fmt_cfa(p["d"]), fmt_cfa(p["c"]), fmt_cfa(p["ecart"]),
+            ))
+            total_ecart += p["ecart"]
+        if pieces:
+            self.tree.insert("", "end", tags=("total",), values=(
+                "", "", "", "", "", "", "TOTAL ÉCART", fmt_cfa(total_ecart),
+            ))
+            self.total_var.set(f"{len(pieces)} pièce(s) non équilibrée(s) trouvée(s) — "
+                                f"écart cumulé : {fmt_cfa(total_ecart)}")
+        else:
+            self.total_var.set("✓ Aucune pièce déséquilibrée trouvée — toutes les écritures respectent "
+                                "Débit = Crédit sur le périmètre recherché.")
 
 
 class GrandLivreTab(ttk.Frame):

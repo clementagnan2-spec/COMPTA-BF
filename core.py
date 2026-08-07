@@ -706,6 +706,58 @@ def total_opening_balance(conn, exercice=None):
     return row["t"]
 
 
+def compute_ecart_diagnostic(conn, exercice=None):
+    """Diagnostique la cause d'un Bilan non équilibré, en décomposant l'écart
+    Actif - Passif en ses deux seules causes possibles (le calcul du Bilan
+    lui-même est garanti mathématiquement équilibré — voir compute_bilan) :
+    (1) la somme des soldes d'ouverture de l'exercice, qui DOIT être nulle
+    par construction de la partie double (sinon, une balance de clôture N-1
+    incomplète ou mal reportée) ; (2) le déséquilibre Cumul Débit / Cumul
+    Crédit des écritures de la période (des écritures posées débit ≠ crédit
+    dans la Saisie, typiquement issues d'un import en masse — voir
+    compute_pieces_non_equilibrees() pour les localiser précisément).
+    ecart_soldes_ouverture + ecart_ecritures_periode = l'écart du Bilan."""
+    exercice = exercice or get_current_exercice(conn)
+    ecart_ouverture = total_opening_balance(conn, exercice=exercice)
+    row = conn.execute(
+        """SELECT COALESCE(SUM(debit), 0) d, COALESCE(SUM(credit), 0) c FROM entries
+           WHERE date >= ? AND date <= ?""",
+        (f"{exercice}-01-01", f"{exercice}-12-31"),
+    ).fetchone()
+    ecart_ecritures = row["d"] - row["c"]
+    return {
+        "ecart_soldes_ouverture": ecart_ouverture,
+        "ecart_ecritures_periode": ecart_ecritures,
+        "ecart_total": ecart_ouverture + ecart_ecritures,
+    }
+
+
+def compute_pieces_non_equilibrees(conn, exercice=None, toutes_dates=False):
+    """Liste les pièces (regroupement Pièce + Journal) dont le total Débit ne
+    correspond pas au total Crédit — signe d'une écriture mal saisie en
+    Saisie directe, ou d'un import en masse qui n'a pas respecté la partie
+    double (chaque pièce doit normalement avoir Débit = Crédit). Triées par
+    écart absolu décroissant. `toutes_dates=True` ignore le filtre d'exercice
+    (utile si l'écriture fautive porte une date hors exercice courant)."""
+    query = """SELECT piece, journal, MIN(date) date_min, MAX(date) date_max, COUNT(*) nb,
+                      COALESCE(SUM(debit), 0) d, COALESCE(SUM(credit), 0) c
+               FROM entries"""
+    params = []
+    if not toutes_dates:
+        exercice = exercice or get_current_exercice(conn)
+        query += " WHERE date >= ? AND date <= ?"
+        params += [f"{exercice}-01-01", f"{exercice}-12-31"]
+    query += """ GROUP BY piece, journal
+                 HAVING ABS(SUM(debit) - SUM(credit)) >= 1
+                 ORDER BY ABS(SUM(debit) - SUM(credit)) DESC"""
+    result = []
+    for r in conn.execute(query, params).fetchall():
+        d = dict(r)
+        d["ecart"] = d["d"] - d["c"]
+        result.append(d)
+    return result
+
+
 def export_opening_balances_xlsx(conn, path, exercice=None):
     """Exporte la balance d'ouverture (soldes d'ouverture) de l'exercice en .xlsx."""
     import openpyxl
