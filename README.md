@@ -1215,3 +1215,41 @@ scénario reproduisant exactement le cas réel (411100 débiteur, 419100
 créditeur, 409100 avance fournisseur débitrice, 401100 fournisseur
 créditeur normal) : chaque compte atterrit désormais du bon côté, le total
 détaillé somme exactement au total du Bilan, et l'écart reste à 0.
+
+### Couleurs du Bilan calquées pixel par pixel sur le PDF de référence
+
+**Demande** : « le cadre du bilan avec les mêmes couleurs n'est pas
+identique à celui du pdf ». Le PDF de référence n'utilise pas un code
+couleur par masse comptable (immobilisations/stocks/créances/dettes) comme
+l'ancienne version, mais **une couleur PAR RACINE de compte de tiers**,
+appliquée à l'identique des deux côtés du Bilan (même couleur pour « Frs
+avances versées *40* » à l'Actif et « Fournisseurs *40 » au Passif, par
+exemple). Couleurs extraites du PDF par échantillonnage de pixels
+(`pdftoppm` + PIL) :
+
+- Racine 40 (Fournisseurs) : orange `#FF6600`, texte blanc
+- Racine 41 (Clients) : bleu `#3366FF`, texte blanc
+- Racine 42 (Personnel) : jaune `#FFFF00`, texte noir
+- Racine 43 (Organismes sociaux/CNSS) : rose `#FF99CC`, texte noir
+- Racines 44-45 (État, organismes internationaux) : gris `#999999`, texte blanc
+- Racines 46-49 (Débiteurs/créditeurs divers, HAO, régularisation,
+  dépréciations) : cyan `#00FFFF`, texte noir (le PDF ne distingue pas 46 de
+  47-49, même couleur)
+- Stocks (classe 3) : bleu clair `#99CCFF`
+- Trésorerie (classe 5, Actif et Passif) : vert `#00FF00`
+- Sous-totaux côté Actif (Total immobilisations, Total stocks, Total
+  créances, Total trésorerie actif) : bleu clair `#99CCFF`
+- Sous-totaux côté Passif (Total capitaux propres, Total dettes
+  circulantes, Total trésorerie passif) : or `#FFCC00`
+- TOTAL ACTIF / TOTAL PASSIF (total général) : or `#FFCC00`, les deux côtés
+- Immobilisations et Capitaux propres/ressources durables (classe 1) :
+  blanc/aucune couleur, comme dans le PDF
+
+`compute_bilan_detaille()` renvoie désormais un champ `"racine"` sur chaque
+ligne de créance/dette et `"prefixe"` sur chaque ligne de stock, pour que
+l'interface (`BilanTab`) et l'export (`export_bilan_detaille_xlsx()`)
+déterminent la couleur exacte sans avoir à re-parser le libellé. Les deux
+sont maintenant strictement cohérents entre eux (même palette à l'écran et
+dans le fichier exporté). Testé : les comptes 401100 (racine 40), 411100 et
+419100 (racine 41), 431300 (racine 43) ressortent avec les bonnes couleurs
+hexadécimales exactes dans l'export .xlsx.

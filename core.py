@@ -2608,7 +2608,7 @@ def compute_bilan_detaille(conn, exercice=None):
             continue
         prefixe = b["code"][:2]
         stocks_par_prefixe[prefixe] = stocks_par_prefixe.get(prefixe, 0.0) + b["solde_cloture"]
-    stocks = [{"label": f"Stocks {p} — {stocks_labels.get(p, 'Autres stocks')}", "montant": v}
+    stocks = [{"label": f"Stocks {p} — {stocks_labels.get(p, 'Autres stocks')}", "montant": v, "prefixe": p}
               for p, v in sorted(stocks_par_prefixe.items()) if v]
 
     # ---- ACTIF : Créances — racines 40 à 49, CHAQUE COMPTE classé selon le
@@ -2619,7 +2619,7 @@ def compute_bilan_detaille(conn, exercice=None):
     creances = []
     for racine in [str(r) for r in range(40, 50)]:
         for b in _detail_racine(balance, racine, sign="pos"):
-            creances.append({"label": f"{b['code']} {b['label']}", "montant": b["solde_cloture"]})
+            creances.append({"label": f"{b['code']} {b['label']}", "montant": b["solde_cloture"], "racine": racine})
 
     # ---- ACTIF : Trésorerie (classe 5, comptes débiteurs) ----
     treso_lignes, _ = compute_tresorerie_detail(conn, exercice=exercice)
@@ -2658,7 +2658,7 @@ def compute_bilan_detaille(conn, exercice=None):
     dettes = []
     for racine in [str(r) for r in range(40, 50)]:
         for b in _detail_racine(balance, racine, sign="neg"):
-            dettes.append({"label": f"{b['code']} {b['label']}", "montant": -b["solde_cloture"]})
+            dettes.append({"label": f"{b['code']} {b['label']}", "montant": -b["solde_cloture"], "racine": racine})
 
     # ---- PASSIF : Trésorerie (classe 5, comptes créditeurs) ----
     treso_passif = [{"label": f"{t['code']} {t['label']}", "montant": -t["solde_cloture"]}
@@ -2687,12 +2687,33 @@ def compute_bilan_detaille(conn, exercice=None):
 def export_bilan_detaille_xlsx(conn, path, exercice=None):
     """Exporte le Bilan détaillé (mêmes données que l'onglet Bilan) en .xlsx,
     dans une mise en page proche du rapport financier de référence : ACTIF
-    (Brut / Amortissements / Net) à gauche, PASSIF (Montant) à droite."""
+    (Brut / Amortissements / Net) à gauche, PASSIF (Montant) à droite, avec
+    la MÊME palette de couleurs par racine de compte que le PDF de référence
+    (40 Fournisseurs en orange, 41 Clients en bleu, 42 Personnel en jaune,
+    43 CNSS en rose, 44/45 État en gris, 46 à 49 HAO/divers en cyan, classe 5
+    Trésorerie en vert, stocks en bleu clair, sous-totaux en bleu clair/or,
+    total général en or) — la même racine a la même couleur des deux côtés."""
     import openpyxl
     from openpyxl.styles import Font, PatternFill, Alignment
 
     exercice = exercice or get_current_exercice(conn)
     d = compute_bilan_detaille(conn, exercice=exercice)
+
+    RACINE_COLORS = {
+        "40": ("FF6600", "FFFFFF"), "41": ("3366FF", "FFFFFF"),
+        "42": ("FFFF00", "000000"), "43": ("FF99CC", "000000"),
+        "44": ("999999", "FFFFFF"), "45": ("999999", "FFFFFF"),
+        "46": ("00FFFF", "000000"), "47": ("00FFFF", "000000"),
+        "48": ("00FFFF", "000000"), "49": ("00FFFF", "000000"),
+    }
+    STOCK_COLOR = ("99CCFF", "000000")
+    TRESO_COLOR = ("00FF00", "000000")
+    SOUS_TOTAL_ACTIF = ("99CCFF", "000000")
+    SOUS_TOTAL_PASSIF = ("FFCC00", "000000")
+    GRAND_TOTAL = ("FFCC00", "000000")
+
+    def fill_font(hexbg, hexfg, bold=True):
+        return PatternFill("solid", fgColor=hexbg), Font(bold=bold, color=hexfg)
 
     wb = openpyxl.Workbook()
     ws = wb.active
@@ -2703,8 +2724,6 @@ def export_bilan_detaille_xlsx(conn, path, exercice=None):
     section_fill = PatternFill("solid", fgColor="1F4E78")
     header_font = Font(bold=True)
     header_fill = PatternFill("solid", fgColor="D9D9D9")
-    total_font = Font(bold=True)
-    total_fill = PatternFill("solid", fgColor="DCE6F1")
 
     ws["A1"] = f"BILAN — Exercice {exercice}"
     ws["A1"].font = title_font
@@ -2732,10 +2751,20 @@ def export_bilan_detaille_xlsx(conn, path, exercice=None):
     actif_start = row
     passif_start = row
 
-    def write_actif_section(ws, row, titre, lignes, total_label, total_val, montant_key="montant", detail=False):
+    def row_color(item):
+        racine = item.get("racine")
+        if racine and racine in RACINE_COLORS:
+            return RACINE_COLORS[racine]
+        if "prefixe" in item:
+            return STOCK_COLOR
+        return None
+
+    def write_actif_section(ws, row, titre, lignes, total_label, total_val, detail=False,
+                             soustotal_color=SOUS_TOTAL_ACTIF, fixed_color=None):
         ws.cell(row=row, column=1, value=titre).font = header_font
         row += 1
         for l in lignes:
+            color = fixed_color or row_color(l)
             if detail:
                 ws.cell(row=row, column=1, value=f"  {l['label']}")
                 ws.cell(row=row, column=2, value=l["brut"] or None).number_format = "#,##0"
@@ -2743,41 +2772,60 @@ def export_bilan_detaille_xlsx(conn, path, exercice=None):
                 ws.cell(row=row, column=4, value=l["net"]).number_format = "#,##0"
             else:
                 ws.cell(row=row, column=1, value=f"  {l['label']}")
-                ws.cell(row=row, column=4, value=l[montant_key]).number_format = "#,##0"
+                ws.cell(row=row, column=4, value=l["montant"]).number_format = "#,##0"
+            if color:
+                fill, font = fill_font(*color)
+                for c in range(1, 5):
+                    cell = ws.cell(row=row, column=c)
+                    cell.fill = fill
+                    cell.font = font
             row += 1
-        ws.cell(row=row, column=1, value=total_label).font = total_font
+        fill, font = fill_font(*soustotal_color)
+        ws.cell(row=row, column=1, value=total_label)
         ws.cell(row=row, column=4, value=total_val).number_format = "#,##0"
         for c in range(1, 5):
-            ws.cell(row=row, column=c).fill = total_fill
-            ws.cell(row=row, column=c).font = total_font
+            ws.cell(row=row, column=c).fill = fill
+            ws.cell(row=row, column=c).font = font
         return row + 2
 
-    def write_passif_section(ws, row, titre, lignes, total_label, total_val):
+    def write_passif_section(ws, row, titre, lignes, total_label, total_val,
+                              soustotal_color=SOUS_TOTAL_PASSIF, fixed_color=None):
         ws.cell(row=row, column=6, value=titre).font = header_font
         row += 1
         for l in lignes:
+            color = fixed_color or row_color(l)
             ws.cell(row=row, column=6, value=f"  {l['label']}")
             ws.cell(row=row, column=7, value=l["montant"]).number_format = "#,##0"
+            if color:
+                fill, font = fill_font(*color)
+                for c in (6, 7):
+                    cell = ws.cell(row=row, column=c)
+                    cell.fill = fill
+                    cell.font = font
             row += 1
-        ws.cell(row=row, column=6, value=total_label).font = total_font
+        fill, font = fill_font(*soustotal_color)
+        ws.cell(row=row, column=6, value=total_label)
         ws.cell(row=row, column=7, value=total_val).number_format = "#,##0"
         for c in (6, 7):
-            ws.cell(row=row, column=c).fill = total_fill
-            ws.cell(row=row, column=c).font = total_font
+            ws.cell(row=row, column=c).fill = fill
+            ws.cell(row=row, column=c).font = font
         return row + 2
 
     a = d["actif"]
     row = actif_start
     row = write_actif_section(ws, row, "IMMOBILISATIONS", a["immobilisations"],
                                "Total immobilisations nettes", a["total_immo_net"], detail=True)
-    row = write_actif_section(ws, row, "STOCKS", a["stocks"], "Total stocks", a["total_stocks"])
+    row = write_actif_section(ws, row, "STOCKS", a["stocks"], "Total stocks", a["total_stocks"],
+                               fixed_color=STOCK_COLOR)
     row = write_actif_section(ws, row, "CRÉANCES", a["creances"], "Total créances", a["total_creances"])
-    row = write_actif_section(ws, row, "TRÉSORERIE ACTIF", a["tresorerie"], "Total trésorerie actif", a["total_tresorerie"])
-    ws.cell(row=row, column=1, value="TOTAL ACTIF").font = Font(bold=True, color="FFFFFFFF")
+    row = write_actif_section(ws, row, "TRÉSORERIE ACTIF", a["tresorerie"], "Total trésorerie actif",
+                               a["total_tresorerie"], fixed_color=TRESO_COLOR)
+    fill, font = fill_font(*GRAND_TOTAL, bold=True)
+    ws.cell(row=row, column=1, value="TOTAL ACTIF")
     ws.cell(row=row, column=4, value=d["total_actif"]).number_format = "#,##0"
     for c in range(1, 5):
-        ws.cell(row=row, column=c).fill = section_fill
-        ws.cell(row=row, column=c).font = Font(bold=True, color="FFFFFFFF")
+        ws.cell(row=row, column=c).fill = fill
+        ws.cell(row=row, column=c).font = font
     actif_end = row
 
     p = d["passif"]
@@ -2785,12 +2833,14 @@ def export_bilan_detaille_xlsx(conn, path, exercice=None):
     row = write_passif_section(ws, row, "CAPITAUX PROPRES ET RESSOURCES DURABLES", p["capitaux_propres"],
                                 "Total capitaux propres et ressources durables", p["total_capitaux_propres"])
     row = write_passif_section(ws, row, "DETTES CIRCULANTES", p["dettes"], "Total dettes circulantes", p["total_dettes"])
-    row = write_passif_section(ws, row, "TRÉSORERIE PASSIF", p["tresorerie"], "Total trésorerie passif", p["total_tresorerie"])
-    ws.cell(row=row, column=6, value="TOTAL PASSIF").font = Font(bold=True, color="FFFFFFFF")
+    row = write_passif_section(ws, row, "TRÉSORERIE PASSIF", p["tresorerie"], "Total trésorerie passif",
+                                p["total_tresorerie"], fixed_color=TRESO_COLOR)
+    fill, font = fill_font(*GRAND_TOTAL, bold=True)
+    ws.cell(row=row, column=6, value="TOTAL PASSIF")
     ws.cell(row=row, column=7, value=d["total_passif"]).number_format = "#,##0"
     for c in (6, 7):
-        ws.cell(row=row, column=c).fill = section_fill
-        ws.cell(row=row, column=c).font = Font(bold=True, color="FFFFFFFF")
+        ws.cell(row=row, column=c).fill = fill
+        ws.cell(row=row, column=c).font = font
     passif_end = row
 
     last_row = max(actif_end, passif_end) + 2

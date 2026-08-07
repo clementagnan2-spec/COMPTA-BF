@@ -1012,15 +1012,27 @@ class BilanTab(ttk.Frame):
     l'exercice n'est pas nulle. Exportable en .xlsx dans la même mise en
     page."""
 
-    MASSES = {
-        "immo": "#D9EAD3",      # vert clair — Immobilisations
-        "stocks": "#FFF2CC",    # jaune clair — Stocks
-        "creances": "#CFE2F3",  # bleu clair — Créances
-        "treso": "#D9D2E9",     # violet clair — Trésorerie
-        "capital": "#D9EAD3",   # vert clair — Capitaux propres / ressources durables
-        "dettes_circ": "#F4CCCC",  # rouge/rose clair — Dettes circulantes
-        "total": "#1F4E78",     # bandeau total
+    # Couleurs calquées PIXEL PAR PIXEL sur le PDF de référence (« BILAN COMPLET » /
+    # « BILAN AVEC DÉTAILS ») : chaque racine de compte de tiers a SA couleur,
+    # appliquée à l'identique côté Actif (créances) et côté Passif (dettes) —
+    # c'est la même racine, donc la même couleur des deux côtés du Bilan.
+    RACINE_COLORS = {
+        "40": ("#FF6600", "white"),   # orange — Fournisseurs
+        "41": ("#3366FF", "white"),   # bleu — Clients
+        "42": ("#FFFF00", "black"),   # jaune — Personnel
+        "43": ("#FF99CC", "black"),   # rose — Organismes sociaux (CNSS)
+        "44": ("#999999", "white"),   # gris — État (IUTS/TPA/TVA)
+        "45": ("#999999", "white"),   # gris — Organismes internationaux (groupé avec 44 dans le PDF)
+        "46": ("#00FFFF", "black"),   # cyan — Débiteurs/créditeurs divers
+        "47": ("#00FFFF", "black"),   # cyan — HAO (groupé avec 46 dans le PDF)
+        "48": ("#00FFFF", "black"),   # cyan — Comptes de régularisation (assimilé HAO)
+        "49": ("#00FFFF", "black"),   # cyan — Dépréciations/provisions sur tiers (assimilé HAO)
     }
+    STOCK_COLOR = ("#99CCFF", "black")      # bleu clair — Stocks (classe 3)
+    TRESO_COLOR = ("#00FF00", "black")      # vert — Trésorerie (classe 5), Actif et Passif
+    SOUS_TOTAL_ACTIF_COLOR = ("#99CCFF", "black")   # bleu clair — sous-totaux côté Actif (TOTAL I/II du PDF)
+    SOUS_TOTAL_PASSIF_COLOR = ("#FFCC00", "black")  # or/jaune — sous-totaux côté Passif (TOTAL I/II du PDF)
+    GRAND_TOTAL_COLOR = ("#FFCC00", "black")        # or/jaune — TOTAL GENERAL du PDF (les deux côtés)
 
     def __init__(self, parent, conn):
         super().__init__(parent)
@@ -1031,8 +1043,10 @@ class BilanTab(ttk.Frame):
             "Calculé compte par compte à partir de la même Balance générale que l'onglet Balance "
             "(États et rapports) — les deux sont donc toujours cohérents, et l'Actif est toujours "
             "égal au Passif (sauf soldes d'ouverture ou écritures importées incomplets — voir le "
-            "diagnostic ci-dessous le cas échéant)."
-        ), foreground="#595959").pack(anchor="w", padx=8, pady=(0, 4))
+            "diagnostic ci-dessous le cas échéant). Couleurs calquées sur le rapport financier de "
+            "référence : chaque racine de compte (40 Fournisseurs, 41 Clients, 42 Personnel...) a la "
+            "même couleur des deux côtés du Bilan."
+        ), foreground="#595959", wraplength=1300, justify="left").pack(anchor="w", padx=8, pady=(0, 4))
 
         btn_bar = ttk.Frame(self)
         btn_bar.pack(fill="x", padx=8, pady=(0, 4))
@@ -1065,15 +1079,26 @@ class BilanTab(ttk.Frame):
         self.tree_passif.column("libelle", width=340, anchor="w", stretch=True)
         self.tree_passif.column("montant", width=180, anchor="e", stretch=False)
 
-        for tree in (self.tree_passif, self.tree_actif):
-            tree.configure(style="Bilan.Treeview")
-            for key, color in self.MASSES.items():
-                fg = "white" if key == "total" else "black"
-                font = ("Segoe UI", 10, "bold") if key == "total" else ("Segoe UI", 10)
-                tree.tag_configure(key, background=color, foreground=fg, font=font)
-                tree.tag_configure(key + "_header", background=color, foreground=fg, font=("Segoe UI", 10, "bold"))
         style = ttk.Style()
         style.configure("Bilan.Treeview", rowheight=22, font=("Segoe UI", 10))
+        for tree in (self.tree_passif, self.tree_actif):
+            tree.configure(style="Bilan.Treeview")
+            # une couleur par racine (40 à 49), + stocks, trésorerie, sous-totaux, total général
+            for racine, (bg, fg) in self.RACINE_COLORS.items():
+                tree.tag_configure(f"racine_{racine}", background=bg, foreground=fg, font=("Segoe UI", 10, "bold"))
+            tree.tag_configure("stock", background=self.STOCK_COLOR[0], foreground=self.STOCK_COLOR[1],
+                                font=("Segoe UI", 10))
+            tree.tag_configure("treso", background=self.TRESO_COLOR[0], foreground=self.TRESO_COLOR[1],
+                                font=("Segoe UI", 10, "bold"))
+            tree.tag_configure("plain_header", font=("Segoe UI", 10, "bold"))
+            tree.tag_configure("plain", font=("Segoe UI", 10))
+        self.tree_actif.tag_configure("soustotal", background=self.SOUS_TOTAL_ACTIF_COLOR[0],
+                                       foreground=self.SOUS_TOTAL_ACTIF_COLOR[1], font=("Segoe UI", 10, "bold"))
+        self.tree_passif.tag_configure("soustotal", background=self.SOUS_TOTAL_PASSIF_COLOR[0],
+                                        foreground=self.SOUS_TOTAL_PASSIF_COLOR[1], font=("Segoe UI", 10, "bold"))
+        for tree in (self.tree_actif, self.tree_passif):
+            tree.tag_configure("grandtotal", background=self.GRAND_TOTAL_COLOR[0],
+                                foreground=self.GRAND_TOTAL_COLOR[1], font=("Segoe UI", 11, "bold"))
 
         actif_scroll_y = ttk.Scrollbar(columns_frame, orient="vertical", command=self.tree_actif.yview)
         self.tree_actif.configure(yscrollcommand=actif_scroll_y.set)
@@ -1105,32 +1130,48 @@ class BilanTab(ttk.Frame):
         if hasattr(app, "show"):
             app.show("pieces_non_equilibrees")
 
-    def _add_actif_masse(self, titre, key, lignes, total_label, total_val, detail=False):
-        """lignes : liste de dicts {label, montant} (ou {label, brut, amort, net} si detail)."""
+    def _tag_for(self, item, side):
+        """Détermine le tag de couleur d'une ligne de créance/dette/stock à
+        partir de ses métadonnées (racine ou préfixe de stock) — même racine
+        = même couleur des deux côtés du Bilan, comme dans le PDF."""
+        racine = item.get("racine")
+        if racine and racine in self.RACINE_COLORS:
+            return f"racine_{racine}"
+        if "prefixe" in item:
+            return "stock"
+        return "plain"
+
+    def _add_actif_section(self, titre, lignes, total_label, total_val, detail=False, tag=None):
+        """lignes : liste de dicts {label, montant} (ou {label, brut, amort, net} si detail=True).
+        `tag` fixe une couleur unique pour toute la section (immobilisations,
+        stocks, trésorerie) ; si None, la couleur est déterminée ligne par
+        ligne via _tag_for (créances : une couleur par racine de compte)."""
         if not lignes and not total_val:
             return
-        self.tree_actif.insert("", "end", tags=(key + "_header",), values=(titre, "", "", ""))
+        self.tree_actif.insert("", "end", tags=("plain_header",), values=(titre, "", "", ""))
         for l in lignes:
+            row_tag = tag or self._tag_for(l, "actif")
             if detail:
-                self.tree_actif.insert("", "end", tags=(key,), values=(
+                self.tree_actif.insert("", "end", tags=(row_tag,), values=(
                     f"   {l['label']}", fmt_cfa(l["brut"]) if l["brut"] else "",
                     fmt_cfa(l["amort"]) if l["amort"] else "", fmt_cfa(l["net"])))
             else:
                 if not l["montant"]:
                     continue
-                self.tree_actif.insert("", "end", tags=(key,), values=(f"   {l['label']}", "", "", fmt_cfa(l["montant"])))
-        self.tree_actif.insert("", "end", tags=(key,), values=(f"  {total_label}", "", "", fmt_cfa(total_val)))
+                self.tree_actif.insert("", "end", tags=(row_tag,), values=(f"   {l['label']}", "", "", fmt_cfa(l["montant"])))
+        self.tree_actif.insert("", "end", tags=("soustotal",), values=(f"  {total_label}", "", "", fmt_cfa(total_val)))
         self.tree_actif.insert("", "end", values=("", "", "", ""))
 
-    def _add_passif_masse(self, titre, key, lignes, total_label, total_val):
+    def _add_passif_section(self, titre, lignes, total_label, total_val, tag=None):
         if not lignes and not total_val:
             return
-        self.tree_passif.insert("", "end", tags=(key + "_header",), values=(titre, ""))
+        self.tree_passif.insert("", "end", tags=("plain_header",), values=(titre, ""))
         for l in lignes:
             if not l["montant"]:
                 continue
-            self.tree_passif.insert("", "end", tags=(key,), values=(f"   {l['label']}", fmt_cfa(l["montant"])))
-        self.tree_passif.insert("", "end", tags=(key,), values=(f"  {total_label}", fmt_cfa(total_val)))
+            row_tag = tag or self._tag_for(l, "passif")
+            self.tree_passif.insert("", "end", tags=(row_tag,), values=(f"   {l['label']}", fmt_cfa(l["montant"])))
+        self.tree_passif.insert("", "end", tags=("soustotal",), values=(f"  {total_label}", fmt_cfa(total_val)))
         self.tree_passif.insert("", "end", values=("", ""))
 
     def refresh(self):
@@ -1142,20 +1183,23 @@ class BilanTab(ttk.Frame):
         a = d["actif"]
         p = d["passif"]
 
-        # ---- ACTIF ----
-        self._add_actif_masse("IMMOBILISATIONS", "immo", a["immobilisations"],
-                               "Total immobilisations nettes", a["total_immo_net"], detail=True)
-        self._add_actif_masse("STOCKS", "stocks", a["stocks"], "Total stocks", a["total_stocks"])
-        self._add_actif_masse("CRÉANCES", "creances", a["creances"], "Total créances", a["total_creances"])
-        self._add_actif_masse("TRÉSORERIE ACTIF", "treso", a["tresorerie"], "Total trésorerie actif", a["total_tresorerie"])
-        self.tree_actif.insert("", "end", tags=("total",), values=("TOTAL ACTIF", "", "", fmt_cfa(d["total_actif"])))
+        # ---- ACTIF ---- (immobilisations et capitaux propres restent en blanc,
+        # comme dans le PDF — seuls stocks/créances/dettes/trésorerie sont colorés)
+        self._add_actif_section("IMMOBILISATIONS", a["immobilisations"],
+                                 "Total immobilisations nettes", a["total_immo_net"], detail=True, tag="plain")
+        self._add_actif_section("STOCKS", a["stocks"], "Total stocks", a["total_stocks"], tag="stock")
+        self._add_actif_section("CRÉANCES", a["creances"], "Total créances", a["total_creances"])
+        self._add_actif_section("TRÉSORERIE ACTIF", a["tresorerie"], "Total trésorerie actif",
+                                 a["total_tresorerie"], tag="treso")
+        self.tree_actif.insert("", "end", tags=("grandtotal",), values=("TOTAL ACTIF", "", "", fmt_cfa(d["total_actif"])))
 
         # ---- PASSIF ----
-        self._add_passif_masse("CAPITAUX PROPRES ET RESSOURCES DURABLES", "capital", p["capitaux_propres"],
-                                "Total capitaux propres et ressources durables", p["total_capitaux_propres"])
-        self._add_passif_masse("DETTES CIRCULANTES", "dettes_circ", p["dettes"], "Total dettes circulantes", p["total_dettes"])
-        self._add_passif_masse("TRÉSORERIE PASSIF", "treso", p["tresorerie"], "Total trésorerie passif", p["total_tresorerie"])
-        self.tree_passif.insert("", "end", tags=("total",), values=("TOTAL PASSIF", fmt_cfa(d["total_passif"])))
+        self._add_passif_section("CAPITAUX PROPRES ET RESSOURCES DURABLES", p["capitaux_propres"],
+                                  "Total capitaux propres et ressources durables", p["total_capitaux_propres"], tag="plain")
+        self._add_passif_section("DETTES CIRCULANTES", p["dettes"], "Total dettes circulantes", p["total_dettes"])
+        self._add_passif_section("TRÉSORERIE PASSIF", p["tresorerie"], "Total trésorerie passif",
+                                  p["total_tresorerie"], tag="treso")
+        self.tree_passif.insert("", "end", tags=("grandtotal",), values=("TOTAL PASSIF", fmt_cfa(d["total_passif"])))
 
         ecart = d["ecart"]
         couleur = "#B00020" if abs(ecart) >= 1 else "#1F7A1F"
