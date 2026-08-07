@@ -315,6 +315,26 @@ class MultiLigneDialog(tk.Toplevel):
         self.total_label = ttk.Label(lignes_frame, textvariable=self.total_var, font=("Segoe UI", 10, "bold"))
         self.total_label.pack(anchor="w", padx=6, pady=(0, 6))
 
+        stock_frame = ttk.LabelFrame(self, text=(
+            "Compte stock (optionnel) — pour une facture globale incluant transport/douane : "
+            "regroupe TOUTES les lignes au débit dans un seul stock, à la quantité réellement reçue"))
+        stock_frame.pack(fill="x", padx=10, pady=(0, 6))
+        ttk.Label(stock_frame, text="Compte stock :").grid(row=0, column=0, sticky="w", padx=4, pady=4)
+        self.stock_compte_var = tk.StringVar()
+        self.stock_compte_combo = ttk.Combobox(stock_frame, textvariable=self.stock_compte_var, width=30)
+        self.stock_compte_combo.grid(row=0, column=1, padx=4)
+        self.stock_compte_combo.bind("<KeyRelease>", self._on_stock_compte_keyrelease)
+        self.stock_compte_combo.bind("<Button-1>", self._open_dropdown)
+        self.stock_compte_combo["values"] = [
+            f"{s['code']} — {s['label']}" for s in core.compute_stocks_detail(self.conn, prefixes=["31", "32", "33", "36"])]
+        ttk.Label(stock_frame, text="Quantité réellement reçue :").grid(row=0, column=2, sticky="w", padx=(16, 4))
+        self.stock_qte_var = tk.StringVar()
+        ttk.Entry(stock_frame, textvariable=self.stock_qte_var, width=12).grid(row=0, column=3, padx=4)
+        ttk.Label(stock_frame, text=(
+            "Laissez « Compte stock » vide pour revenir au comportement ligne par ligne "
+            "(chaque ligne avec sa propre quantité génère son propre mouvement de stock)."
+        ), foreground="#595959", wraplength=950).grid(row=1, column=0, columnspan=4, sticky="w", padx=4, pady=(2, 4))
+
         btns = ttk.Frame(self)
         btns.pack(fill="x", padx=10, pady=10)
         ttk.Button(btns, text="Enregistrer l'écriture", command=self.save).pack(side="left", padx=4)
@@ -339,6 +359,11 @@ class MultiLigneDialog(tk.Toplevel):
         query = self.ligne_compte_var.get().strip()
         matches = core.search_accounts(self.conn, query, limit=50)
         self.ligne_compte_combo["values"] = [f"{m['code']} — {m['label']}" for m in matches]
+
+    def _on_stock_compte_keyrelease(self, event=None):
+        query = self.stock_compte_var.get().strip()
+        matches = [a for a in core.search_accounts(self.conn, query, limit=50) if a["code"][:1] == "3"]
+        self.stock_compte_combo["values"] = [f"{m['code']} — {m['label']}" for m in matches]
 
     def _on_analytic_changed(self, event=None):
         code = self._extract_code(self.ligne_analytic_var.get())
@@ -433,8 +458,22 @@ class MultiLigneDialog(tk.Toplevel):
             return
         journal = self.journal_var.get().strip() or "OD"
         tiers = self.tiers_var.get().strip()
+        compte_stock_global = self._extract_code(self.stock_compte_var.get()) or None
+        if compte_stock_global and not core.account_exists(self.conn, compte_stock_global):
+            messagebox.showerror("Compte invalide", f"Le compte stock « {compte_stock_global} » n'existe pas.",
+                                  parent=self)
+            return
+        quantite_stock_global = 0.0
+        if compte_stock_global and self.stock_qte_var.get().strip():
+            try:
+                quantite_stock_global = float(self.stock_qte_var.get())
+            except ValueError:
+                messagebox.showerror("Erreur", "La quantité réellement reçue doit être un nombre.", parent=self)
+                return
         try:
-            core.add_ecriture_multi_lignes(self.conn, date_str, piece, journal, self.lignes, tiers=tiers)
+            core.add_ecriture_multi_lignes(self.conn, date_str, piece, journal, self.lignes, tiers=tiers,
+                                            compte_stock_global=compte_stock_global,
+                                            quantite_stock_global=quantite_stock_global)
         except ValueError as exc:
             messagebox.showerror("Erreur", str(exc), parent=self)
             return

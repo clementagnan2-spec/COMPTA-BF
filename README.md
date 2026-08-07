@@ -1407,3 +1407,53 @@ Testé : 2 lignes débit (Eau taguée ENERGIE-EAU avec quantité, Entretien) +
 2 lignes crédit (Banque, Caisse) — écriture à 4 lignes correctement
 équilibrée et enregistrée, Bilan resté équilibré (écart = 0), coût unitaire
 moyen pondéré de l'eau recalculé correctement à partir de cette écriture.
+
+### Correctif : la saisie multi-lignes ne générait pas le stock automatiquement
+
+**Bug repéré par l'utilisateur** : un achat de matières premières saisi via
+la fenêtre multi-lignes (plusieurs comptes 602xxx au débit avec quantité,
+un compte fournisseur au crédit) ne déclenchait pas l'entrée de stock
+automatique, contrairement au formulaire de Saisie standard — c'était une
+limitation documentée mais qui s'est révélée être l'usage réel le plus
+courant (une seule facture fournisseur avec plusieurs matières premières).
+
+**Corrigé** : `core.add_ecriture_multi_lignes()` applique désormais la même
+logique d'entrée/sortie de stock automatique que `add_balanced_entry()`,
+mais LIGNE PAR LIGNE : chaque ligne débit avec une quantité sur un compte
+d'achat lié à un stock (601x marchandises, 602x matières premières)
+génère sa propre entrée de stock ; chaque ligne crédit avec une quantité
+sur un compte de vente lié à un stock (701x/702x) génère sa propre sortie
+de stock (au coût unitaire moyen réel).
+
+Testé avec le scénario exact de l'utilisateur (4 comptes 602xxx au débit
+avec quantités, 1 compte fournisseur au crédit) : les 4 mouvements de
+stock sont générés individuellement, le stock de matières premières
+(320000) reflète bien le cumul (14 200 000 F pour 5 002 unités), et le
+Bilan reste équilibré (écart = 0).
+
+### Compte stock global pour une facture d'achat groupée (matière + transport + douane)
+
+**Bug identifié par l'utilisateur** : pour une facture d'achat incluant
+plusieurs charges liées au MÊME lot de marchandise (ex. clinker + transport
++ douane, chacun sur un compte 602xxx distinct), le comportement « ligne
+par ligne » du correctif précédent aurait généré 3 mouvements de stock
+séparés, chacun avec sa propre quantité — multipliant la quantité reçue
+par 3 au lieu de la compter une seule fois.
+
+**Corrigé** : nouveau champ **« Compte stock »** (optionnel) dans la
+fenêtre multi-lignes, avec une **« Quantité réellement reçue »** — quand
+il est renseigné, `core.add_ecriture_multi_lignes()` additionne TOUTES les
+lignes au débit de l'écriture (matière + frais accessoires) en **une
+seule** entrée de stock, à la quantité réellement reçue (pas une par
+ligne) : le coût unitaire moyen du stock reflète alors le vrai coût de
+revient, frais de transport et douane inclus. Si le champ est laissé vide,
+le comportement précédent (ligne par ligne, chaque ligne avec sa propre
+quantité génère son propre mouvement) reste disponible pour des achats
+réellement indépendants dans la même écriture.
+
+Testé avec le scénario exact de l'utilisateur (CLINKER 250 000 F +
+TRANSPORT 2 500 000 F + DOUANE 500 000 F, quantité reçue 1 200 unités) :
+stock à 3 250 000 F pour 1 200 unités, coût unitaire moyen 2 708,33 F/unité
+(au lieu de 3 600 unités comptées à tort). Non-régression vérifiée : le
+mode « ligne par ligne » (sans compte stock global) continue de fonctionner
+normalement pour des lignes réellement indépendantes.

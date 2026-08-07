@@ -1815,7 +1815,8 @@ def add_entry(conn, date_str, piece, journal, compte, tiers, libelle, debit, cre
 
 
 def add_ecriture_multi_lignes(conn, date_str, piece, journal, lignes, tiers="",
-                               fournisseur_code="", client_code="", budget_code="", donor_code=""):
+                               fournisseur_code="", client_code="", budget_code="", donor_code="",
+                               compte_stock_global=None, quantite_stock_global=0):
     """Écriture comptable à un nombre libre de lignes, chacune au débit OU
     au crédit (jamais les deux sur la même ligne) — la vraie saisie
     multi-lignes façon journal général : autant de comptes que nécessaire
@@ -1827,14 +1828,22 @@ def add_ecriture_multi_lignes(conn, date_str, piece, journal, lignes, tiers="",
 
     `lignes` : liste de dicts {compte, libelle, debit, credit, quantite,
     analytic_code} — chaque ligne renseigne SOIT debit SOIT credit (l'autre
-    valant 0 ou absent). Chaque ligne peut porter son propre code
-    analytique et sa propre quantité (utile pour Énergie/Maintenance : coût
-    unitaire moyen pondéré par litre/kWh/heure).
+    valant 0 ou absent).
 
-    NE déclenche PAS l'entrée automatique de stock (achat 601x/602x avec
-    quantité) que fait add_balanced_entry pour une écriture à paire simple —
-    si une ligne concerne un achat de stock, utilisez le formulaire standard
-    à la place."""
+    Deux façons de générer le mouvement de stock automatique :
+    - `compte_stock_global` renseigné (ex. facture d'achat matière première
+      incluant transport et douane) : TOUTES les lignes au débit de cette
+      écriture sont considérées comme des composantes du coût d'acquisition
+      d'un même lot de stock — leurs montants sont additionnés en UNE SEULE
+      entrée de stock, à la quantité `quantite_stock_global` (la quantité
+      réellement reçue, pas une quantité par ligne). C'est le cas normal
+      pour une facture globale (matière + frais accessoires).
+    - `compte_stock_global` absent (None) : comportement ligne par ligne —
+      chaque ligne débit qui renseigne sa PROPRE quantité et porte un
+      compte d'achat lié à un stock (601x/602x) génère sa propre entrée de
+      stock indépendante ; idem au crédit pour une sortie de stock
+      (701x/702x). Adapté à des lignes réellement indépendantes (plusieurs
+      achats sans lien entre eux dans la même écriture)."""
     if len(lignes) < 2:
         raise ValueError("Une écriture multi-lignes nécessite au moins 2 lignes (au moins une au débit, une au crédit).")
     total_debit = total_credit = 0.0
@@ -1855,12 +1864,58 @@ def add_ecriture_multi_lignes(conn, date_str, piece, journal, lignes, tiers="",
             f"Écriture déséquilibrée : Total Débit = {total_debit:,.2f}, Total Crédit = {total_credit:,.2f} "
             f"(écart de {total_debit - total_credit:,.2f}) — corrigez avant d'enregistrer."
         )
+    if compte_stock_global and not account_exists(conn, compte_stock_global):
+        raise ValueError(f"Le compte stock « {compte_stock_global} » n'existe pas.")
     _check_exercice_editable(conn, date_str)
     for l in lignes:
         add_entry(conn, date_str, piece, journal, l["compte"], tiers, l.get("libelle") or "",
                   l.get("debit") or 0, l.get("credit") or 0, analytic_code=l.get("analytic_code") or "",
                   budget_code=budget_code, donor_code=donor_code, quantite=l.get("quantite") or 0,
                   fournisseur_code=fournisseur_code, client_code=client_code)
+
+    if compte_stock_global:
+        # ---- Coût global : toutes les lignes débit forment le coût d'un
+        # même lot de stock (matière + transport + douane...), en UNE entrée
+        cout_total = sum(l.get("debit") or 0 for l in lignes)
+        if cout_total > 0:
+            contre_compte = _compte_variation_stock(compte_stock_global)
+            add_entry(conn, date_str, piece, journal, compte_stock_global, "",
+                      "Entrée stock (auto, coût global — matière + frais accessoires)",
+                      cout_total, 0, quantite=quantite_stock_global or 0)
+            add_entry(conn, date_str, piece, journal, contre_compte, "",
+                      "Entrée stock (auto, coût global — matière + frais accessoires)", 0, cout_total)
+    else:
+        # ---- Mouvements de stock automatiques, ligne par ligne (indépendantes) ----
+        for l in lignes:
+            qte = l.get("quantite") or 0
+            if not qte:
+                continue
+            compte = l["compte"]
+            libelle = l.get("libelle") or ""
+            if l.get("debit"):
+                achat_map = _match_stock_mapping(compte, ACHAT_STOCK_MAPPING)
+                if achat_map and compte not in (achat_map[1], achat_map[2]):
+                    _, stock_compte, contre_compte = achat_map
+                    montant = l["debit"]
+                    add_entry(conn, date_str, piece, journal, stock_compte, "", f"Entrée stock (auto) — {libelle}",
+                              montant, 0, quantite=qte)
+                    add_entry(conn, date_str, piece, journal, contre_compte, "", f"Entrée stock (auto) — {libelle}",
+                              0, montant)
+            elif l.get("credit"):
+                vente_map = _match_stock_mapping(compte, VENTE_STOCK_MAPPING)
+                if vente_map and compte not in (vente_map[1], vente_map[2]):
+                    _, stock_compte, cout_compte = vente_map
+                    stocks_by_code = {s["code"]: s for s in compute_stocks(conn, exercice=_exercice_of_date(date_str))}
+                    stock = stocks_by_code.get(stock_compte)
+                    cout_unitaire = stock["cout_unitaire_moyen"] if stock else None
+                    if cout_unitaire is not None:
+                        montant_sortie = qte * cout_unitaire
+                        if montant_sortie > 0:
+                            add_entry(conn, date_str, piece, journal, cout_compte, "",
+                                      f"Sortie stock (auto) — {libelle}", montant_sortie, 0)
+                            add_entry(conn, date_str, piece, journal, stock_compte, "",
+                                      f"Sortie stock (auto) — {libelle}", 0, montant_sortie, quantite=qte)
+
     return total_debit
 
 
