@@ -72,10 +72,11 @@ suivante pour le processus de mise à jour.
   que le détail somme exactement au vrai total.
 
 **Ce qui reste à construire/imparfait** : Contrats (module vide),
-Tableaux d'exécution budgétaire, Impôts, Déclarations sociales,
-Rapprochements bancaires (tous encore des placeholders) ; les lignes
+Tableaux d'exécution budgétaire (encore un placeholder) ; les lignes
 d'investissement/financement de la vraie feuille TFT officielle dans la
 Liasse fiscale (seules ZA/FA-FE sont mappées, positions FF+ à confirmer).
+Impôts, Déclarations sociales et Rapprochements bancaires sont désormais
+construits (voir section dédiée plus bas) — plus des placeholders.
 
 **Les données réelles de l'utilisateur (`comptabilite.db`) ne sont PAS ici**
 — uniquement sur son PC Windows local
@@ -1087,3 +1088,51 @@ signalé pour la Liasse fiscale) faute de connaître la correspondance exacte
 entre chaque compte d'immobilisation et son compte d'amortissement dédié
 dans le plan comptable réel de l'utilisateur — le Net par catégorie et le
 Total Net restent, eux, exacts.
+
+### Correction d'une facture validée + Impôts / Déclarations sociales / Rapprochements bancaires
+
+**Facturation — corriger une erreur sur les chiffres après validation.**
+Une facture validée envoie ses écritures en Saisie et devenait ensuite
+totalement verrouillée (impossible de corriger le moindre chiffre). Nouveau
+bouton **« Corriger cette facture (erreur sur les chiffres) »** dans
+l'onglet Facturation, actif uniquement quand la facture sélectionnée est
+validée : `core.devalider_facture_vente()` retire les écritures générées
+par cette facture (repérées de façon fiable par le couple `piece = numéro
+de facture` / `journal = 'VE'`, propre à chaque facture), remet son statut à
+« brouillon », et vous pouvez alors corriger les lignes/quantités/prix puis
+revalider normalement. Refuse si l'exercice comptable de la facture est
+clôturé. Testé de bout en bout (validation → correction → revalidation →
+Bilan toujours équilibré).
+
+**Impôts (classe 44) et Déclarations sociales (classe 43)** — les deux
+anciens placeholders sont remplacés par un onglet générique
+`ClassePeriodeTab` (`core.compute_comptes_prefixe_periode()`) : liste tous
+les comptes de la classe concernée avec **solde de début de période /
+mouvements Débit-Crédit / solde de fin de période**, sur une **période
+librement choisie** (filtre Du/Au — JJ/MM/AAAA — par défaut l'exercice
+comptable entier). Comme pour le Bilan, aucune liste de comptes codée en
+dur : tout compte 44xxxx ou 43xxxx existant dans le plan comptable apparaît
+automatiquement dès qu'il a un solde ou un mouvement sur la période (IS,
+IMF, BIC, TVA due/facturée/récupérable, retenues à la source... pour la
+classe 44 ; CNSS et assimilés pour la classe 43).
+
+**Rapprochements bancaires (racine 52)** — nouvel onglet
+`RapprochementBancaireTab` (`core.compute_mouvements_prefixe_periode()`) :
+chaque compte de banque à 6 chiffres (52xxxx) est détaillé mouvement par
+mouvement sur la période choisie (Du/Au), avec pour chacun une **case à
+cocher « Pointé »** (cliquer sur la colonne, ☑/☐) pour signaler qu'il a été
+retrouvé dans le relevé bancaire papier. Le pointage est enregistré dans
+une nouvelle table `pointages_bancaires` (persistant, lié à l'écriture par
+son ID) — il reste visible à la prochaine ouverture, y compris si l'on
+change de période d'affichage. Un total en bas de page indique le montant
+pointé, le montant total de la période, et l'écart non pointé restant à
+justifier.
+
+**Limite non résolue de cette session** : l'environnement de développement
+ne dispose pas du module `tkinter` — le moteur (`core.py`) a été testé en
+profondeur en ligne de commande (scénarios réels, écarts vérifiés), mais
+l'interface graphique elle-même (`main.py`) n'a pu être vérifiée que par
+relecture attentive et compilation (`python3 -m py_compile`), pas par un
+lancement réel de l'application. Un premier test sur votre PC Windows reste
+la vérification finale à faire pour ces trois nouveaux écrans — signalez-moi
+tout affichage inattendu.

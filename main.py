@@ -76,13 +76,15 @@ class App(tk.Tk):
         register("budget_exec", PlaceholderTab,
                  "Tableaux d'exécution budgétaire",
                  "Suivi budget prévisionnel vs réalisé, par ligne budgétaire et par projet.")
-        register("impots", PlaceholderTab,
-                 "Impôts", "Calcul et suivi des impôts (IS, TVA due/récupérable, retenues à la source...).")
-        register("declarations_sociales", PlaceholderTab,
-                 "Déclarations sociales", "Préparation des déclarations CNSS et assimilées.")
-        register("rapprochements", PlaceholderTab,
-                 "Rapprochements bancaires",
-                 "Comparaison des relevés bancaires avec les comptes de trésorerie (521000/531000/570000).")
+        register("impots", ClassePeriodeTab,
+                 "Impôts", "Tous les comptes de la classe 44 (État et collectivités publiques : IS, IMF, "
+                           "TVA due/facturée/récupérable, retenues à la source...), en solde de début de "
+                           "période, mouvements Débit/Crédit et solde de fin de période.", "44")
+        register("declarations_sociales", ClassePeriodeTab,
+                 "Déclarations sociales", "Tous les comptes de la classe 43 (Organismes sociaux — CNSS et "
+                                          "assimilés), en solde de début de période, mouvements Débit/Crédit "
+                                          "et solde de fin de période.", "43")
+        register("rapprochements", RapprochementBancaireTab)
 
         # ---- Barre de menu ----
         menubar = tk.Menu(self)
@@ -2282,6 +2284,176 @@ class PlaceholderTab(ttk.Frame):
                               "la construise en priorité.", foreground="#B00020").pack(anchor="w", padx=24, pady=(16, 0))
 
 
+class ClassePeriodeTab(ttk.Frame):
+    """Tous les comptes d'une classe donnée (ex. 44 Impôts, 43 Organismes
+    sociaux), en Solde début de période / Mouvements Débit-Crédit / Solde fin
+    de période, sur une période librement choisie (par défaut l'exercice
+    comptable entier). Calculé à partir de la même Balance générale que les
+    autres écrans — toujours cohérent avec elle."""
+
+    def __init__(self, parent, conn, title, description, prefix):
+        super().__init__(parent)
+        self.conn = conn
+        self.prefix = prefix
+        ttk.Label(self, text=title, font=("Segoe UI", 14, "bold")).pack(anchor="w", padx=16, pady=(16, 4))
+        ttk.Label(self, text=description, foreground="#595959", wraplength=1050).pack(anchor="w", padx=16, pady=(0, 8))
+
+        filt = ttk.Frame(self)
+        filt.pack(fill="x", padx=16, pady=4)
+        ttk.Label(filt, text="Du (JJ/MM/AAAA) :").pack(side="left")
+        self.date_from_var = tk.StringVar()
+        ttk.Entry(filt, textvariable=self.date_from_var, width=12).pack(side="left", padx=4)
+        ttk.Label(filt, text="Au (JJ/MM/AAAA) :").pack(side="left", padx=(12, 0))
+        self.date_to_var = tk.StringVar()
+        ttk.Entry(filt, textvariable=self.date_to_var, width=12).pack(side="left", padx=4)
+        ttk.Button(filt, text="Afficher", command=self.refresh).pack(side="left", padx=8)
+        ttk.Button(filt, text="Exercice entier", command=self._reset_filter).pack(side="left", padx=2)
+        ttk.Label(filt, text="(par défaut : exercice comptable en cours entier)",
+                  foreground="#595959").pack(side="left", padx=10)
+
+        cols = ("compte", "libelle", "debut", "debit", "credit", "fin")
+        self.tree = ttk.Treeview(self, columns=cols, show="headings")
+        headers = ["Compte", "Libellé", "Solde début période", "Débit période", "Crédit période", "Solde fin période"]
+        widths = [90, 320, 140, 120, 120, 140]
+        for c, h, w in zip(cols, headers, widths):
+            self.tree.heading(c, text=h)
+            self.tree.column(c, width=w, anchor="w")
+        self.tree.tag_configure("total", background="#1F4E78", foreground="white", font=("Segoe UI", 10, "bold"))
+        self.tree.pack(fill="both", expand=True, padx=16, pady=8)
+        self.total_var = tk.StringVar()
+        ttk.Label(self, textvariable=self.total_var, font=("Segoe UI", 10, "bold")).pack(anchor="w", padx=16, pady=(0, 12))
+        self.refresh()
+
+    def _reset_filter(self):
+        self.date_from_var.set("")
+        self.date_to_var.set("")
+        self.refresh()
+
+    def refresh(self):
+        for row in self.tree.get_children():
+            self.tree.delete(row)
+        date_from = core.to_iso_date(self.date_from_var.get()) if self.date_from_var.get().strip() else None
+        date_to = core.to_iso_date(self.date_to_var.get()) if self.date_to_var.get().strip() else None
+        comptes = core.compute_comptes_prefixe_periode(self.conn, self.prefix, date_from=date_from, date_to=date_to)
+        total_debut = total_debit = total_credit = total_fin = 0.0
+        for c in comptes:
+            self.tree.insert("", "end", values=(
+                c["code"], c["label"], f"{c['solde_debut_periode']:,.2f}",
+                f"{c['debit_periode']:,.2f}", f"{c['credit_periode']:,.2f}", f"{c['solde_fin_periode']:,.2f}",
+            ))
+            total_debut += c["solde_debut_periode"]
+            total_debit += c["debit_periode"]
+            total_credit += c["credit_periode"]
+            total_fin += c["solde_fin_periode"]
+        self.tree.insert("", "end", tags=("total",), values=(
+            "", f"TOTAL CLASSE {self.prefix}", f"{total_debut:,.2f}",
+            f"{total_debit:,.2f}", f"{total_credit:,.2f}", f"{total_fin:,.2f}",
+        ))
+        periode = f"du {self.date_from_var.get()} au {self.date_to_var.get()}" if date_from or date_to else \
+            f"exercice {core.get_current_exercice(self.conn)} entier"
+        self.total_var.set(f"{len(comptes)} compte(s) avec solde ou mouvement — période : {periode}.")
+
+
+class RapprochementBancaireTab(ttk.Frame):
+    """Rapprochement bancaire : tous les comptes de banque (racine 52,
+    détaillés compte par compte à 6 chiffres), mouvement par mouvement sur
+    la période choisie, avec une case à cocher par mouvement pour le pointer
+    comme retrouvé dans le relevé bancaire papier — le pointage est enregistré
+    et reste visible à la prochaine ouverture."""
+
+    def __init__(self, parent, conn):
+        super().__init__(parent)
+        self.conn = conn
+        self._row_entry_ids = {}
+        ttk.Label(self, text="RAPPROCHEMENT BANCAIRE", font=("Segoe UI", 14, "bold")).pack(anchor="w", padx=16, pady=(16, 4))
+        ttk.Label(self, text=(
+            "Tous les comptes de banque (52xxxx), détaillés compte par compte, avec chaque mouvement de la "
+            "période choisie. Cliquez sur la colonne « Pointé » pour cocher/décocher un mouvement retrouvé "
+            "dans le relevé bancaire papier — le pointage est mémorisé."
+        ), foreground="#595959", wraplength=1100).pack(anchor="w", padx=16, pady=(0, 8))
+
+        filt = ttk.Frame(self)
+        filt.pack(fill="x", padx=16, pady=4)
+        ttk.Label(filt, text="Du (JJ/MM/AAAA) :").pack(side="left")
+        self.date_from_var = tk.StringVar()
+        ttk.Entry(filt, textvariable=self.date_from_var, width=12).pack(side="left", padx=4)
+        ttk.Label(filt, text="Au (JJ/MM/AAAA) :").pack(side="left", padx=(12, 0))
+        self.date_to_var = tk.StringVar()
+        ttk.Entry(filt, textvariable=self.date_to_var, width=12).pack(side="left", padx=4)
+        ttk.Button(filt, text="Afficher", command=self.refresh).pack(side="left", padx=8)
+        ttk.Button(filt, text="Exercice entier", command=self._reset_filter).pack(side="left", padx=2)
+
+        cols = ("pointe", "date", "piece", "libelle", "debit", "credit", "solde")
+        self.tree = ttk.Treeview(self, columns=cols, show="headings", height=24)
+        headers = ["Pointé", "Date", "Pièce", "Libellé", "Débit", "Crédit", "Solde cumulé"]
+        widths = [60, 85, 70, 320, 100, 100, 120]
+        for c, h, w in zip(cols, headers, widths):
+            self.tree.heading(c, text=h)
+            anchor = "center" if c in ("pointe", "debit", "credit", "solde") else "w"
+            self.tree.column(c, width=w, anchor=anchor)
+        self.tree.tag_configure("compte_header", background="#B4C6E7", font=("Segoe UI", 9, "bold"))
+        self.tree.tag_configure("compte_footer", background="#DCE6F1", font=("Segoe UI", 9, "bold"))
+        self.tree.tag_configure("pointe", background="#D9EAD3")
+        self.tree.pack(fill="both", expand=True, padx=16, pady=8)
+        self.tree.bind("<Button-1>", self._on_click)
+
+        self.ecart_var = tk.StringVar()
+        ttk.Label(self, textvariable=self.ecart_var, font=("Segoe UI", 10, "bold")).pack(anchor="w", padx=16, pady=(0, 12))
+        self.refresh()
+
+    def _reset_filter(self):
+        self.date_from_var.set("")
+        self.date_to_var.set("")
+        self.refresh()
+
+    def refresh(self):
+        for row in self.tree.get_children():
+            self.tree.delete(row)
+        self._row_entry_ids = {}
+        date_from = core.to_iso_date(self.date_from_var.get()) if self.date_from_var.get().strip() else None
+        date_to = core.to_iso_date(self.date_to_var.get()) if self.date_to_var.get().strip() else None
+        comptes = core.compute_mouvements_prefixe_periode(self.conn, "52", date_from=date_from, date_to=date_to)
+
+        total_periode = 0.0
+        total_pointe = 0.0
+        for c in comptes:
+            self.tree.insert("", "end", tags=("compte_header",), values=(
+                "", "", "", f"{c['code']} {c['label']} — solde début de période : {c['solde_debut_periode']:,.2f}",
+                "", "", "",
+            ))
+            for m in c["mouvements"]:
+                iid = self.tree.insert("", "end", tags=("pointe",) if m["pointe"] else (), values=(
+                    "☑" if m["pointe"] else "☐", core.to_display_date(m["date"]), m["piece"] or "",
+                    m["libelle"] or "", f"{m['debit']:,.2f}" if m["debit"] else "",
+                    f"{m['credit']:,.2f}" if m["credit"] else "", f"{m['solde_cumule']:,.2f}",
+                ))
+                self._row_entry_ids[iid] = m["id"]
+                total_periode += m["debit"] - m["credit"]
+            self.tree.insert("", "end", tags=("compte_footer",), values=(
+                "", "", "", f"  Solde fin de période — {c['code']}", "", "", f"{c['solde_fin_periode']:,.2f}",
+            ))
+            total_pointe += c["total_pointe"]
+
+        self.ecart_var.set(
+            f"Total pointé (retrouvé dans le relevé) : {total_pointe:,.2f}    "
+            f"Total des mouvements de la période : {total_periode:,.2f}    "
+            f"Écart non pointé : {total_periode - total_pointe:,.2f}"
+        )
+
+    def _on_click(self, event):
+        if self.tree.identify_region(event.x, event.y) != "cell":
+            return
+        if self.tree.identify_column(event.x) != "#1":
+            return
+        row = self.tree.identify_row(event.y)
+        if row not in self._row_entry_ids:
+            return
+        entry_id = self._row_entry_ids[row]
+        deja_pointe = self.tree.set(row, "pointe") == "☑"
+        core.set_pointage_bancaire(self.conn, entry_id, not deja_pointe)
+        self.refresh()
+
+
 class VentesTab(ttk.Frame):
     """Soldes des opérations avec chaque client, total par client,
     avec filtre sur une plage de dates."""
@@ -2711,6 +2883,9 @@ class FacturationTab(ttk.Frame):
         self.facture_combo.bind("<<ComboboxSelected>>", self._on_facture_selected)
         ttk.Button(top, text="Nouvelle facture", command=self.new_facture).pack(side="left", padx=8)
         ttk.Button(top, text="Supprimer cette facture", command=self.delete_facture).pack(side="left", padx=2)
+        self.corriger_btn = ttk.Button(top, text="Corriger cette facture (erreur sur les chiffres)",
+                                        command=self.corriger_facture)
+        self.corriger_btn.pack(side="left", padx=2)
         self.statut_var = tk.StringVar()
         ttk.Label(top, textvariable=self.statut_var, font=("Segoe UI", 10, "bold")).pack(side="left", padx=16)
 
@@ -2850,11 +3025,13 @@ class FacturationTab(ttk.Frame):
         if not self.current_facture_id:
             self.statut_var.set("Aucune facture — créez-en une nouvelle.")
             self.totals_var.set("")
+            self.corriger_btn.configure(state="disabled")
             return
         f = core.get_facture_vente(self.conn, self.current_facture_id)
         if not f:
             self.current_facture_id = None
             self.statut_var.set("")
+            self.corriger_btn.configure(state="disabled")
             return
         self.numero_var.set(f["numero"])
         self.date_var.set(core.to_display_date(f["date_facture"]))
@@ -2865,6 +3042,7 @@ class FacturationTab(ttk.Frame):
         self.pied_text.insert("1.0", f["pied_page"] or "")
         statut_label = "VALIDÉE (écritures envoyées en Saisie)" if f["statut"] == "validee" else "Brouillon"
         self.statut_var.set(f"Statut : {statut_label}")
+        self.corriger_btn.configure(state="normal" if f["statut"] == "validee" else "disabled")
 
         editable = f["statut"] != "validee"
         state = "normal" if editable else "disabled"
@@ -2995,6 +3173,31 @@ class FacturationTab(ttk.Frame):
                 return
             self.current_facture_id = None
             self.refresh_factures_list()
+
+    def corriger_facture(self):
+        """Repasse une facture déjà validée en brouillon modifiable, en
+        supprimant les écritures comptables qu'elle avait générées — pour
+        corriger une erreur sur les chiffres, puis revalider ensuite."""
+        if not self.current_facture_id:
+            return
+        if not messagebox.askyesno(
+            "Corriger cette facture",
+            "Cette facture est déjà validée : ses écritures comptables (débit client, "
+            "crédit ventes, TVA, sortie de stock) vont être RETIRÉES de la Saisie et la "
+            "facture repassera en brouillon modifiable.\n\n"
+            "Vous pourrez alors corriger les chiffres puis la revalider.\n\n"
+            "Continuer ?"
+        ):
+            return
+        try:
+            core.devalider_facture_vente(self.conn, self.current_facture_id)
+        except ValueError as exc:
+            messagebox.showerror("Erreur", str(exc))
+            return
+        messagebox.showinfo("Facture repassée en brouillon",
+                             "La facture est de nouveau modifiable. Corrigez les chiffres puis "
+                             "cliquez sur « Valider et envoyer en Saisie ».")
+        self.refresh_factures_list()
 
     def refresh(self):
         self._refresh_client_values()

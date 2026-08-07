@@ -384,6 +384,13 @@ def init_db(conn):
         )
     """)
     conn.execute("""
+        CREATE TABLE IF NOT EXISTS pointages_bancaires (
+            entry_id INTEGER PRIMARY KEY REFERENCES entries(id) ON DELETE CASCADE,
+            pointe INTEGER NOT NULL DEFAULT 1,
+            date_pointage TEXT
+        )
+    """)
+    conn.execute("""
         CREATE TABLE IF NOT EXISTS analytic_codes (
             code TEXT PRIMARY KEY,
             label TEXT NOT NULL
@@ -2119,6 +2126,125 @@ def compute_tresorerie_detail(conn, exercice=None):
     return lignes, total
 
 
+# ---------------------------------------------------------------------------
+# Comptes d'une classe/racine sur une PÉRIODE LIBRE (pas forcément l'exercice
+# entier) — utilisé par les onglets Impôts (classe 44), Déclarations sociales
+# (classe 43) et Rapprochements bancaires (racine 52). Pour chaque compte :
+# solde en début de période (solde d'ouverture de l'exercice + mouvements
+# antérieurs à la période), mouvements Débit/Crédit DANS la période choisie,
+# solde en fin de période.
+# ---------------------------------------------------------------------------
+def compute_comptes_prefixe_periode(conn, prefix, date_from=None, date_to=None, exercice=None):
+    """Tous les comptes dont le code commence par `prefix` (ex. '44', '43',
+    '52'), avec solde de début de période / mouvements de la période choisie
+    / solde de fin de période. `date_from`/`date_to` (AAAA-MM-JJ) — par
+    défaut, l'exercice entier. Un compte est inclus dès qu'il a un solde de
+    début de période non nul ou un mouvement dans la période."""
+    exercice = exercice or get_current_exercice(conn)
+    exercice_debut = f"{exercice}-01-01"
+    exercice_fin = f"{exercice}-12-31"
+    date_from = date_from or exercice_debut
+    date_to = date_to or exercice_fin
+
+    comptes = conn.execute(
+        "SELECT code, label, classe FROM accounts WHERE code LIKE ? ORDER BY code",
+        (f"{prefix}%",),
+    ).fetchall()
+
+    result = []
+    for c in comptes:
+        code = c["code"]
+        ouverture = get_opening_balance(conn, code, exercice)
+        avant = conn.execute(
+            """SELECT COALESCE(SUM(debit), 0) d, COALESCE(SUM(credit), 0) c FROM entries
+               WHERE compte = ? AND date >= ? AND date < ?""",
+            (code, exercice_debut, date_from),
+        ).fetchone()
+        solde_debut_periode = ouverture + (avant["d"] - avant["c"])
+
+        periode = conn.execute(
+            """SELECT COALESCE(SUM(debit), 0) d, COALESCE(SUM(credit), 0) c FROM entries
+               WHERE compte = ? AND date >= ? AND date <= ?""",
+            (code, date_from, date_to),
+        ).fetchone()
+        debit_periode, credit_periode = periode["d"], periode["c"]
+        solde_fin_periode = solde_debut_periode + (debit_periode - credit_periode)
+
+        if not (solde_debut_periode or debit_periode or credit_periode or solde_fin_periode):
+            continue
+        result.append({
+            "code": code, "label": c["label"], "classe": c["classe"],
+            "solde_debut_periode": solde_debut_periode,
+            "debit_periode": debit_periode, "credit_periode": credit_periode,
+            "solde_fin_periode": solde_fin_periode,
+        })
+    return result
+
+
+def compute_mouvements_prefixe_periode(conn, prefix, date_from=None, date_to=None, exercice=None):
+    """Détail écriture par écriture (pas seulement les soldes) de tous les
+    comptes dont le code commence par `prefix`, sur la période choisie —
+    utilisé par le Rapprochement bancaire pour lister chaque mouvement avec
+    sa case de pointage."""
+    exercice = exercice or get_current_exercice(conn)
+    date_from = date_from or f"{exercice}-01-01"
+    date_to = date_to or f"{exercice}-12-31"
+
+    comptes = conn.execute(
+        "SELECT code, label FROM accounts WHERE code LIKE ? AND LENGTH(code) = 6 ORDER BY code",
+        (f"{prefix}%",),
+    ).fetchall()
+
+    result = []
+    for c in comptes:
+        code = c["code"]
+        ouverture = get_opening_balance(conn, code, exercice)
+        avant = conn.execute(
+            """SELECT COALESCE(SUM(debit), 0) d, COALESCE(SUM(credit), 0) c FROM entries
+               WHERE compte = ? AND date >= ? AND date < ?""",
+            (code, f"{exercice}-01-01", date_from),
+        ).fetchone()
+        solde = ouverture + (avant["d"] - avant["c"])
+
+        rows = conn.execute(
+            """SELECT e.*, COALESCE(p.pointe, 0) AS pointe
+               FROM entries e LEFT JOIN pointages_bancaires p ON p.entry_id = e.id
+               WHERE e.compte = ? AND e.date >= ? AND e.date <= ?
+               ORDER BY e.date, e.id""",
+            (code, date_from, date_to),
+        ).fetchall()
+        if not rows and not solde:
+            continue
+        mouvements = []
+        for r in rows:
+            d = dict(r)
+            solde += d["debit"] - d["credit"]
+            d["solde_cumule"] = solde
+            d["pointe"] = bool(d["pointe"])
+            mouvements.append(d)
+        result.append({
+            "code": code, "label": c["label"], "solde_debut_periode": ouverture + (avant["d"] - avant["c"]),
+            "mouvements": mouvements, "solde_fin_periode": solde,
+            "total_pointe": sum(d["debit"] - d["credit"] for d in mouvements if d["pointe"]),
+        })
+    return result
+
+
+def set_pointage_bancaire(conn, entry_id, pointe):
+    """Coche/décoche un mouvement bancaire comme retrouvé dans le relevé
+    (rapprochement bancaire)."""
+    if pointe:
+        conn.execute(
+            """INSERT INTO pointages_bancaires (entry_id, pointe, date_pointage)
+               VALUES (?, 1, date('now'))
+               ON CONFLICT(entry_id) DO UPDATE SET pointe = 1, date_pointage = date('now')""",
+            (entry_id,),
+        )
+    else:
+        conn.execute("DELETE FROM pointages_bancaires WHERE entry_id = ?", (entry_id,))
+    conn.commit()
+
+
 def _sum_accounts(balance, codes):
     """Somme Débit/Crédit pour tous les comptes dont le code COMMENCE PAR l'un
     des préfixes donnés (rétro-compatible : un préfixe de 6 chiffres ne
@@ -3149,6 +3275,37 @@ def compute_facture_totals(conn, facture_id):
     tva_montant = total_ht * (tva_taux or 0) / 100
     total_ttc = total_ht + tva_montant
     return {"total_ht": total_ht, "tva_taux": tva_taux, "tva_montant": tva_montant, "total_ttc": total_ttc}
+
+
+def devalider_facture_vente(conn, facture_id):
+    """Repasse une facture VALIDÉE en brouillon modifiable, en cas d'erreur
+    sur les chiffres constatée après validation : supprime toutes les
+    écritures comptables générées par sa validation (débit client, crédit
+    ventes, TVA, sorties de stock — repérées par le couple piece=numéro de
+    facture / journal='VE', unique à cette facture) puis remet son statut à
+    « brouillon » afin que ses lignes redeviennent éditables dans l'onglet
+    Facturation. Refuse si l'exercice comptable des écritures est clôturé.
+    Retourne le nombre d'écritures supprimées."""
+    facture = get_facture_vente(conn, facture_id)
+    if not facture:
+        raise ValueError("Facture introuvable.")
+    if facture["statut"] != "validee":
+        raise ValueError("Cette facture n'est pas validée — rien à corriger.")
+    exercice_facture = _exercice_of_date(facture["date_facture"])
+    if is_exercice_cloture(conn, exercice_facture):
+        raise ValueError(
+            f"L'exercice {exercice_facture} de cette facture est clôturé : impossible de la corriger."
+        )
+    ids = [r["id"] for r in conn.execute(
+        "SELECT id FROM entries WHERE piece = ? AND journal = 'VE'", (facture["numero"],)
+    ).fetchall()]
+    deleted, errors = delete_entries_bulk(conn, ids)
+    if errors:
+        raise ValueError(
+            "Impossible de corriger cette facture : " + " ; ".join(errors)
+        )
+    update_facture_vente(conn, facture_id, statut="brouillon")
+    return deleted
 
 
 def valider_facture_vente(conn, facture_id, exercice=None):
