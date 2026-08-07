@@ -1333,3 +1333,46 @@ jamais dans Saisie tant que l'application n'était pas redémarrée.
 
 **Corrigé** : `SaisieTab.refresh()` rafraîchit désormais aussi ces cinq
 listes à chaque retour sur l'onglet Saisie.
+
+### Unités de mesure + coût unitaire moyen pondéré analytique
+
+**Demande** : unité Litre (L) pour eau/gasoil/gaz/essence, Kilowatt (Kw)
+pour l'électricité, Heure (H) pour la maintenance — et que la Fabrication
+calcule automatiquement le coût de revient d'une heure (ou d'un litre, d'un
+kWh) à partir de l'ensemble des enregistrements comptables réels, sur le
+même principe que le coût unitaire moyen pondéré déjà utilisé pour les
+stocks.
+
+**Réalisé** :
+- Colonne `unite` ajoutée à `analytic_codes` (migration automatique). Les
+  codes suggérés (`ajouter_codes_analytiques_suggeres`) portent maintenant
+  leur unité : `ENERGIE-EAU/GASOIL/GAZ/ESSENCE` → L, `ENERGIE-ELEC` → Kw,
+  tous les `MAINT-*` → H.
+- **`compute_cout_unitaire_moyen_analytique(conn, code, ...)`** (nouveau) :
+  montant total des charges (classe 6) comptabilisées sous ce code, divisé
+  par la quantité totale saisie sur ces mêmes lignes (champ Quantité de la
+  Saisie) — se met à jour tout seul après chaque facture saisie avec une
+  quantité, exactement comme demandé.
+- **`compute_cout_production()`** (recette de Fabrication) utilise
+  désormais ce coût automatiquement pour toute ligne main-d'œuvre/énergie/
+  autre associée à un code analytique — plus besoin de saisir un coût
+  unitaire manuel, sauf si aucune quantité n'a encore été comptabilisée
+  sous ce code (repli sur la saisie manuelle en attendant).
+- **Onglet Fabrication** : nouveau champ « Code analytique » sur chaque
+  ligne de recette, avec un **aperçu en direct** du coût moyen pondéré
+  constaté (ex. « Coût moyen pondéré constaté : 5 555,56 F CFA / H ») dès
+  qu'un code est choisi, et le libellé « Quantité » s'actualise avec
+  l'unité (« Quantité (H) »).
+- **Onglet Saisie** : le libellé « Quantité » s'actualise aussi avec
+  l'unité du code analytique choisi sur la ligne, pour rappeler dans quelle
+  unité saisir (litres, kilowatts, heures).
+- **Plan analytique** (Paramètres) : nouvelle colonne/champ « Unité »,
+  conservée à l'export/import `.xlsx`.
+
+Testé de bout en bout : deux paiements réels de prestataires (100 000 F/20h
+et 150 000 F/25h) donnent un coût moyen de 5 555,56 F/h ; une recette avec
+2h de main-d'œuvre + 100L d'eau + 50Kw d'électricité récupère automatiquement
+les trois coûts unitaires réels (H, L, Kw) sans aucune saisie manuelle ;
+fabrication complète (matière + main-d'œuvre analytique) comptabilisée avec
+succès, Bilan resté équilibré (écart = 0) ; export/import du Plan analytique
+préserve les unités.

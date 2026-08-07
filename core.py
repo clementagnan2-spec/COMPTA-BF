@@ -393,7 +393,8 @@ def init_db(conn):
     conn.execute("""
         CREATE TABLE IF NOT EXISTS analytic_codes (
             code TEXT PRIMARY KEY,
-            label TEXT NOT NULL
+            label TEXT NOT NULL,
+            unite TEXT
         )
     """)
     conn.execute("""
@@ -555,6 +556,10 @@ def _migrate(conn):
     rl_cols = [r["name"] for r in conn.execute("PRAGMA table_info(recette_lignes)")]
     if rl_cols and "analytic_code" not in rl_cols:
         conn.execute("ALTER TABLE recette_lignes ADD COLUMN analytic_code TEXT")
+
+    ac_cols = [r["name"] for r in conn.execute("PRAGMA table_info(analytic_codes)")]
+    if ac_cols and "unite" not in ac_cols:
+        conn.execute("ALTER TABLE analytic_codes ADD COLUMN unite TEXT")
 
     # Migre l'ancien mécanisme "stock_initial_<compte>" (settings) vers opening_balances
     default_exercice = str(datetime.today().year)
@@ -1123,16 +1128,29 @@ def _plan_delete(conn, table, code):
 
 
 def list_analytic_codes(conn):
-    return _plan_list(conn, "analytic_codes")
+    return _plan_list(conn, "analytic_codes", extra_cols="unite")
 
 
 def analytic_code_exists(conn, code):
     return _plan_exists(conn, "analytic_codes", code)
 
 
-def add_analytic_code(conn, code, label):
-    conn.execute("INSERT OR REPLACE INTO analytic_codes (code, label) VALUES (?, ?)",
-                 (code.strip(), label.strip()))
+def get_analytic_code_unite(conn, code):
+    row = conn.execute("SELECT unite FROM analytic_codes WHERE code = ?", (code,)).fetchone()
+    return row["unite"] if row else None
+
+
+def add_analytic_code(conn, code, label, unite=None):
+    """`unite` (ex. 'L' pour litre, 'Kw' pour kilowatt, 'H' pour heure) :
+    conservée telle quelle si non précisée, pour ne pas écraser une unité
+    déjà définie lors d'une simple modification de libellé."""
+    code = code.strip()
+    if unite is None:
+        row = conn.execute("SELECT unite FROM analytic_codes WHERE code = ?", (code,)).fetchone()
+        if row:
+            unite = row["unite"]
+    conn.execute("INSERT OR REPLACE INTO analytic_codes (code, label, unite) VALUES (?, ?, ?)",
+                 (code, label.strip(), unite))
     conn.commit()
 
 
@@ -1176,7 +1194,7 @@ def delete_donor_code(conn, code):
     _plan_delete(conn, "donor_codes", code)
 
 
-def _export_plan_generic_xlsx(conn, path, table, title, has_montant=False):
+def _export_plan_generic_xlsx(conn, path, table, title, has_montant=False, has_unite=False):
     import openpyxl
     from openpyxl.styles import Font, PatternFill
 
@@ -1185,34 +1203,39 @@ def _export_plan_generic_xlsx(conn, path, table, title, has_montant=False):
     ws.title = title[:31]
     header_font = Font(bold=True, color="FFFFFFFF")
     header_fill = PatternFill("solid", fgColor="1F4E78")
-    headers = ["Code", "Libellé"] + (["Montant"] if has_montant else [])
+    headers = ["Code", "Libellé"] + (["Montant"] if has_montant else []) + (["Unité"] if has_unite else [])
     for i, label in enumerate(headers, start=1):
         c = ws.cell(row=1, column=i, value=label)
         c.font = header_font
         c.fill = header_fill
-    cols = "code, label" + (", montant" if has_montant else "")
+    cols = "code, label" + (", montant" if has_montant else "") + (", unite" if has_unite else "")
     for r, row in enumerate(conn.execute(f"SELECT {cols} FROM {table} ORDER BY code"), start=2):
         ws.cell(row=r, column=1, value=row["code"])
         ws.cell(row=r, column=2, value=row["label"])
+        col = 3
         if has_montant:
-            ws.cell(row=r, column=3, value=row["montant"])
-    widths = [16, 40] + ([16] if has_montant else [])
+            ws.cell(row=r, column=col, value=row["montant"])
+            col += 1
+        if has_unite:
+            ws.cell(row=r, column=col, value=row["unite"])
+    widths = [16, 40] + ([16] if has_montant else []) + ([12] if has_unite else [])
     for i, w in enumerate(widths, start=1):
         ws.column_dimensions[chr(64 + i)].width = w
     wb.save(path)
     return path
 
 
-def _import_plan_generic_xlsx(conn, path, table, has_montant=False):
-    """Importe un plan (code/libellé[/montant]) depuis un .xlsx et ÉCRASE
-    l'ancien contenu de la table."""
+def _import_plan_generic_xlsx(conn, path, table, has_montant=False, has_unite=False):
+    """Importe un plan (code/libellé[/montant][/unité]) depuis un .xlsx et
+    ÉCRASE l'ancien contenu de la table."""
     import openpyxl
 
     wb = openpyxl.load_workbook(path, data_only=True)
     ws = wb.active
     header_cells = next(ws.iter_rows(min_row=1, max_row=1))
     headers = [str(c.value).strip().lower() if c.value is not None else "" for c in header_cells]
-    aliases = {"code": ["code"], "label": ["libellé", "libelle"], "montant": ["montant"]}
+    aliases = {"code": ["code"], "label": ["libellé", "libelle"], "montant": ["montant"],
+               "unite": ["unité", "unite"]}
     colmap = {}
     for key, alist in aliases.items():
         for i, h in enumerate(headers):
@@ -1231,13 +1254,21 @@ def _import_plan_generic_xlsx(conn, path, table, has_montant=False):
         label = str(values[colmap["label"]] or "").strip()
         if not code or not label:
             continue
-        montant = 0.0
-        if has_montant and "montant" in colmap and colmap["montant"] < len(values):
-            try:
-                montant = float(values[colmap["montant"]] or 0)
-            except (TypeError, ValueError):
-                montant = 0.0
-        rows.append((code, label, montant) if has_montant else (code, label))
+        row = [code, label]
+        if has_montant:
+            montant = 0.0
+            if "montant" in colmap and colmap["montant"] < len(values):
+                try:
+                    montant = float(values[colmap["montant"]] or 0)
+                except (TypeError, ValueError):
+                    montant = 0.0
+            row.append(montant)
+        if has_unite:
+            unite = None
+            if "unite" in colmap and colmap["unite"] < len(values):
+                unite = str(values[colmap["unite"]] or "").strip() or None
+            row.append(unite)
+        rows.append(tuple(row))
 
     if not rows:
         raise ValueError("Le fichier ne contient aucune ligne valide.")
@@ -1245,6 +1276,8 @@ def _import_plan_generic_xlsx(conn, path, table, has_montant=False):
     conn.execute(f"DELETE FROM {table}")
     if has_montant:
         conn.executemany(f"INSERT INTO {table} (code, label, montant) VALUES (?, ?, ?)", rows)
+    elif has_unite:
+        conn.executemany(f"INSERT INTO {table} (code, label, unite) VALUES (?, ?, ?)", rows)
     else:
         conn.executemany(f"INSERT INTO {table} (code, label) VALUES (?, ?)", rows)
     conn.commit()
@@ -1252,11 +1285,11 @@ def _import_plan_generic_xlsx(conn, path, table, has_montant=False):
 
 
 def export_analytic_codes_xlsx(conn, path):
-    return _export_plan_generic_xlsx(conn, path, "analytic_codes", "Plan analytique")
+    return _export_plan_generic_xlsx(conn, path, "analytic_codes", "Plan analytique", has_unite=True)
 
 
 def import_analytic_codes_xlsx(conn, path):
-    return _import_plan_generic_xlsx(conn, path, "analytic_codes")
+    return _import_plan_generic_xlsx(conn, path, "analytic_codes", has_unite=True)
 
 
 def export_budget_codes_xlsx(conn, path):
@@ -3092,17 +3125,17 @@ PREFIX_ENERGIE = "ENERGIE-"
 PREFIX_MAINTENANCE = "MAINT-"
 
 SUGGESTIONS_ENERGIE = [
-    ("ENERGIE-EAU", "Eau"),
-    ("ENERGIE-ELEC", "Électricité"),
-    ("ENERGIE-ESSENCE", "Essence / Carburant"),
-    ("ENERGIE-GASOIL", "Gasoil"),
-    ("ENERGIE-GAZ", "Gaz"),
+    ("ENERGIE-EAU", "Eau", "L"),
+    ("ENERGIE-ELEC", "Électricité", "Kw"),
+    ("ENERGIE-ESSENCE", "Essence / Carburant", "L"),
+    ("ENERGIE-GASOIL", "Gasoil", "L"),
+    ("ENERGIE-GAZ", "Gaz", "L"),
 ]
 SUGGESTIONS_MAINTENANCE = [
-    ("MAINT-VEHIC", "Maintenance véhicules"),
-    ("MAINT-BAT", "Maintenance bâtiments"),
-    ("MAINT-MACH", "Maintenance machines et équipements"),
-    ("MAINT-INFO", "Maintenance informatique"),
+    ("MAINT-VEHIC", "Maintenance véhicules", "H"),
+    ("MAINT-BAT", "Maintenance bâtiments", "H"),
+    ("MAINT-MACH", "Maintenance machines et équipements", "H"),
+    ("MAINT-INFO", "Maintenance informatique", "H"),
 ]
 
 
@@ -3111,9 +3144,9 @@ def ajouter_codes_analytiques_suggeres(conn, suggestions):
     n'existent pas encore, SANS écraser un code déjà personnalisé par
     l'utilisateur. Retourne le nombre de codes effectivement ajoutés."""
     ajoutes = 0
-    for code, label in suggestions:
+    for code, label, unite in suggestions:
         if not analytic_code_exists(conn, code):
-            add_analytic_code(conn, code, label)
+            add_analytic_code(conn, code, label, unite=unite)
             ajoutes += 1
     return ajoutes
 
@@ -3171,6 +3204,39 @@ def compute_couts_analytiques_categorie(conn, prefix, date_from=None, date_to=No
     return result
 
 
+def compute_cout_unitaire_moyen_analytique(conn, analytic_code, exercice=None, toutes_dates=False):
+    """Coût unitaire moyen pondéré d'un code analytique — ex. F CFA par
+    litre d'eau/gasoil/gaz, par kilowatt d'électricité, par heure de
+    main-d'œuvre ou de maintenance. Même principe que le coût unitaire moyen
+    des stocks (compute_stocks_detail) : le montant total des charges
+    (classe 6) comptabilisées sous ce code, divisé par la quantité totale
+    saisie sur ces mêmes lignes (champ Quantité de la Saisie — en litres,
+    kilowatts ou heures selon l'unité du code, voir get_analytic_code_unite).
+    Se met à jour tout seul après chaque facture saisie avec une quantité.
+    Retourne None si aucune quantité n'a encore été renseignée pour ce code
+    (coût unitaire pas encore calculable).
+    `toutes_dates=True` cumule depuis le début plutôt que sur le seul
+    exercice — plus stable quand peu de factures ont été saisies cette année."""
+    if not analytic_code:
+        return None
+    params = [analytic_code]
+    date_filter = ""
+    if not toutes_dates:
+        exercice = exercice or get_current_exercice(conn)
+        date_filter = " AND e.date >= ? AND e.date <= ?"
+        params += [f"{exercice}-01-01", f"{exercice}-12-31"]
+    row = conn.execute(
+        f"""SELECT COALESCE(SUM(e.debit), 0) d, COALESCE(SUM(e.credit), 0) c,
+                   COALESCE(SUM(e.quantite), 0) q
+            FROM entries e JOIN accounts a ON a.code = e.compte
+            WHERE e.analytic_code = ? AND a.classe = '6'{date_filter}""",
+        params,
+    ).fetchone()
+    if not row["q"]:
+        return None
+    return (row["d"] - row["c"]) / row["q"]
+
+
 def compute_couts_analytiques_fabrication(conn, prefix):
     """Pour une catégorie de code analytique (Énergie ou Maintenance), les
     lignes de recette de Fabrication (main-d'œuvre, énergie, autres charges)
@@ -3183,6 +3249,7 @@ def compute_couts_analytiques_fabrication(conn, prefix):
         (f"{prefix}%",),
     ).fetchall()
     return [dict(r) for r in rows]
+
 
 
 # ---------------------------------------------------------------------------
@@ -3311,10 +3378,17 @@ def _compte_variation_stock(compte_stock):
 
 def compute_cout_production(conn, produit_code, exercice=None):
     """Calcule le coût de production d'un produit fini à partir de sa recette :
-    pour chaque ligne « matière première » liée à un compte de stock, le coût
-    unitaire réel est repris automatiquement du coût unitaire moyen calculé
-    dans l'onglet Stocks (valeur du stock / quantité) — sinon le coût unitaire
-    saisi manuellement sur la ligne (main-d'œuvre, énergie, autre) est utilisé."""
+    - pour chaque ligne « matière première » liée à un compte de stock, le coût
+      unitaire réel est repris automatiquement du coût unitaire moyen calculé
+      dans l'onglet Stocks (valeur du stock / quantité) ;
+    - pour chaque ligne « main-d'œuvre », « énergie » ou « autre » liée à un
+      CODE ANALYTIQUE (ex. MAINT-MACH, ENERGIE-EAU), le coût unitaire réel est
+      repris automatiquement du coût unitaire moyen pondéré de ce code (total
+      des charges comptabilisées sous ce code / quantité totale saisie — en
+      litres, kilowatts ou heures selon son unité), voir
+      compute_cout_unitaire_moyen_analytique() — se met à jour tout seul
+      après chaque facture saisie ;
+    - sinon, le coût unitaire saisi manuellement sur la ligne est utilisé."""
     produit = get_produit_fini(conn, produit_code)
     if not produit:
         raise ValueError(f"Produit « {produit_code} » introuvable.")
@@ -3334,6 +3408,15 @@ def compute_cout_production(conn, produit_code, exercice=None):
             elif cu is None:
                 cu = 0.0
                 source = "aucun coût connu — à saisir"
+        elif l["type_ligne"] != "matiere" and l["analytic_code"]:
+            cu_analytique = compute_cout_unitaire_moyen_analytique(conn, l["analytic_code"], toutes_dates=True)
+            if cu_analytique is not None:
+                cu = cu_analytique
+                unite = get_analytic_code_unite(conn, l["analytic_code"]) or ""
+                source = f"analytique (coût moyen pondéré{f' / {unite}' if unite else ''})"
+            elif cu is None:
+                cu = 0.0
+                source = "aucune quantité comptabilisée sous ce code — à saisir"
         elif cu is None:
             cu = 0.0
             source = "à saisir"

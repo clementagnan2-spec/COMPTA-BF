@@ -259,10 +259,13 @@ class SaisieTab(ttk.Frame):
                   "Code analytique (ex: AN-FAB)", "Code budgétaire", "Code bailleur", "Quantité", "Client"]
         self.vars = {k: tk.StringVar() for k in labels}
         self.vars["Date (JJ/MM/AAAA)"].set(self._default_date())
+        self.field_labels = {}
 
         for i, lbl in enumerate(labels):
             r, c = divmod(i, 3)
-            ttk.Label(form, text=lbl).grid(row=r * 2, column=c, sticky="w", padx=4, pady=(4, 0))
+            lbl_widget = ttk.Label(form, text=lbl)
+            lbl_widget.grid(row=r * 2, column=c, sticky="w", padx=4, pady=(4, 0))
+            self.field_labels[lbl] = lbl_widget
             if lbl == "Compte débiteur":
                 widget = ttk.Combobox(form, textvariable=self.vars[lbl], width=22)
                 widget.grid(row=r * 2 + 1, column=c, sticky="we", padx=4, pady=(0, 4))
@@ -309,8 +312,9 @@ class SaisieTab(ttk.Frame):
             elif lbl == "Code analytique (ex: AN-FAB)":
                 widget = ttk.Combobox(form, textvariable=self.vars[lbl], width=22)
                 widget.grid(row=r * 2 + 1, column=c, sticky="we", padx=4, pady=(0, 4))
-                widget.bind("<FocusOut>", lambda e: self._validate_plan_field(
-                    "Code analytique (ex: AN-FAB)", "analytique"))
+                widget.bind("<FocusOut>", lambda e: (self._validate_plan_field(
+                    "Code analytique (ex: AN-FAB)", "analytique"), self._update_quantite_label()))
+                widget.bind("<<ComboboxSelected>>", lambda e: self._update_quantite_label())
                 widget.bind("<Button-1>", self._open_dropdown)
                 self.analytique_combo = widget
                 self._refresh_plan_values("analytique")
@@ -537,6 +541,19 @@ class SaisieTab(ttk.Frame):
             self._refresh_client_values()
         else:
             self.vars["Client"].set("")
+
+    def _update_quantite_label(self):
+        """Met à jour le libellé du champ Quantité avec l'unité du code
+        analytique choisi (ex. « Quantité (L) » pour l'eau, « Quantité (H) »
+        pour une heure de maintenance) — pour rappeler dans quelle unité
+        saisir la quantité, indispensable au calcul du coût unitaire moyen
+        pondéré analytique (menu MAINTENANCE-ÉNERGIE, Fabrication)."""
+        raw = self.vars["Code analytique (ex: AN-FAB)"].get().strip()
+        code = raw.split(" — ", 1)[0].strip() if " — " in raw else raw
+        unite = core.get_analytic_code_unite(self.conn, code) if code else None
+        label_widget = self.field_labels.get("Quantité")
+        if label_widget:
+            label_widget.configure(text=f"Quantité ({unite})" if unite else "Quantité")
 
     def _refresh_plan_values(self, plan):
         if plan == "analytique":
@@ -829,6 +846,7 @@ class SaisieTab(ttk.Frame):
         self.vars["Fournisseur"].set(values[14])
         self.vars["Client"].set(values[15])
         self._show_account_labels()
+        self._update_quantite_label()
 
     def refresh(self):
         self._refresh_compte_values()
@@ -837,6 +855,7 @@ class SaisieTab(ttk.Frame):
         self._refresh_plan_values("bailleur")
         self._refresh_fournisseur_values()
         self._refresh_client_values()
+        self._update_quantite_label()
         for row in self.tree.get_children():
             self.tree.delete(row)
         entries = core.list_entries(self.conn, exercice=core.get_current_exercice(self.conn))
@@ -1852,7 +1871,8 @@ class RecetteFabricationTab(ttk.Frame):
         self.compte_combo.grid(row=0, column=5, padx=4)
         self._refresh_stock_accounts()
 
-        ttk.Label(form, text="Quantité :").grid(row=1, column=0, sticky="w", padx=4, pady=4)
+        self.ligne_qte_label = ttk.Label(form, text="Quantité :")
+        self.ligne_qte_label.grid(row=1, column=0, sticky="w", padx=4, pady=4)
         self.ligne_qte_var = tk.StringVar()
         ttk.Entry(form, textvariable=self.ligne_qte_var, width=10).grid(row=1, column=1, padx=4, sticky="w")
 
@@ -1867,9 +1887,15 @@ class RecetteFabricationTab(ttk.Frame):
         self.ligne_analytic_var = tk.StringVar()
         self.analytic_combo = ttk.Combobox(form, textvariable=self.ligne_analytic_var, width=26)
         self.analytic_combo.grid(row=1, column=5, padx=4, sticky="w")
+        self.analytic_combo.bind("<<ComboboxSelected>>", self._on_analytic_changed)
+        self.analytic_combo.bind("<FocusOut>", self._on_analytic_changed)
         self._refresh_analytic_values()
 
-        ttk.Button(form, text="Ajouter le composant", command=self.add_ligne).grid(row=2, column=5, padx=4, pady=4)
+        self.analytic_apercu_var = tk.StringVar()
+        ttk.Label(form, textvariable=self.analytic_apercu_var, foreground="#1F7A1F").grid(
+            row=2, column=4, columnspan=2, sticky="w", padx=(12, 4))
+
+        ttk.Button(form, text="Ajouter le composant", command=self.add_ligne).grid(row=3, column=5, padx=4, pady=4)
 
         cols = ("id", "type", "libelle", "compte", "quantite", "cout_unitaire", "analytique", "source", "montant")
         self.tree = ttk.Treeview(self, columns=cols, show="headings", height=8)
@@ -1900,6 +1926,28 @@ class RecetteFabricationTab(ttk.Frame):
     def _refresh_analytic_values(self):
         codes = core.list_analytic_codes(self.conn)
         self.analytic_combo["values"] = [f"{c['code']} — {c['label']}" for c in codes]
+
+    def _on_analytic_changed(self, event=None):
+        """Aperçu du coût unitaire moyen pondéré du code analytique choisi
+        (ex. F CFA par heure de maintenance, par litre d'eau) — calculé à
+        partir de l'ensemble des charges déjà comptabilisées sous ce code,
+        comme le sera réellement le coût utilisé dans la recette."""
+        code = self._extract_code(self.ligne_analytic_var.get())
+        if not code:
+            self.analytic_apercu_var.set("")
+            self.ligne_qte_label.configure(text="Quantité :")
+            return
+        unite = core.get_analytic_code_unite(self.conn, code)
+        cu = core.compute_cout_unitaire_moyen_analytique(self.conn, code, toutes_dates=True)
+        if cu is not None:
+            self.analytic_apercu_var.set(
+                f"Coût moyen pondéré constaté : {cu:,.2f} F CFA / {unite or 'unité'} "
+                f"(sera utilisé automatiquement)")
+        else:
+            self.analytic_apercu_var.set(
+                f"Aucune quantité comptabilisée sous ce code pour l'instant — "
+                f"saisissez un coût unitaire manuel en attendant.")
+        self.ligne_qte_label.configure(text=f"Quantité ({unite}) :" if unite else "Quantité :")
 
     def _refresh_compte_pf_values(self):
         stocks = core.compute_stocks_detail(self.conn, prefixes=["36"])
@@ -4350,6 +4398,7 @@ class _SimplePlanTab(ttk.Frame):
     """Base pour les plans Code + Libellé (analytique, bailleurs)."""
     TITLE = ""
     CODE_LABEL = "Code"
+    HAS_UNITE = False  # PlanAnalytiqueTab l'active pour gérer L / Kw / H...
 
     def list_fn(self, conn):
         raise NotImplementedError
@@ -4385,12 +4434,20 @@ class _SimplePlanTab(ttk.Frame):
         ttk.Label(form, text="Libellé :").grid(row=0, column=2, sticky="w", padx=(16, 0))
         self.label_var = tk.StringVar()
         ttk.Entry(form, textvariable=self.label_var, width=45).grid(row=0, column=3, padx=6)
-        ttk.Button(form, text="Créer / Modifier", command=self.save).grid(row=0, column=4, padx=6)
-        ttk.Button(form, text="Supprimer", command=self.delete).grid(row=0, column=5, padx=6)
+        next_col = 4
+        if self.HAS_UNITE:
+            ttk.Label(form, text="Unité (L, Kw, H...) :").grid(row=0, column=4, sticky="w", padx=(16, 0))
+            self.unite_var = tk.StringVar()
+            ttk.Entry(form, textvariable=self.unite_var, width=10).grid(row=0, column=5, padx=6)
+            next_col = 6
+        ttk.Button(form, text="Créer / Modifier", command=self.save).grid(row=0, column=next_col, padx=6)
+        ttk.Button(form, text="Supprimer", command=self.delete).grid(row=0, column=next_col + 1, padx=6)
 
-        cols = ("code", "label")
+        cols = ("code", "label", "unite") if self.HAS_UNITE else ("code", "label")
+        headers = [self.CODE_LABEL, "Libellé", "Unité"] if self.HAS_UNITE else [self.CODE_LABEL, "Libellé"]
+        widths = [140, 460, 80] if self.HAS_UNITE else [140, 500]
         self.tree = ttk.Treeview(self, columns=cols, show="headings")
-        for c, h, w in zip(cols, [self.CODE_LABEL, "Libellé"], [140, 500]):
+        for c, h, w in zip(cols, headers, widths):
             self.tree.heading(c, text=h)
             self.tree.column(c, width=w, anchor="w")
         self.tree.pack(fill="both", expand=True, padx=16, pady=8)
@@ -4404,6 +4461,8 @@ class _SimplePlanTab(ttk.Frame):
         values = self.tree.item(sel[0], "values")
         self.code_var.set(values[0])
         self.label_var.set(values[1])
+        if self.HAS_UNITE:
+            self.unite_var.set(values[2] if len(values) > 2 else "")
 
     def save(self):
         code = self.code_var.get().strip()
@@ -4411,7 +4470,10 @@ class _SimplePlanTab(ttk.Frame):
         if not code or not label:
             messagebox.showwarning("Champs manquants", f"{self.CODE_LABEL} et Libellé sont obligatoires.")
             return
-        self.add_fn(self.conn, code, label)
+        if self.HAS_UNITE:
+            self.add_fn(self.conn, code, label, unite=self.unite_var.get().strip() or None)
+        else:
+            self.add_fn(self.conn, code, label)
         self.refresh()
 
     def delete(self):
@@ -4423,13 +4485,18 @@ class _SimplePlanTab(ttk.Frame):
             self.delete_fn(self.conn, code)
             self.code_var.set("")
             self.label_var.set("")
+            if self.HAS_UNITE:
+                self.unite_var.set("")
             self.refresh()
 
     def refresh(self):
         for row in self.tree.get_children():
             self.tree.delete(row)
         for item in self.list_fn(self.conn):
-            self.tree.insert("", "end", values=(item["code"], item["label"]))
+            if self.HAS_UNITE:
+                self.tree.insert("", "end", values=(item["code"], item["label"], item.get("unite") or ""))
+            else:
+                self.tree.insert("", "end", values=(item["code"], item["label"]))
 
     def export_xlsx(self):
         path = filedialog.asksaveasfilename(
@@ -4464,12 +4531,13 @@ class _SimplePlanTab(ttk.Frame):
 class PlanAnalytiqueTab(_SimplePlanTab):
     TITLE = "PLAN ANALYTIQUE"
     CODE_LABEL = "Code analytique"
+    HAS_UNITE = True
 
     def list_fn(self, conn):
         return core.list_analytic_codes(conn)
 
-    def add_fn(self, conn, code, label):
-        core.add_analytic_code(conn, code, label)
+    def add_fn(self, conn, code, label, unite=None):
+        core.add_analytic_code(conn, code, label, unite=unite)
 
     def delete_fn(self, conn, code):
         core.delete_analytic_code(conn, code)
