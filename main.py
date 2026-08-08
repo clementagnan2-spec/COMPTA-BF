@@ -1526,23 +1526,27 @@ class BilanTab(ttk.Frame):
         ttk.Label(columns_frame, text="ACTIF", font=("Segoe UI", 12, "bold")).grid(row=0, column=0, sticky="w")
         ttk.Label(columns_frame, text="PASSIF", font=("Segoe UI", 12, "bold")).grid(row=0, column=1, sticky="w")
 
-        actif_cols = ("libelle", "brut", "amort", "net")
+        actif_cols = ("libelle", "brut", "amort", "net", "net_n1")
         self.tree_actif = ttk.Treeview(columns_frame, columns=actif_cols, show="headings", height=26)
         self.tree_actif.heading("libelle", text="Libellé")
         self.tree_actif.heading("brut", text="Brut")
         self.tree_actif.heading("amort", text="Amortissements")
         self.tree_actif.heading("net", text="Net")
+        self.tree_actif.heading("net_n1", text="Net N-1")
         self.tree_actif.column("libelle", width=300, anchor="w", stretch=True)
-        self.tree_actif.column("brut", width=150, anchor="e", stretch=False)
-        self.tree_actif.column("amort", width=150, anchor="e", stretch=False)
-        self.tree_actif.column("net", width=170, anchor="e", stretch=False)
+        self.tree_actif.column("brut", width=140, anchor="e", stretch=False)
+        self.tree_actif.column("amort", width=140, anchor="e", stretch=False)
+        self.tree_actif.column("net", width=150, anchor="e", stretch=False)
+        self.tree_actif.column("net_n1", width=150, anchor="e", stretch=False)
 
-        passif_cols = ("libelle", "montant")
+        passif_cols = ("libelle", "montant", "montant_n1")
         self.tree_passif = ttk.Treeview(columns_frame, columns=passif_cols, show="headings", height=26)
         self.tree_passif.heading("libelle", text="Libellé")
-        self.tree_passif.heading("montant", text="Montant")
+        self.tree_passif.heading("montant", text="Exercice N")
+        self.tree_passif.heading("montant_n1", text="Exercice N-1")
         self.tree_passif.column("libelle", width=340, anchor="w", stretch=True)
-        self.tree_passif.column("montant", width=180, anchor="e", stretch=False)
+        self.tree_passif.column("montant", width=170, anchor="e", stretch=False)
+        self.tree_passif.column("montant_n1", width=170, anchor="e", stretch=False)
 
         style = ttk.Style()
         style.configure("Bilan.Treeview", rowheight=22, font=("Segoe UI", 10))
@@ -1596,48 +1600,57 @@ class BilanTab(ttk.Frame):
             app.show("pieces_non_equilibrees")
 
     def _tag_for(self, item, side):
-        """Détermine le tag de couleur d'une ligne de créance/dette/stock à
-        partir de ses métadonnées (racine ou préfixe de stock) — même racine
-        = même couleur des deux côtés du Bilan, comme dans le PDF."""
-        racine = item.get("racine")
-        if racine and racine in self.RACINE_COLORS:
-            return f"racine_{racine}"
-        if "prefixe" in item:
+        """Détermine le tag de couleur d'une ligne/groupe de créance/dette/
+        stock à partir de sa clé (racine ou préfixe) — même racine = même
+        couleur des deux côtés du Bilan, comme dans le PDF."""
+        key = item.get("key")
+        if key and key in self.RACINE_COLORS:
+            return f"racine_{key}"
+        if key and key in ("31", "32", "33", "34", "35", "36", "37", "38", "39"):
             return "stock"
         return "plain"
 
-    def _add_actif_section(self, titre, lignes, total_label, total_val, detail=False, tag=None):
-        """lignes : liste de dicts {label, montant} (ou {label, brut, amort, net} si detail=True).
-        `tag` fixe une couleur unique pour toute la section (immobilisations,
-        stocks, trésorerie) ; si None, la couleur est déterminée ligne par
-        ligne via _tag_for (créances : une couleur par racine de compte)."""
+    def _add_actif_section(self, titre, lignes, total_label, total_val, total_val_n1=0.0, detail=False, tag=None):
+        """lignes : liste de catégories d'immobilisation {label, brut,
+        brut_n1, amort, amort_n1, net, net_n1} si detail=True, sinon des
+        GROUPES {key, label, sous_total, sous_total_n1, comptes:[...]} —
+        `tag` fixe une couleur unique pour toute la section, sinon la
+        couleur est déterminée groupe par groupe via _tag_for."""
         if not lignes and not total_val:
             return
-        self.tree_actif.insert("", "end", tags=("plain_header",), values=(titre, "", "", ""))
+        self.tree_actif.insert("", "end", tags=("plain_header",), values=(titre, "", "", "", ""))
         for l in lignes:
             row_tag = tag or self._tag_for(l, "actif")
             if detail:
                 self.tree_actif.insert("", "end", tags=(row_tag,), values=(
                     f"   {l['label']}", fmt_cfa(l["brut"]) if l["brut"] else "",
-                    fmt_cfa(l["amort"]) if l["amort"] else "", fmt_cfa(l["net"])))
+                    fmt_cfa(l["amort"]) if l["amort"] else "", fmt_cfa(l["net"]), fmt_cfa(l.get("net_n1", 0))))
             else:
-                if not l["montant"]:
+                montant = l.get("sous_total", l.get("montant", 0))
+                montant_n1 = l.get("sous_total_n1", l.get("montant_n1", 0))
+                if not montant and not montant_n1:
                     continue
-                self.tree_actif.insert("", "end", tags=(row_tag,), values=(f"   {l['label']}", "", "", fmt_cfa(l["montant"])))
-        self.tree_actif.insert("", "end", tags=("soustotal",), values=(f"  {total_label}", "", "", fmt_cfa(total_val)))
-        self.tree_actif.insert("", "end", values=("", "", "", ""))
+                self.tree_actif.insert("", "end", tags=(row_tag,), values=(
+                    f"   {l['label']}", "", "", fmt_cfa(montant), fmt_cfa(montant_n1)))
+        self.tree_actif.insert("", "end", tags=("soustotal",), values=(
+            f"  {total_label}", "", "", fmt_cfa(total_val), fmt_cfa(total_val_n1)))
+        self.tree_actif.insert("", "end", values=("", "", "", "", ""))
 
-    def _add_passif_section(self, titre, lignes, total_label, total_val, tag=None):
+    def _add_passif_section(self, titre, lignes, total_label, total_val, total_val_n1=0.0, tag=None):
         if not lignes and not total_val:
             return
-        self.tree_passif.insert("", "end", tags=("plain_header",), values=(titre, ""))
+        self.tree_passif.insert("", "end", tags=("plain_header",), values=(titre, "", ""))
         for l in lignes:
-            if not l["montant"]:
+            montant = l.get("sous_total", l.get("montant", 0))
+            montant_n1 = l.get("sous_total_n1", l.get("montant_n1", 0))
+            if not montant and not montant_n1:
                 continue
             row_tag = tag or self._tag_for(l, "passif")
-            self.tree_passif.insert("", "end", tags=(row_tag,), values=(f"   {l['label']}", fmt_cfa(l["montant"])))
-        self.tree_passif.insert("", "end", tags=("soustotal",), values=(f"  {total_label}", fmt_cfa(total_val)))
-        self.tree_passif.insert("", "end", values=("", ""))
+            self.tree_passif.insert("", "end", tags=(row_tag,), values=(
+                f"   {l['label']}", fmt_cfa(montant), fmt_cfa(montant_n1)))
+        self.tree_passif.insert("", "end", tags=("soustotal",), values=(
+            f"  {total_label}", fmt_cfa(total_val), fmt_cfa(total_val_n1)))
+        self.tree_passif.insert("", "end", values=("", "", ""))
 
     def refresh(self):
         for tree in (self.tree_passif, self.tree_actif):
@@ -1651,27 +1664,42 @@ class BilanTab(ttk.Frame):
         # ---- ACTIF ---- (immobilisations et capitaux propres restent en blanc,
         # comme dans le PDF — seuls stocks/créances/dettes/trésorerie sont colorés)
         self._add_actif_section("IMMOBILISATIONS", a["immobilisations"],
-                                 "Total immobilisations nettes", a["total_immo_net"], detail=True, tag="plain")
-        self._add_actif_section("STOCKS", a["stocks"], "Total stocks", a["total_stocks"], tag="stock")
-        self._add_actif_section("CRÉANCES", a["creances"], "Total créances", a["total_creances"])
+                                 "Total immobilisations BRUTES", a["total_immo_brut"], a["total_immo_brut_n1"],
+                                 detail=True, tag="plain")
+        self.tree_actif.insert("", "end", tags=("soustotal",), values=(
+            "  Total AMORTISSEMENTS et provisions", "", "", fmt_cfa(a["total_immo_amort"]),
+            fmt_cfa(a["total_immo_amort_n1"])))
+        self.tree_actif.insert("", "end", tags=("soustotal",), values=(
+            "  Total immobilisations NETTES", "", "", fmt_cfa(a["total_immo_net"]), fmt_cfa(a["total_immo_net_n1"])))
+        self.tree_actif.insert("", "end", values=("", "", "", "", ""))
+        self._add_actif_section("STOCKS", a["stocks"], "Total stocks", a["total_stocks"], a["total_stocks_n1"],
+                                 tag="stock")
+        self._add_actif_section("CRÉANCES", a["creances"], "Total créances", a["total_creances"],
+                                 a["total_creances_n1"])
         self._add_actif_section("TRÉSORERIE ACTIF", a["tresorerie"], "Total trésorerie actif",
-                                 a["total_tresorerie"], tag="treso")
-        self.tree_actif.insert("", "end", tags=("grandtotal",), values=("TOTAL ACTIF", "", "", fmt_cfa(d["total_actif"])))
+                                 a["total_tresorerie"], a["total_tresorerie_n1"], tag="treso")
+        self.tree_actif.insert("", "end", tags=("grandtotal",), values=(
+            "TOTAL ACTIF", "", "", fmt_cfa(d["total_actif"]), fmt_cfa(d["total_actif_n1"])))
 
         # ---- PASSIF ----
         self._add_passif_section("CAPITAUX PROPRES ET RESSOURCES DURABLES", p["capitaux_propres"],
                                   "Total capitaux propres et ressources durables", p["total_capitaux_propres"],
-                                  tag="plain")
-        self._add_passif_section("DETTES CIRCULANTES", p["dettes"], "Total dettes circulantes", p["total_dettes"])
+                                  p["total_capitaux_propres_n1"], tag="plain")
+        self._add_passif_section("DETTES CIRCULANTES", p["dettes"], "Total dettes circulantes",
+                                  p["total_dettes"], p["total_dettes_n1"])
         self._add_passif_section("TRÉSORERIE PASSIF", p["tresorerie"], "Total trésorerie passif",
-                                  p["total_tresorerie"], tag="treso")
-        self.tree_passif.insert("", "end", tags=("grandtotal",), values=("TOTAL PASSIF", fmt_cfa(d["total_passif"])))
+                                  p["total_tresorerie"], p["total_tresorerie_n1"], tag="treso")
+        self.tree_passif.insert("", "end", tags=("grandtotal",), values=(
+            "TOTAL PASSIF", fmt_cfa(d["total_passif"]), fmt_cfa(d["total_passif_n1"])))
 
         ecart = d["ecart"]
         couleur = "#B00020" if abs(ecart) >= 1 else "#1F7A1F"
         self.ecart_label.configure(foreground=couleur)
         if abs(ecart) < 1:
-            self.ecart_var.set(f"Écart Actif - Passif : {fmt_cfa(ecart)}  ✓ équilibré")
+            self.ecart_var.set(f"Écart Actif - Passif (exercice {d['exercice']}) : {fmt_cfa(ecart)}  ✓ équilibré"
+                                f"   —   Comparatif : exercice N-1 = {d['exercice_n1']}"
+                                + ("" if any([a["total_immo_brut_n1"], a["total_stocks_n1"], p["total_dettes_n1"]])
+                                   else " (aucune donnée trouvée pour cet exercice)"))
             self.diag_link.pack_forget()
         else:
             diag = core.compute_ecart_diagnostic(self.conn)

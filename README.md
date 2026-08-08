@@ -1969,3 +1969,44 @@ suivre exactement l'ordre et les libellés des PDF** :
 Testé : écart de contrôle du TFT et de la Situation financière toujours à
 0 après ces changements de présentation, cohérence Bilan/TFT/Situation
 financière vérifiée sur un scénario simple.
+
+### Bilan — sous-totaux Brut/Amortissements + colonne N-1 (comme le PDF)
+
+**3 manques confirmés par l'utilisateur** en comparant son écran à un
+export réel de son ancien système (mêmes formules déjà fournies
+précédemment) : pas de sous-total Brut/Amortissements séparé du Net, pas
+de colonne N-1, présentation différente du gabarit de référence.
+
+**Vérification préalable, chiffre par chiffre** : sur 8 lignes
+d'immobilisations comparées entre l'écran (exercice 2026) et le PDF de
+référence (exercice 2024), **5 correspondaient déjà exactement au franc
+près** (Terrains, Avances sur immobilisations, Immobilisations
+financières, Matériel de transport, Brevets/licences) — preuve que le
+calcul est juste. Les 3 qui différaient (Bâtiments, Installations,
+Matériel) sont précisément les catégories où de nouveaux investissements
+sont les plus probables sur 2 ans d'écart entre les deux exercices — pas
+nécessairement un bug, mais l'absence de colonne N-1 rendait cette
+vérification impossible à faire depuis l'écran lui-même.
+
+**Réalisé** :
+- **Sous-totaux Brut et Amortissements** ajoutés, séparés du sous-total
+  Net, dans la section Immobilisations (3 lignes : Total BRUT, Total
+  AMORTISSEMENTS et provisions, Total NETTES) — écran et export .xlsx.
+- **Colonne N-1 complète** sur tout le Bilan (Actif : Net N-1 ; Passif :
+  Exercice N-1), calculée en récupérant automatiquement les données de
+  l'exercice précédent (`exercice - 1`) — 0 si cet exercice n'a pas de
+  données (comme le PDF, qui laisse aussi des cellules N-1 vides).
+- **Créances, dettes, trésorerie et capitaux propres regroupés par
+  racine/préfixe avec un sous-total** (au lieu du détail compte par
+  compte affiché seul) — nécessaire pour que la comparaison N vs N-1 ait
+  un sens : un compte peut exister une année et pas l'autre, mais une
+  racine (ex. « 41 — Clients débiteurs ») reste comparable d'un exercice à
+  l'autre. Nouvelles fonctions `_compute_bilan_groupes()` et
+  `_merge_n1()`, réutilisables pour tout futur besoin de comparaison
+  d'exercices.
+
+Testé avec 2 exercices réels (2025 clôturé puis reporté sur 2026, avec une
+extension de bâtiment et une nouvelle créance client en 2026) : le Total
+Actif N (6 700 000) et N-1 (4 000 000) sont corrects, une créance créée en
+2026 affiche bien N-1 = 0 (n'existait pas en 2025), écart resté à 0 sur
+Bilan, Situation financière et TFT.

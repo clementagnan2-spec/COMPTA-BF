@@ -2993,25 +2993,60 @@ IMMO_CATEGORIES = [
 ]
 
 
-def compute_bilan_detaille(conn, exercice=None):
-    """Bilan présenté ligne par ligne (« avec détails »), comme le rapport
-    financier de référence de l'utilisateur : ACTIF en Brut / Amortissements
-    et provisions / Net (immobilisations par catégorie, stocks par nature,
-    créances compte par compte, trésorerie banque par banque) ; PASSIF
-    détaillé de la même façon (capitaux propres et ressources durables compte
-    par compte, dettes fournisseurs / personnel / organismes sociaux / État /
-    associés / HAO compte par compte, trésorerie créditrice banque par
-    banque). S'appuie sur exactement les mêmes totaux que compute_bilan() —
-    donc toujours cohérent et équilibré avec lui, la Balance, le TFT, la
-    Situation financière et la Liasse fiscale."""
-    exercice = exercice or get_current_exercice(conn)
+RACINE_LABELS_CREANCES = {
+    "40": "Fournisseurs — avances et acomptes versés", "41": "Clients débiteurs",
+    "42": "Personnel — débiteurs", "43": "Organismes sociaux (CNSS...) — débiteurs",
+    "44": "État — débiteur", "45": "Organismes internationaux — débiteurs",
+    "46": "Débiteurs divers", "47": "HAO — débiteurs divers",
+    "48": "HAO — autres débiteurs", "49": "Dépréciations et risques provisionnés (créances)",
+}
+RACINE_LABELS_DETTES = {
+    "40": "Fournisseurs", "41": "Clients créditeurs (avoirs)",
+    "42": "Personnel — créditeurs", "43": "Organismes sociaux (CNSS...) — créditeurs",
+    "44": "État — créditeur", "45": "Organismes internationaux — créditeurs",
+    "46": "Créditeurs divers", "47": "HAO — créditeurs divers",
+    "48": "HAO — autres créditeurs", "49": "Dépréciations et risques provisionnés (dettes)",
+}
+TRESO_LABELS = {
+    "50": "Titres de placement", "51": "Valeurs à encaisser", "52": "Banques",
+    "53": "Établissements financiers et assimilés", "54": "Instruments de trésorerie",
+    "56": "Banques, crédits de trésorerie et d'escompte", "57": "Caisse",
+    "58": "Régies d'avances, accréditifs et virements internes", "59": "Dépréciations et provisions (trésorerie)",
+}
+
+
+def _grouper_avec_sous_total(lignes_plates, cle, labels):
+    """Regroupe une liste de lignes compte-par-compte {label, montant, <cle>}
+    par la valeur de `cle` (racine ou préfixe), avec un sous-total par
+    groupe — pour que la comparaison N / N-1 ait un sens (le détail
+    compte-par-compte ne s'aligne pas forcément d'un exercice à l'autre :
+    un compte peut apparaître une année et pas l'autre)."""
+    groupes = {}
+    ordre = []
+    for l in lignes_plates:
+        cle_val = l[cle]
+        if cle_val not in groupes:
+            groupes[cle_val] = {"key": cle_val, "label": f"{cle_val} — {labels.get(cle_val, 'Autres')}",
+                                 "comptes": [], "sous_total": 0.0}
+            ordre.append(cle_val)
+        groupes[cle_val]["comptes"].append(l)
+        groupes[cle_val]["sous_total"] += l["montant"]
+    return [groupes[k] for k in ordre if abs(groupes[k]["sous_total"]) >= 1 or groupes[k]["comptes"]]
+
+
+def _compute_bilan_groupes(conn, exercice):
+    """Calcule les groupes du Bilan détaillé pour UN exercice donné —
+    utilisé pour l'exercice courant (avec le détail compte par compte) ET
+    pour l'exercice N-1 (uniquement les sous-totaux, pour la comparaison).
+    Retourne un dict de listes de groupes {key, label, sous_total,
+    comptes:[...]}, plus les totaux brut/amortissement/net des
+    immobilisations et les totaux généraux."""
     balance = compute_balance(conn, only_with_movement=False, exercice=exercice)
     bilan = compute_bilan(conn, exercice=exercice)
 
-    # ---- ACTIF : Immobilisations (Brut / Amortissements / Net) ----
+    # ---- Immobilisations (Brut / Amortissements / Net), par catégorie exacte ----
     total_brut = sum(b["solde_cloture"] for b in balance if b["classe"] == "2" and int(b["code"]) < 280000)
     total_amort = sum(b["solde_cloture"] for b in balance if b["classe"] == "2" and int(b["code"]) >= 280000)
-
     immobilisations = []
     somme_brut_categories = somme_amort_categories = 0.0
     for label, brut_ranges, amort_ranges in IMMO_CATEGORIES:
@@ -3020,19 +3055,16 @@ def compute_bilan_detaille(conn, exercice=None):
         somme_brut_categories += brut
         somme_amort_categories += amort
         if brut or amort:
-            immobilisations.append({"label": label, "brut": brut, "amort": amort, "net": brut + amort})
-
-    # Reliquat (comptes hors des plages ci-dessus, ex. racine 200 isolée) : une
-    # seule ligne « Autres », brut ET amortissement exacts par différence —
-    # garantit que le détail somme TOUJOURS exactement au total (immo_nettes).
+            immobilisations.append({"key": label, "label": label, "brut": brut, "amort": amort, "net": brut + amort})
     autres_brut = total_brut - somme_brut_categories
     autres_amort = total_amort - somme_amort_categories
     if abs(autres_brut) >= 1 or abs(autres_amort) >= 1:
-        immobilisations.append({"label": "Autres immobilisations non classées",
+        immobilisations.append({"key": "Autres immobilisations non classées",
+                                 "label": "Autres immobilisations non classées",
                                  "brut": autres_brut, "amort": autres_amort, "net": autres_brut + autres_amort})
     immobilisations.sort(key=lambda l: -abs(l["brut"]))
 
-    # ---- ACTIF : Stocks (classe 3, groupée par préfixe à 2 chiffres) ----
+    # ---- Stocks (classe 3), par préfixe à 2 chiffres ----
     stocks_labels = {
         "31": "Marchandises", "32": "Matières premières et fournitures liées",
         "33": "Autres approvisionnements (pièces de rechange...)",
@@ -3046,26 +3078,32 @@ def compute_bilan_detaille(conn, exercice=None):
             continue
         prefixe = b["code"][:2]
         stocks_par_prefixe[prefixe] = stocks_par_prefixe.get(prefixe, 0.0) + b["solde_cloture"]
-    stocks = [{"label": f"Stocks {p} — {stocks_labels.get(p, 'Autres stocks')}", "montant": v, "prefixe": p}
-              for p, v in sorted(stocks_par_prefixe.items()) if v]
+    stocks = [{"key": p, "label": f"Stocks {p} — {stocks_labels.get(p, 'Autres stocks')}",
+               "sous_total": v, "comptes": []} for p, v in sorted(stocks_par_prefixe.items()) if v]
 
-    # ---- ACTIF : Créances — racines 40 à 49, CHAQUE COMPTE classé selon le
-    # signe de son propre solde (débiteur -> créances), comme l'indiquent
-    # les libellés du rapport de référence : une même racine (ex. 40
-    # Fournisseurs, 41 Clients) peut avoir des comptes des deux côtés du
-    # Bilan (ex. un compte fournisseur en avance est débiteur -> Actif).
-    creances = []
+    # ---- Créances / Dettes (racines 40-49, compte par compte, groupées par racine) ----
+    creances_flat = []
     for racine in [str(r) for r in range(40, 50)]:
         for b in _detail_racine(balance, racine, sign="pos"):
-            creances.append({"label": f"{b['code']} {b['label']}", "montant": b["solde_cloture"], "racine": racine})
+            creances_flat.append({"label": f"{b['code']} {b['label']}", "montant": b["solde_cloture"], "racine": racine})
+    creances = _grouper_avec_sous_total(creances_flat, "racine", RACINE_LABELS_CREANCES)
 
-    # ---- ACTIF : Trésorerie (classe 5, comptes débiteurs) ----
+    dettes_flat = []
+    for racine in [str(r) for r in range(40, 50)]:
+        for b in _detail_racine(balance, racine, sign="neg"):
+            dettes_flat.append({"label": f"{b['code']} {b['label']}", "montant": -b["solde_cloture"], "racine": racine})
+    dettes = _grouper_avec_sous_total(dettes_flat, "racine", RACINE_LABELS_DETTES)
+
+    # ---- Trésorerie (classe 5), groupée par préfixe à 2 chiffres ----
     treso_lignes, _ = compute_tresorerie_detail(conn, exercice=exercice)
-    treso_actif = [{"label": f"{t['code']} {t['label']}", "montant": t["solde_cloture"]}
-                   for t in treso_lignes if t["solde_cloture"] > 0]
+    treso_actif_flat = [{"label": f"{t['code']} {t['label']}", "montant": t["solde_cloture"], "prefixe": t["code"][:2]}
+                        for t in treso_lignes if t["solde_cloture"] > 0]
+    treso_actif = _grouper_avec_sous_total(treso_actif_flat, "prefixe", TRESO_LABELS)
+    treso_passif_flat = [{"label": f"{t['code']} {t['label']}", "montant": -t["solde_cloture"], "prefixe": t["code"][:2]}
+                         for t in treso_lignes if t["solde_cloture"] < 0]
+    treso_passif = _grouper_avec_sous_total(treso_passif_flat, "prefixe", TRESO_LABELS)
 
-    # ---- PASSIF : Ressources durables (classe 1, groupée par préfixe à 2
-    # chiffres, chaque compte listé séparément) + Résultat net de l'exercice ----
+    # ---- Capitaux propres et ressources durables (classe 1), par préfixe ----
     capitaux_labels = {
         "10": "Capital", "11": "Réserves", "12": "Report à nouveau",
         "13": "Résultat net (avant affectation)", "14": "Subventions d'investissement",
@@ -3074,51 +3112,109 @@ def compute_bilan_detaille(conn, exercice=None):
         "18": "Comptes de liaison des établissements et sociétés en participation",
         "19": "Provisions financières pour risques et charges",
     }
-    capitaux_propres = []
+    capitaux_flat = []
     for prefixe in sorted(capitaux_labels):
-        comptes = _detail_prefix2(balance, "1", prefixe)
-        if not comptes:
-            continue
-        for b in comptes:
-            capitaux_propres.append({"label": f"{b['code']} {b['label']}", "montant": -b["solde_cloture"]})
-    somme_classee = sum(l["montant"] for l in capitaux_propres)
+        for b in _detail_prefix2(balance, "1", prefixe):
+            capitaux_flat.append({"label": f"{b['code']} {b['label']}", "montant": -b["solde_cloture"], "prefixe": prefixe})
+    capitaux_propres = _grouper_avec_sous_total(capitaux_flat, "prefixe", capitaux_labels)
+    somme_classee = sum(g["sous_total"] for g in capitaux_propres)
     ressources_durables_total = -_sum_class(balance, "1")
     autres_ress = ressources_durables_total - somme_classee
     if abs(autres_ress) >= 1:
-        capitaux_propres.append({"label": "Autres postes de ressources durables (non classés)", "montant": autres_ress})
+        capitaux_propres.append({"key": "autres", "label": "Autres postes de ressources durables (non classés)",
+                                  "comptes": [], "sous_total": autres_ress})
     resultat_net = bilan["passif"]["Résultat net de l'exercice"]
-    capitaux_propres.append({"label": "Résultat net de l'exercice", "montant": resultat_net})
-
-    # ---- PASSIF : Dettes circulantes — mêmes racines 40 à 49, chaque
-    # compte CRÉDITEUR (l'autre moitié du même principe que les créances
-    # ci-dessus). Un compte client créditeur (ex. avoir non lettré) atterrit
-    # ainsi correctement ici plutôt que de rester en négatif côté Actif.
-    dettes = []
-    for racine in [str(r) for r in range(40, 50)]:
-        for b in _detail_racine(balance, racine, sign="neg"):
-            dettes.append({"label": f"{b['code']} {b['label']}", "montant": -b["solde_cloture"], "racine": racine})
-
-    # ---- PASSIF : Trésorerie (classe 5, comptes créditeurs) ----
-    treso_passif = [{"label": f"{t['code']} {t['label']}", "montant": -t["solde_cloture"]}
-                    for t in treso_lignes if t["solde_cloture"] < 0]
+    capitaux_propres.append({"key": "resultat", "label": "Résultat net de l'exercice",
+                              "comptes": [], "sous_total": resultat_net})
 
     return {
-        "exercice": exercice,
+        "immobilisations": immobilisations, "total_immo_brut": total_brut, "total_immo_amort": total_amort,
+        "total_immo_net": bilan["actif"]["Immobilisations nettes"],
+        "stocks": stocks, "total_stocks": bilan["actif"]["Stocks"],
+        "creances": creances, "total_creances": bilan["actif"]["Créances et emplois assimilés"],
+        "tresorerie_actif": treso_actif, "total_tresorerie_actif": bilan["actif"]["Trésorerie actif"],
+        "capitaux_propres": capitaux_propres, "total_capitaux_propres": ressources_durables_total + resultat_net,
+        "dettes": dettes, "total_dettes": bilan["passif"]["Dettes circulantes"],
+        "tresorerie_passif": treso_passif, "total_tresorerie_passif": bilan["passif"]["Trésorerie passif"],
+        "total_actif": bilan["total_actif"], "total_passif": bilan["total_passif"],
+    }
+
+
+def _merge_n1(groupes_n, groupes_n1, key_field="key", montant_field="sous_total"):
+    """Attache à chaque groupe/ligne de `groupes_n` le montant N-1 du groupe
+    correspondant dans `groupes_n1` (même clé) — 0 si l'exercice N-1 n'a
+    pas ce groupe (compte inexistant l'an dernier, par ex.)."""
+    par_cle_n1 = {g[key_field]: g[montant_field] for g in groupes_n1}
+    for g in groupes_n:
+        g[montant_field + "_n1"] = par_cle_n1.get(g[key_field], 0.0)
+    return groupes_n
+
+
+def compute_bilan_detaille(conn, exercice=None):
+    """Bilan présenté ligne par ligne (« avec détails »), comme le rapport
+    financier de référence de l'utilisateur : ACTIF en Brut / Amortissements
+    et provisions / Net (immobilisations par catégorie AVEC sous-totaux
+    Brut/Amortissements, stocks par nature, créances compte par compte
+    GROUPÉES PAR RACINE avec un sous-total par racine) ; PASSIF détaillé de
+    la même façon (capitaux propres par racine, dettes groupées par racine,
+    trésorerie créditrice groupée Banques/Caisse). Chaque ligne/groupe
+    affiche aussi le montant de l'EXERCICE N-1 (même groupe, exercice
+    précédent — 0 si l'exercice N-1 n'a pas de données), comme le rapport
+    de référence. S'appuie sur exactement les mêmes totaux que
+    compute_bilan() — donc toujours cohérent et équilibré avec lui, la
+    Balance, le TFT, la Situation financière et la Liasse fiscale."""
+    exercice = exercice or get_current_exercice(conn)
+    exercice_n1 = str(int(exercice) - 1)
+
+    n = _compute_bilan_groupes(conn, exercice)
+    try:
+        n1 = _compute_bilan_groupes(conn, exercice_n1)
+    except Exception:
+        n1 = None
+
+    def _vide():
+        return {"immobilisations": [], "stocks": [], "creances": [], "tresorerie_actif": [],
+                "capitaux_propres": [], "dettes": [], "tresorerie_passif": [],
+                "total_immo_brut": 0.0, "total_immo_amort": 0.0, "total_immo_net": 0.0,
+                "total_stocks": 0.0, "total_creances": 0.0, "total_tresorerie_actif": 0.0,
+                "total_capitaux_propres": 0.0, "total_dettes": 0.0, "total_tresorerie_passif": 0.0,
+                "total_actif": 0.0, "total_passif": 0.0}
+    if n1 is None:
+        n1 = _vide()
+
+    _merge_n1(n["immobilisations"], n1["immobilisations"], montant_field="net")
+    _merge_n1(n["immobilisations"], n1["immobilisations"], montant_field="brut")
+    _merge_n1(n["immobilisations"], n1["immobilisations"], montant_field="amort")
+    _merge_n1(n["stocks"], n1["stocks"])
+    _merge_n1(n["creances"], n1["creances"])
+    _merge_n1(n["tresorerie_actif"], n1["tresorerie_actif"])
+    _merge_n1(n["capitaux_propres"], n1["capitaux_propres"])
+    _merge_n1(n["dettes"], n1["dettes"])
+    _merge_n1(n["tresorerie_passif"], n1["tresorerie_passif"])
+
+    return {
+        "exercice": exercice, "exercice_n1": exercice_n1,
         "actif": {
-            "immobilisations": immobilisations, "total_immo_brut": total_brut,
-            "total_immo_amort": total_amort, "total_immo_net": bilan["actif"]["Immobilisations nettes"],
-            "stocks": stocks, "total_stocks": bilan["actif"]["Stocks"],
-            "creances": creances, "total_creances": bilan["actif"]["Créances et emplois assimilés"],
-            "tresorerie": treso_actif, "total_tresorerie": bilan["actif"]["Trésorerie actif"],
+            "immobilisations": n["immobilisations"],
+            "total_immo_brut": n["total_immo_brut"], "total_immo_brut_n1": n1["total_immo_brut"],
+            "total_immo_amort": n["total_immo_amort"], "total_immo_amort_n1": n1["total_immo_amort"],
+            "total_immo_net": n["total_immo_net"], "total_immo_net_n1": n1["total_immo_net"],
+            "stocks": n["stocks"], "total_stocks": n["total_stocks"], "total_stocks_n1": n1["total_stocks"],
+            "creances": n["creances"], "total_creances": n["total_creances"], "total_creances_n1": n1["total_creances"],
+            "tresorerie": n["tresorerie_actif"], "total_tresorerie": n["total_tresorerie_actif"],
+            "total_tresorerie_n1": n1["total_tresorerie_actif"],
         },
-        "total_actif": bilan["total_actif"],
+        "total_actif": n["total_actif"], "total_actif_n1": n1["total_actif"],
         "passif": {
-            "capitaux_propres": capitaux_propres, "total_capitaux_propres": ressources_durables_total + resultat_net,
-            "dettes": dettes, "total_dettes": bilan["passif"]["Dettes circulantes"],
-            "tresorerie": treso_passif, "total_tresorerie": bilan["passif"]["Trésorerie passif"],
+            "capitaux_propres": n["capitaux_propres"],
+            "total_capitaux_propres": n["total_capitaux_propres"],
+            "total_capitaux_propres_n1": n1["total_capitaux_propres"],
+            "dettes": n["dettes"], "total_dettes": n["total_dettes"], "total_dettes_n1": n1["total_dettes"],
+            "tresorerie": n["tresorerie_passif"], "total_tresorerie": n["total_tresorerie_passif"],
+            "total_tresorerie_n1": n1["total_tresorerie_passif"],
         },
-        "total_passif": bilan["total_passif"],
-        "ecart": bilan["ecart"],
+        "total_passif": n["total_passif"], "total_passif_n1": n1["total_passif"],
+        "ecart": n["total_actif"] - n["total_passif"],
     }
 
 
@@ -3163,26 +3259,28 @@ def export_bilan_detaille_xlsx(conn, path, exercice=None):
     header_font = Font(bold=True)
     header_fill = PatternFill("solid", fgColor="D9D9D9")
 
-    ws["A1"] = f"BILAN — Exercice {exercice}"
+    ws["A1"] = f"BILAN — Exercice {exercice} (comparatif exercice {d['exercice_n1']})"
     ws["A1"].font = title_font
     ws["A2"] = "Calculé à partir de la Balance générale (comptes classés un par un, Actif = Passif garanti)."
-    ws.merge_cells("A2:H2")
+    ws.merge_cells("A2:I2")
 
     row = 4
     ws.cell(row=row, column=1, value="ACTIF").font = section_font
     ws.cell(row=row, column=1).fill = section_fill
-    ws.cell(row=row, column=6, value="PASSIF").font = section_font
-    ws.cell(row=row, column=6).fill = section_fill
-    for c in (2, 3, 4, 5, 7, 8):
+    ws.cell(row=row, column=7, value="PASSIF").font = section_font
+    ws.cell(row=row, column=7).fill = section_fill
+    for c in (2, 3, 4, 5, 6, 8, 9):
         ws.cell(row=row, column=c).fill = section_fill
     row += 1
     ws.cell(row=row, column=1, value="Libellé").font = header_font
     ws.cell(row=row, column=2, value="Brut").font = header_font
     ws.cell(row=row, column=3, value="Amortissements").font = header_font
     ws.cell(row=row, column=4, value="Net").font = header_font
-    ws.cell(row=row, column=6, value="Libellé").font = header_font
-    ws.cell(row=row, column=7, value="Montant").font = header_font
-    for c in (1, 2, 3, 4, 6, 7):
+    ws.cell(row=row, column=5, value="Net N-1").font = header_font
+    ws.cell(row=row, column=7, value="Libellé").font = header_font
+    ws.cell(row=row, column=8, value="Exercice N").font = header_font
+    ws.cell(row=row, column=9, value="Exercice N-1").font = header_font
+    for c in (1, 2, 3, 4, 5, 7, 8, 9):
         ws.cell(row=row, column=c).fill = header_fill
     header_row = row
     row += 1
@@ -3190,14 +3288,14 @@ def export_bilan_detaille_xlsx(conn, path, exercice=None):
     passif_start = row
 
     def row_color(item):
-        racine = item.get("racine")
-        if racine and racine in RACINE_COLORS:
-            return RACINE_COLORS[racine]
-        if "prefixe" in item:
+        key = item.get("key")
+        if key and key in RACINE_COLORS:
+            return RACINE_COLORS[key]
+        if key in ("31", "32", "33", "34", "35", "36", "37", "38", "39"):
             return STOCK_COLOR
         return None
 
-    def write_actif_section(ws, row, titre, lignes, total_label, total_val, detail=False,
+    def write_actif_section(ws, row, titre, lignes, total_label, total_val, total_val_n1=0.0, detail=False,
                              soustotal_color=SOUS_TOTAL_ACTIF, fixed_color=None):
         ws.cell(row=row, column=1, value=titre).font = header_font
         row += 1
@@ -3208,12 +3306,16 @@ def export_bilan_detaille_xlsx(conn, path, exercice=None):
                 ws.cell(row=row, column=2, value=l["brut"] or None).number_format = "#,##0"
                 ws.cell(row=row, column=3, value=l["amort"] or None).number_format = "#,##0"
                 ws.cell(row=row, column=4, value=l["net"]).number_format = "#,##0"
+                ws.cell(row=row, column=5, value=l.get("net_n1") or None).number_format = "#,##0"
             else:
+                montant = l.get("sous_total", l.get("montant", 0))
+                montant_n1 = l.get("sous_total_n1", l.get("montant_n1", 0))
                 ws.cell(row=row, column=1, value=f"  {l['label']}")
-                ws.cell(row=row, column=4, value=l["montant"]).number_format = "#,##0"
+                ws.cell(row=row, column=4, value=montant).number_format = "#,##0"
+                ws.cell(row=row, column=5, value=montant_n1 or None).number_format = "#,##0"
             if color:
                 fill, font = fill_font(*color)
-                for c in range(1, 5):
+                for c in range(1, 6):
                     cell = ws.cell(row=row, column=c)
                     cell.fill = fill
                     cell.font = font
@@ -3221,30 +3323,35 @@ def export_bilan_detaille_xlsx(conn, path, exercice=None):
         fill, font = fill_font(*soustotal_color)
         ws.cell(row=row, column=1, value=total_label)
         ws.cell(row=row, column=4, value=total_val).number_format = "#,##0"
-        for c in range(1, 5):
+        ws.cell(row=row, column=5, value=total_val_n1 or None).number_format = "#,##0"
+        for c in range(1, 6):
             ws.cell(row=row, column=c).fill = fill
             ws.cell(row=row, column=c).font = font
         return row + 2
 
-    def write_passif_section(ws, row, titre, lignes, total_label, total_val,
+    def write_passif_section(ws, row, titre, lignes, total_label, total_val, total_val_n1=0.0,
                               soustotal_color=SOUS_TOTAL_PASSIF, fixed_color=None):
-        ws.cell(row=row, column=6, value=titre).font = header_font
+        ws.cell(row=row, column=7, value=titre).font = header_font
         row += 1
         for l in lignes:
             color = fixed_color or row_color(l)
-            ws.cell(row=row, column=6, value=f"  {l['label']}")
-            ws.cell(row=row, column=7, value=l["montant"]).number_format = "#,##0"
+            montant = l.get("sous_total", l.get("montant", 0))
+            montant_n1 = l.get("sous_total_n1", l.get("montant_n1", 0))
+            ws.cell(row=row, column=7, value=f"  {l['label']}")
+            ws.cell(row=row, column=8, value=montant).number_format = "#,##0"
+            ws.cell(row=row, column=9, value=montant_n1 or None).number_format = "#,##0"
             if color:
                 fill, font = fill_font(*color)
-                for c in (6, 7):
+                for c in (7, 8, 9):
                     cell = ws.cell(row=row, column=c)
                     cell.fill = fill
                     cell.font = font
             row += 1
         fill, font = fill_font(*soustotal_color)
-        ws.cell(row=row, column=6, value=total_label)
-        ws.cell(row=row, column=7, value=total_val).number_format = "#,##0"
-        for c in (6, 7):
+        ws.cell(row=row, column=7, value=total_label)
+        ws.cell(row=row, column=8, value=total_val).number_format = "#,##0"
+        ws.cell(row=row, column=9, value=total_val_n1 or None).number_format = "#,##0"
+        for c in (7, 8, 9):
             ws.cell(row=row, column=c).fill = fill
             ws.cell(row=row, column=c).font = font
         return row + 2
@@ -3252,16 +3359,34 @@ def export_bilan_detaille_xlsx(conn, path, exercice=None):
     a = d["actif"]
     row = actif_start
     row = write_actif_section(ws, row, "IMMOBILISATIONS", a["immobilisations"],
-                               "Total immobilisations nettes", a["total_immo_net"], detail=True)
+                               "Total immobilisations BRUTES", a["total_immo_brut"], a["total_immo_brut_n1"],
+                               detail=True)
+    fill, font = fill_font(*SOUS_TOTAL_ACTIF)
+    ws.cell(row=row, column=1, value="  Total AMORTISSEMENTS et provisions")
+    ws.cell(row=row, column=4, value=a["total_immo_amort"]).number_format = "#,##0"
+    ws.cell(row=row, column=5, value=a["total_immo_amort_n1"] or None).number_format = "#,##0"
+    for c in range(1, 6):
+        ws.cell(row=row, column=c).fill = fill
+        ws.cell(row=row, column=c).font = font
+    row += 1
+    ws.cell(row=row, column=1, value="  Total immobilisations NETTES")
+    ws.cell(row=row, column=4, value=a["total_immo_net"]).number_format = "#,##0"
+    ws.cell(row=row, column=5, value=a["total_immo_net_n1"] or None).number_format = "#,##0"
+    for c in range(1, 6):
+        ws.cell(row=row, column=c).fill = fill
+        ws.cell(row=row, column=c).font = font
+    row += 2
     row = write_actif_section(ws, row, "STOCKS", a["stocks"], "Total stocks", a["total_stocks"],
-                               fixed_color=STOCK_COLOR)
-    row = write_actif_section(ws, row, "CRÉANCES", a["creances"], "Total créances", a["total_creances"])
+                               a["total_stocks_n1"], fixed_color=STOCK_COLOR)
+    row = write_actif_section(ws, row, "CRÉANCES", a["creances"], "Total créances", a["total_creances"],
+                               a["total_creances_n1"])
     row = write_actif_section(ws, row, "TRÉSORERIE ACTIF", a["tresorerie"], "Total trésorerie actif",
-                               a["total_tresorerie"], fixed_color=TRESO_COLOR)
+                               a["total_tresorerie"], a["total_tresorerie_n1"], fixed_color=TRESO_COLOR)
     fill, font = fill_font(*GRAND_TOTAL, bold=True)
     ws.cell(row=row, column=1, value="TOTAL ACTIF")
     ws.cell(row=row, column=4, value=d["total_actif"]).number_format = "#,##0"
-    for c in range(1, 5):
+    ws.cell(row=row, column=5, value=d["total_actif_n1"] or None).number_format = "#,##0"
+    for c in range(1, 6):
         ws.cell(row=row, column=c).fill = fill
         ws.cell(row=row, column=c).font = font
     actif_end = row
@@ -3269,15 +3394,17 @@ def export_bilan_detaille_xlsx(conn, path, exercice=None):
     p = d["passif"]
     row = passif_start
     row = write_passif_section(ws, row, "CAPITAUX PROPRES ET RESSOURCES DURABLES", p["capitaux_propres"],
-                                "Total capitaux propres et ressources durables", p["total_capitaux_propres"])
+                                "Total capitaux propres et ressources durables", p["total_capitaux_propres"],
+                                p["total_capitaux_propres_n1"])
     row = write_passif_section(ws, row, "DETTES CIRCULANTES", p["dettes"], "Total dettes circulantes",
-                                p["total_dettes"])
+                                p["total_dettes"], p["total_dettes_n1"])
     row = write_passif_section(ws, row, "TRÉSORERIE PASSIF", p["tresorerie"], "Total trésorerie passif",
-                                p["total_tresorerie"], fixed_color=TRESO_COLOR)
+                                p["total_tresorerie"], p["total_tresorerie_n1"], fixed_color=TRESO_COLOR)
     fill, font = fill_font(*GRAND_TOTAL, bold=True)
-    ws.cell(row=row, column=6, value="TOTAL PASSIF")
-    ws.cell(row=row, column=7, value=d["total_passif"]).number_format = "#,##0"
-    for c in (6, 7):
+    ws.cell(row=row, column=7, value="TOTAL PASSIF")
+    ws.cell(row=row, column=8, value=d["total_passif"]).number_format = "#,##0"
+    ws.cell(row=row, column=9, value=d["total_passif_n1"] or None).number_format = "#,##0"
+    for c in (7, 8, 9):
         ws.cell(row=row, column=c).fill = fill
         ws.cell(row=row, column=c).font = font
     passif_end = row
@@ -3307,9 +3434,11 @@ def export_bilan_detaille_xlsx(conn, path, exercice=None):
     ws.column_dimensions["B"].width = 16
     ws.column_dimensions["C"].width = 16
     ws.column_dimensions["D"].width = 16
-    ws.column_dimensions["E"].width = 3
-    ws.column_dimensions["F"].width = 46
-    ws.column_dimensions["G"].width = 18
+    ws.column_dimensions["E"].width = 16
+    ws.column_dimensions["F"].width = 3
+    ws.column_dimensions["G"].width = 46
+    ws.column_dimensions["H"].width = 18
+    ws.column_dimensions["I"].width = 18
     ws.freeze_panes = f"A{header_row + 1}"
     wb.save(path)
     return path
