@@ -70,6 +70,7 @@ class App(tk.Tk):
         register("taux_tva", TauxTVATab)
         register("taux_retenue", TauxRetenueTab)
         register("admin_factures", AdminFacturesTab)
+        register("admin_modele_bon_commande", AdminModeleBonCommandeTab)
         register("plan_budgetaire", PlanBudgetaireTab)
         register("plan_bailleur", PlanBailleurTab)
         register("stocks", StocksTab)
@@ -178,6 +179,7 @@ class App(tk.Tk):
             ("Taux de TVA", "taux_tva"),
             ("Taux de retenue à la source", "taux_retenue"),
             ("Modification des factures", "admin_factures"),
+            ("Modèle de bon de commande", "admin_modele_bon_commande"),
         ])
         self.config(menu=menubar)
 
@@ -4181,7 +4183,6 @@ class FacturesFrsTab(ttk.Frame):
         self.corriger_btn = ttk.Button(top, text="Corriger cette facture (erreur sur les chiffres)",
                                         command=self.corriger_facture)
         self.corriger_btn.pack(side="left", padx=2)
-        ttk.Button(top, text="Imprimer la facture", command=self.imprimer_facture).pack(side="left", padx=2)
         self.statut_var = tk.StringVar()
         ttk.Label(top, textvariable=self.statut_var, font=("Segoe UI", 10, "bold")).pack(side="left", padx=16)
 
@@ -4270,7 +4271,8 @@ class FacturesFrsTab(ttk.Frame):
 
         btns = ttk.Frame(self)
         btns.pack(fill="x", padx=12, pady=8)
-        ttk.Button(btns, text="Enregistrer (brouillon)", command=self.save_facture).pack(side="left", padx=2)
+        ttk.Button(btns, text="Enregistrer BON DE COMMANDE", command=self.save_facture).pack(side="left", padx=2)
+        ttk.Button(btns, text="Imprimer le bon de commande", command=self.imprimer_facture).pack(side="left", padx=2)
         ttk.Button(btns, text="Valider et envoyer en Saisie", command=self.valider).pack(side="left", padx=2)
 
         self.refresh_factures_list()
@@ -4555,20 +4557,31 @@ class FacturesFrsTab(ttk.Frame):
                 self.retenue_compte_var.set(preset["compte"])
 
     def imprimer_facture(self):
-        """Génère la facture d'achat en HTML imprimable (bouton « Imprimer »
-        intégré, ou Ctrl+P depuis le navigateur qui s'ouvre) et l'ouvre
-        directement."""
+        """Génère le document imprimable et l'ouvre directement (bouton
+        « Imprimer » intégré, ou Ctrl+P depuis le navigateur) : Bon de
+        commande tant que la facture est en brouillon (utilise le modèle
+        par défaut ADMIN si l'en-tête/pied de page n'est pas rempli),
+        Facture d'achat une fois validée."""
         if not self.current_facture_id:
             messagebox.showinfo("Info", "Sélectionnez d'abord une facture.")
             return
+        f = core.get_facture_achat(self.conn, self.current_facture_id)
         import tempfile
         import webbrowser
-        path = os.path.join(tempfile.gettempdir(), f"facture_achat_{self.current_facture_id}.html")
-        try:
-            core.export_facture_achat_html(self.conn, self.current_facture_id, path)
-        except ValueError as exc:
-            messagebox.showerror("Erreur", str(exc))
-            return
+        if f and f["statut"] == "validee":
+            path = os.path.join(tempfile.gettempdir(), f"facture_achat_{self.current_facture_id}.html")
+            try:
+                core.export_facture_achat_html(self.conn, self.current_facture_id, path)
+            except ValueError as exc:
+                messagebox.showerror("Erreur", str(exc))
+                return
+        else:
+            path = os.path.join(tempfile.gettempdir(), f"bon_commande_{self.current_facture_id}.html")
+            try:
+                core.export_bon_commande_html(self.conn, self.current_facture_id, path)
+            except ValueError as exc:
+                messagebox.showerror("Erreur", str(exc))
+                return
         webbrowser.open(f"file://{path}")
 
     def refresh(self):
@@ -5251,6 +5264,47 @@ class TauxRetenueTab(_SimplePlanTab):
 
     def import_fn(self, conn, path):
         return core.import_taux_retenue_xlsx(conn, path)
+
+
+class AdminModeleBonCommandeTab(ttk.Frame):
+    """Modèle par défaut (menu ADMIN) du Bon de commande imprimé depuis
+    l'onglet Factures frs : en-tête et pied de page appliqués à tout bon de
+    commande dont l'en-tête/pied de page propre est vide — permet de définir
+    une seule fois l'entête de la société (logo texte, coordonnées, mentions
+    légales) plutôt que de le retaper à chaque commande."""
+
+    def __init__(self, parent, conn):
+        super().__init__(parent)
+        self.conn = conn
+        ttk.Label(self, text="MODÈLE DE BON DE COMMANDE (PAR DÉFAUT)", font=("Segoe UI", 14, "bold")).pack(
+            anchor="w", padx=16, pady=(16, 4))
+        ttk.Label(self, text=(
+            "Appliqué automatiquement à tout bon de commande (onglet Factures frs) dont l'en-tête ou le "
+            "pied de page n'a pas été rempli spécifiquement pour cette commande — pratique pour ne définir "
+            "qu'une seule fois les coordonnées de votre société, mentions légales, etc."
+        ), foreground="#595959", wraplength=1000).pack(anchor="w", padx=16, pady=(0, 8))
+
+        ttk.Label(self, text="En-tête par défaut :").pack(anchor="w", padx=16)
+        self.entete_text = tk.Text(self, height=8, wrap="word")
+        self.entete_text.pack(fill="x", padx=16, pady=(2, 10))
+
+        ttk.Label(self, text="Pied de page par défaut :").pack(anchor="w", padx=16)
+        self.pied_text = tk.Text(self, height=6, wrap="word")
+        self.pied_text.pack(fill="x", padx=16, pady=(2, 10))
+
+        ttk.Button(self, text="Enregistrer le modèle", command=self.save).pack(anchor="w", padx=16, pady=(0, 16))
+        self.refresh()
+
+    def refresh(self):
+        self.entete_text.delete("1.0", "end")
+        self.entete_text.insert("1.0", core.get_text_setting(self.conn, "bon_commande_entete_defaut", ""))
+        self.pied_text.delete("1.0", "end")
+        self.pied_text.insert("1.0", core.get_text_setting(self.conn, "bon_commande_pied_defaut", ""))
+
+    def save(self):
+        core.set_text_setting(self.conn, "bon_commande_entete_defaut", self.entete_text.get("1.0", "end").strip())
+        core.set_text_setting(self.conn, "bon_commande_pied_defaut", self.pied_text.get("1.0", "end").strip())
+        messagebox.showinfo("Enregistré", "Modèle de bon de commande enregistré.")
 
 
 class AdminFacturesTab(ttk.Frame):

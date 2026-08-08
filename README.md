@@ -1663,3 +1663,34 @@ plan à catégories courantes, sans dupliquer le code.
 Testé : les 7 catégories s'ajoutent correctement, une retenue déjà
 personnalisée par l'utilisateur (« 5% » / 447810) n'est jamais touchée par
 un second appel.
+
+### Factures frs — le brouillon devient un « Bon de commande » imprimable
+
+**Demande** : renommer « Enregistrer (brouillon) » en « Enregistrer BON DE
+COMMANDE », placer un bouton « Imprimer le bon de commande » juste à côté,
+avec un modèle modifiable dans ADMIN.
+
+**Réalisé** :
+- Bouton renommé **« Enregistrer BON DE COMMANDE »**.
+- Bouton **« Imprimer le bon de commande »** déplacé juste à côté (retiré
+  de la barre du haut), au lieu d'« Imprimer la facture ».
+- `core.export_bon_commande_html()` (nouveau) : génère le document intitulé
+  « Bon de commande » tant que la facture est en brouillon — reprend
+  l'en-tête/pied de page propres à cette commande s'ils sont remplis,
+  sinon le **modèle par défaut** défini dans ADMIN. Une fois la facture
+  validée, le même bouton imprime automatiquement la vraie « Facture
+  d'achat » (`export_facture_achat_html`, comportement inchangé) — le bon
+  de commande n'a plus lieu d'être à ce stade.
+- **Nouvel écran ADMIN « Modèle de bon de commande »** : deux champs
+  (en-tête / pied de page) enregistrés une seule fois, appliqués à toute
+  commande dont les champs propres sont vides — pratique pour ne pas
+  retaper les coordonnées de la société à chaque bon de commande.
+
+**Bug corrigé au passage** : `core.set_text_setting()` était appelé
+depuis `FacturationTab` (préréglage TVA) mais n'existait pas dans
+`core.py` — un `AttributeError` aurait empêché l'enregistrement d'une
+facture de vente avec TVA. Ajouté (alias explicite de `set_setting()`
+pour les réglages textuels), testé.
+
+Testé de bout en bout : bon de commande en brouillon utilisant le modèle
+ADMIN, facture validée imprimant le bon document, Bilan resté équilibré.

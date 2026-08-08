@@ -640,6 +640,13 @@ def set_setting(conn, key, value):
     conn.commit()
 
 
+def set_text_setting(conn, key, value):
+    """Alias explicite de set_setting() pour les réglages textuels (comptes,
+    modèles de document...) — même mécanisme, juste un nom plus clair à
+    l'usage que set_setting() pour un contenu qui n'est pas un nombre."""
+    set_setting(conn, key, value)
+
+
 def get_text_setting(conn, key, default=""):
     row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
     return row["value"] if row else default
@@ -4222,6 +4229,33 @@ def export_facture_achat_html(conn, facture_id, path):
                     ("NET À PAYER", totals["net_a_payer"])]
     html = _html_facture("Facture d'achat", facture["numero"], to_display_date(facture["date_facture"]),
                           tiers_label, facture["entete"], lignes_rows, facture["pied_page"], totaux_rows)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(html)
+    return path
+
+
+def export_bon_commande_html(conn, facture_id, path):
+    """Génère le BON DE COMMANDE (stade brouillon d'une facture d'achat,
+    onglet Factures frs) en HTML imprimable. Reprend l'en-tête/pied de page
+    propres à cette commande s'ils sont renseignés, sinon le modèle par
+    défaut paramétrable dans ADMIN (« bon_commande_entete_defaut »/
+    « bon_commande_pied_defaut »)."""
+    facture = get_facture_achat(conn, facture_id)
+    if not facture:
+        raise ValueError("Bon de commande introuvable.")
+    lignes = list_lignes_facture_achat(conn, facture_id)
+    totals = compute_facture_achat_totals(conn, facture_id)
+    fournisseur = get_fournisseur(conn, facture["fournisseur_code"])
+    tiers_label = (f"Fournisseur : {fournisseur['raison_sociale']}" if fournisseur
+                   else f"Fournisseur : {facture['fournisseur_code']}")
+    lignes_rows = [(l["libelle"], l["quantite"], l["prix_unitaire"], l["montant_ht"]) for l in lignes]
+    totaux_rows = [("TOTAL HT", totals["total_ht"]),
+                    (f"Retenue à la source ({totals['retenue_taux']:g}%)", -totals["retenue_montant"]),
+                    ("NET ESTIMÉ", totals["net_a_payer"])]
+    entete = facture["entete"] or get_text_setting(conn, "bon_commande_entete_defaut", "")
+    pied = facture["pied_page"] or get_text_setting(conn, "bon_commande_pied_defaut", "")
+    html = _html_facture("Bon de commande", facture["numero"], to_display_date(facture["date_facture"]),
+                          tiers_label, entete, lignes_rows, pied, totaux_rows)
     with open(path, "w", encoding="utf-8") as f:
         f.write(html)
     return path
