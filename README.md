@@ -1829,3 +1829,50 @@ net 7 000 000 exact ; compte 244100 (5 000 000, amort 284100 = -1 000 000)
 → Matériel net 4 000 000 exact ; un compte hors plage (200000, racine
 isolée) bascule proprement dans « Autres immobilisations non classées »
 sans casser l'écart (resté à 0 dans tous les cas).
+
+### TFT — corrections à partir des formules du système de référence (CtaCptSolde)
+
+**Fourni par l'utilisateur** : les formules exactes du TFT (méthode
+indirecte, CAFG) de son ancien système. Décodage précis, avec 3 vraies
+lacunes corrigées et une amélioration de structure :
+
+1. **Bug corrigé — stocks incomplets dans le TFT** : `compute_tft_indirect()`
+   utilisait encore l'ancienne liste partielle `COMPTES_STOCK_PREFIXES`
+   (31/32/33/36 seulement, déjà corrigée dans le Bilan il y a plusieurs
+   sessions mais pas ici) au lieu de la classe 3 entière — tout sous-compte
+   de stock hors de cette liste (33, 37, 38, 39...) disparaissait
+   silencieusement de la variation de trésorerie calculée. Corrigé :
+   classe 3 entière, comme `CtaCptSoldeDébit("3*")` dans le rapport de
+   référence.
+2. **Bug corrigé — avances sur immobilisations absentes des
+   investissements** : les acquisitions d'immobilisations corporelles ne
+   couvraient que les racines 22-23-24 ; la racine 25 (avances et acomptes
+   versés sur immobilisations), présente dans la formule de référence
+   (`CtaCptSolde("22*","25*")`), a été ajoutée.
+3. **Bug corrigé — capital limité à 3 comptes** : l'augmentation de
+   capital ne captait que les comptes 101/104/105 ; élargi à la racine 10
+   entière (`CtaCptSolde("10*")` dans la référence), même principe que
+   pour le Bilan (jamais de liste de comptes partielle pour un total).
+4. **Structure enrichie — CAF Exploitation intermédiaire** : entre l'EBE
+   et la CAFG, ajout des lignes « Produits des cessions courantes
+   d'immobilisations (754) », « Valeurs comptables des cessions courantes
+   (654) » et « Transferts de charges d'exploitation (781) », tirées
+   directement du rapport de référence, avant application des revenus/
+   frais financiers pour obtenir la CAFG.
+5. **Variation de l'actif circulant HAO isolée** : séparée de la
+   variation des créances classiques — créances = racines 40-45 débit,
+   actif circulant HAO = racines 46-49 débit (comme dans le rapport de
+   référence), le passif circulant restant une ligne unique (racines 40-49
+   crédit, comme avant).
+
+**Écarts volontairement conservés** avec le système de référence (pour ne
+pas réintroduire de risque de déséquilibre) : emprunts couvrent les
+racines 16 ET 17 (la référence n'utilise que 16), et les immobilisations
+incorporelles couvrent les racines 20 ET 21 (la référence n'utilise que
+21) — ces élargissements ne peuvent que capter des mouvements
+supplémentaires, jamais en perdre.
+
+Testé : un compte de stock 380000 (hors ancienne liste), une avance sur
+immobilisation (compte 251000), et un apport en capital sur compte 101
+(racine 10 entière) sont tous correctement pris en compte — écart de
+contrôle du TFT resté à 0, Bilan resté équilibré.

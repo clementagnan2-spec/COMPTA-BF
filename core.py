@@ -4498,10 +4498,19 @@ def compute_tft_indirect(conn, exercice=None):
     treso_cloture_reelle = sum(b["solde_cloture"] for b in balance if b["classe"] == "5")
 
     # ---- CAFG (à partir des soldes déjà calculés pour le Compte de résultat) ----
+    # CAF Exploitation = EBE + Produits de cessions courantes d'immobilisations (754)
+    #                   - Valeurs comptables de cessions courantes (654)
+    #                   + Transferts de charges d'exploitation (781)
+    # puis CAFG = CAF Exploitation + Revenus financiers (77) - Frais financiers (67)
+    # — décomposition tirée du rapport financier de référence de l'utilisateur.
     ebe = cr["XD"]  # Excédent brut d'exploitation = Valeur ajoutée - charges de personnel
+    produits_cessions_courantes = _sum_range(balance, [(754000, 754999)], classe="7") * -1
+    valeurs_comptables_cessions_courantes = _sum_range(balance, [(654000, 654999)], classe="6") * -1
+    transferts_charges_exploitation = _sum_range(balance, [(781000, 781999)], classe="7") * -1
+    caf_exploitation = ebe + produits_cessions_courantes - valeurs_comptables_cessions_courantes + transferts_charges_exploitation
     revenus_financiers = cr["TK"]      # produits financiers (771, 776)
     frais_financiers = -cr["RM"]       # charges financières (671, 676), en décaissement
-    cafg = ebe + revenus_financiers + frais_financiers
+    cafg = caf_exploitation + revenus_financiers + frais_financiers
 
     # ---- Variation du BFR (comparaison ouverture/clôture, cohérente avec le Bilan) ----
     def _delta_racines(prefixes):
@@ -4509,31 +4518,51 @@ def compute_tft_indirect(conn, exercice=None):
         cloture = sum(b["solde_cloture"] for b in balance if any(b["code"].startswith(p) for p in prefixes))
         return ouverture, cloture
 
-    stock_ouv, stock_clo = _delta_racines(COMPTES_STOCK_PREFIXES)
+    # Stocks : classe 3 ENTIÈRE (pas seulement les 4 comptes maîtres suivis
+    # dans l'onglet Stocks) — sinon un sous-compte de stock (33, 37, 38, 39...)
+    # disparaît silencieusement de la variation de trésorerie calculée.
+    stock_ouv = sum(b["solde_ouverture"] for b in balance if b["classe"] == "3")
+    stock_clo = sum(b["solde_cloture"] for b in balance if b["classe"] == "3")
     variation_stocks = -(stock_clo - stock_ouv)  # une hausse de stock consomme de la trésorerie
 
-    # Créances : racine 41 (toujours créances) + autres racines de tiers débitrices (42-49)
-    autres_racines_tiers = [str(r) for r in range(42, 50)]
-    creances_ouv = sum(b["solde_ouverture"] for b in balance if account_racine(b["code"]) == RACINE_CLIENTS)
-    creances_clo = sum(b["solde_cloture"] for b in balance if account_racine(b["code"]) == RACINE_CLIENTS)
-    for r in autres_racines_tiers:
-        creances_ouv += sum(b["solde_ouverture"] for b in balance
-                             if account_racine(b["code"]) == r and b["solde_ouverture"] > 0)
-        creances_clo += sum(b["solde_cloture"] for b in balance
-                             if account_racine(b["code"]) == r and b["solde_cloture"] > 0)
+    # Créances (racines 40 à 45, côté DÉBITEUR uniquement — un compte fournisseur
+    # avec avance (409) compte ici, un compte client créditeur (avoir) n'y
+    # compte pas, il rejoint les dettes circulantes) — même principe de
+    # classement par compte que le Bilan, décomposé ici comme dans le
+    # rapport de référence : Créances (40-45 débit) séparées de l'Actif
+    # circulant HAO (46-49 débit), qui a sa propre ligne.
+    racines_creances = [str(r) for r in range(40, 46)]
+    racines_hao = ["46", "47", "48", "49"]
+
+    def _delta_signe(racines, sign):
+        ouverture = 0.0
+        cloture = 0.0
+        for r in racines:
+            ouverture += sum(b["solde_ouverture"] for b in balance
+                              if account_racine(b["code"]) == r
+                              and ((sign == "pos" and b["solde_ouverture"] > 0)
+                                   or (sign == "neg" and b["solde_ouverture"] < 0)))
+            cloture += sum(b["solde_cloture"] for b in balance
+                            if account_racine(b["code"]) == r
+                            and ((sign == "pos" and b["solde_cloture"] > 0)
+                                 or (sign == "neg" and b["solde_cloture"] < 0)))
+        return ouverture, cloture
+
+    creances_ouv, creances_clo = _delta_signe(racines_creances, "pos")
     variation_creances = -(creances_clo - creances_ouv)  # une hausse de créances consomme de la trésorerie
 
-    # Dettes circulantes : racine 40 (toujours dettes) + autres racines créditrices (42-49)
-    dettes_ouv = -sum(b["solde_ouverture"] for b in balance if account_racine(b["code"]) == RACINE_FOURNISSEURS)
-    dettes_clo = -sum(b["solde_cloture"] for b in balance if account_racine(b["code"]) == RACINE_FOURNISSEURS)
-    for r in autres_racines_tiers:
-        dettes_ouv += -sum(b["solde_ouverture"] for b in balance
-                            if account_racine(b["code"]) == r and b["solde_ouverture"] < 0)
-        dettes_clo += -sum(b["solde_cloture"] for b in balance
-                            if account_racine(b["code"]) == r and b["solde_cloture"] < 0)
+    hao_ouv, hao_clo = _delta_signe(racines_hao, "pos")
+    variation_actif_circulant_hao = -(hao_clo - hao_ouv)  # une hausse de créances HAO consomme de la trésorerie
+
+    # Dettes circulantes : racines 40 à 49, côté CRÉDITEUR (toutes, y compris
+    # 46-49 — contrairement aux créances/HAO, le crédit n'est pas séparé).
+    racines_dettes = [str(r) for r in range(40, 50)]
+    dettes_ouv_neg, dettes_clo_neg = _delta_signe(racines_dettes, "neg")
+    dettes_ouv, dettes_clo = -dettes_ouv_neg, -dettes_clo_neg
     variation_dettes_circulantes = dettes_clo - dettes_ouv  # une hausse de dettes fournit de la trésorerie
 
-    flux_operationnel = cafg + variation_stocks + variation_creances + variation_dettes_circulantes
+    flux_operationnel = (cafg + variation_stocks + variation_creances + variation_actif_circulant_hao
+                          + variation_dettes_circulantes)
 
     # ---- Flux d'investissement (acquisitions = débit de l'exercice sur les comptes d'immobilisations) ----
     def _debit_classe(prefixes):
@@ -4541,7 +4570,7 @@ def compute_tft_indirect(conn, exercice=None):
         return d, c
 
     incorp_debit, incorp_credit = _debit_classe(["20", "21"])
-    corp_debit, corp_credit = _debit_classe(["22", "23", "24"])
+    corp_debit, corp_credit = _debit_classe(["22", "23", "24", "25"])  # +25 : avances/acomptes versés sur immo
     fin_debit, fin_credit = _debit_classe(["26", "27"])
     acquisitions_incorp = -incorp_debit
     acquisitions_corp = -corp_debit
@@ -4553,7 +4582,10 @@ def compute_tft_indirect(conn, exercice=None):
                             + cessions_incorp + cessions_corp + cessions_fin)
 
     # ---- Flux de financement ----
-    capital_debit, capital_credit = _debit_classe(["101", "104", "105"])
+    # Capital : racine 10 ENTIÈRE (pas seulement 101/104/105) — comme pour le
+    # Bilan, une liste de comptes partielle ferait disparaître silencieusement
+    # tout sous-compte de capital hors de cette liste.
+    capital_debit, capital_credit = _debit_classe(["10"])
     augmentation_capital = capital_credit
     prelevements_capital = -capital_debit
     subv_debit, subv_credit = _debit_classe(["14"])
@@ -4574,9 +4606,15 @@ def compute_tft_indirect(conn, exercice=None):
 
     return {
         "treso_ouverture": treso_ouverture,
-        "ebe": ebe, "revenus_financiers": revenus_financiers, "frais_financiers": frais_financiers,
+        "ebe": ebe,
+        "produits_cessions_courantes": produits_cessions_courantes,
+        "valeurs_comptables_cessions_courantes": valeurs_comptables_cessions_courantes,
+        "transferts_charges_exploitation": transferts_charges_exploitation,
+        "caf_exploitation": caf_exploitation,
+        "revenus_financiers": revenus_financiers, "frais_financiers": frais_financiers,
         "cafg": cafg,
         "variation_stocks": variation_stocks, "variation_creances": variation_creances,
+        "variation_actif_circulant_hao": variation_actif_circulant_hao,
         "variation_dettes_circulantes": variation_dettes_circulantes,
         "flux_operationnel": flux_operationnel,
         "acquisitions_incorp": acquisitions_incorp, "acquisitions_corp": acquisitions_corp,

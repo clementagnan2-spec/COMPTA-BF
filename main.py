@@ -2637,11 +2637,16 @@ class TftIndirectTab(ttk.Frame):
 
         self._header("cafg", "DÉTERMINATION DE LA CAFG")
         self._row("cafg", "Excédent Brut d'Exploitation (EBE)", t["ebe"])
+        self._row("cafg", "+ Produits des cessions courantes d'immobilisations (754)", t["produits_cessions_courantes"])
+        self._row("cafg", "- Valeurs comptables des cessions courantes (654)", t["valeurs_comptables_cessions_courantes"])
+        self._row("cafg", "+ Transferts de charges d'exploitation (781)", t["transferts_charges_exploitation"])
+        self._row("cafg", "CAPACITÉ D'AUTOFINANCEMENT D'EXPLOITATION", t["caf_exploitation"])
         self._row("cafg", "+ Revenus financiers", t["revenus_financiers"])
         self._row("cafg", "- Frais financiers", t["frais_financiers"])
         self._row("cafg", "CAPACITÉ D'AUTOFINANCEMENT GLOBALE (CAFG)", t["cafg"])
         self._row("cafg", "- Variation des stocks", t["variation_stocks"])
-        self._row("cafg", "- Variation des créances", t["variation_creances"])
+        self._row("cafg", "- Variation des créances (racines 40-45)", t["variation_creances"])
+        self._row("cafg", "- Variation de l'actif circulant HAO (racines 46-49)", t["variation_actif_circulant_hao"])
         self._row("cafg", "+ Variation du passif circulant (dettes)", t["variation_dettes_circulantes"])
         self._row("cafg", "FLUX DES ACTIVITÉS OPÉRATIONNELLES (A)", t["flux_operationnel"])
 
