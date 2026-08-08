@@ -92,6 +92,9 @@ class App(tk.Tk):
         register("fournisseurs", FournisseursTab)
         register("factures_frs", FacturesFrsTab)
         register("contrats", ContratsTab)
+        register("expression_besoin", ExpressionBesoinTab)
+        register("ep_bon_commande", BonCommandeEPTab)
+        register("bordereau_livraison", BordereauLivraisonTab)
         register("budget_exec", PlaceholderTab,
                  "Tableaux d'exécution budgétaire",
                  "Suivi budget prévisionnel vs réalisé, par ligne budgétaire et par projet.")
@@ -149,6 +152,9 @@ class App(tk.Tk):
             ("Fournisseurs", "fournisseurs"),
             ("Factures frs", "factures_frs"),
             ("Contrats", "contrats"),
+            ("Expression de besoin", "expression_besoin"),
+            ("Bon de commande", "ep_bon_commande"),
+            ("Bordereau de livraison", "bordereau_livraison"),
         ])
         add_top_menu("ÉTATS ET RAPPORTS", [
             ("Grand livre", "grand_livre"),
@@ -4591,6 +4597,629 @@ class FacturesFrsTab(ttk.Frame):
         self._refresh_retenue_presets()
         self._refresh_ligne_analytic_values()
         self.refresh_factures_list()
+
+
+class ExpressionBesoinDialog(tk.Toplevel):
+    """Détail d'une Expression de besoin (double-clic depuis la liste) —
+    aucun lien avec la comptabilité. La validation la fait basculer en Bon
+    de commande (menu ENGAGEMENTS-PROJETS > Bon de commande)."""
+
+    def __init__(self, parent, conn, expression_id, on_saved):
+        super().__init__(parent)
+        self.conn = conn
+        self.expression_id = expression_id
+        self.on_saved = on_saved
+        self.title("Expression de besoin")
+        self.geometry("900x600")
+        self.minsize(700, 450)
+        self.transient(parent)
+        self.grab_set()
+
+        exp = core.get_expression_besoin(conn, expression_id)
+        self.validee = exp["statut"] == "validee"
+
+        header = ttk.LabelFrame(self, text="Informations")
+        header.pack(fill="x", padx=10, pady=8)
+        ttk.Label(header, text="N° :").grid(row=0, column=0, sticky="w", padx=4, pady=4)
+        self.numero_var = tk.StringVar(value=exp["numero"])
+        ttk.Entry(header, textvariable=self.numero_var, width=16).grid(row=0, column=1, padx=4)
+        ttk.Label(header, text="Date (JJ/MM/AAAA) :").grid(row=0, column=2, sticky="w", padx=(12, 4))
+        self.date_var = tk.StringVar(value=core.to_display_date(exp["date_demande"]))
+        ttk.Entry(header, textvariable=self.date_var, width=14).grid(row=0, column=3, padx=4)
+        ttk.Label(header, text="Demandeur :").grid(row=0, column=4, sticky="w", padx=(12, 4))
+        self.demandeur_var = tk.StringVar(value=exp["demandeur"] or "")
+        ttk.Entry(header, textvariable=self.demandeur_var, width=20).grid(row=0, column=5, padx=4)
+        ttk.Label(header, text="Service :").grid(row=1, column=0, sticky="w", padx=4, pady=(4, 0))
+        self.service_var = tk.StringVar(value=exp["service"] or "")
+        ttk.Entry(header, textvariable=self.service_var, width=20).grid(row=1, column=1, columnspan=2, padx=4,
+                                                                          pady=(4, 0), sticky="w")
+        self.statut_var = tk.StringVar(value=f"Statut : {'VALIDÉE (bon de commande créé)' if self.validee else 'Brouillon'}")
+        ttk.Label(header, textvariable=self.statut_var, font=("Segoe UI", 10, "bold")).grid(
+            row=1, column=3, columnspan=3, sticky="w", padx=(12, 4), pady=(4, 0))
+
+        lignes_frame = ttk.LabelFrame(self, text="Lignes du besoin")
+        lignes_frame.pack(fill="both", expand=True, padx=10, pady=6)
+        form = ttk.Frame(lignes_frame)
+        form.pack(fill="x", padx=6, pady=4)
+        ttk.Label(form, text="Libellé :").grid(row=0, column=0, sticky="w")
+        self.ligne_libelle_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.ligne_libelle_var, width=32).grid(row=0, column=1, padx=4)
+        ttk.Label(form, text="Quantité :").grid(row=0, column=2, sticky="w", padx=(12, 0))
+        self.ligne_qte_var = tk.StringVar(value="1")
+        ttk.Entry(form, textvariable=self.ligne_qte_var, width=10).grid(row=0, column=3, padx=4)
+        ttk.Label(form, text="Unité :").grid(row=0, column=4, sticky="w", padx=(12, 0))
+        self.ligne_unite_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.ligne_unite_var, width=10).grid(row=0, column=5, padx=4)
+        self.add_ligne_btn = ttk.Button(form, text="Ajouter la ligne", command=self.add_ligne)
+        self.add_ligne_btn.grid(row=0, column=6, padx=12)
+
+        cols = ("id", "libelle", "quantite", "unite")
+        self.tree = ttk.Treeview(lignes_frame, columns=cols, show="headings", height=12)
+        for c, h, w in zip(cols, ["ID", "Libellé", "Quantité", "Unité"], [40, 400, 100, 100]):
+            self.tree.heading(c, text=h)
+            self.tree.column(c, width=w, anchor="w")
+        self.tree.pack(fill="both", expand=True, padx=6, pady=6)
+        self.delete_ligne_btn = ttk.Button(lignes_frame, text="Supprimer la ligne sélectionnée",
+                                            command=self.delete_ligne)
+        self.delete_ligne_btn.pack(anchor="w", padx=6, pady=(0, 6))
+
+        btns = ttk.Frame(self)
+        btns.pack(fill="x", padx=10, pady=10)
+        self.save_btn = ttk.Button(btns, text="Enregistrer", command=self.save)
+        self.save_btn.pack(side="left", padx=4)
+        self.valider_btn = ttk.Button(btns, text="Valider → crée le Bon de commande", command=self.valider)
+        self.valider_btn.pack(side="left", padx=4)
+        ttk.Button(btns, text="Fermer", command=self.destroy).pack(side="left", padx=4)
+
+        self.refresh_lignes()
+        self._apply_lock()
+
+    def _apply_lock(self):
+        state = "disabled" if self.validee else "normal"
+        self.add_ligne_btn.configure(state=state)
+        self.delete_ligne_btn.configure(state=state)
+        self.save_btn.configure(state=state)
+        self.valider_btn.configure(state=state)
+
+    def refresh_lignes(self):
+        for row in self.tree.get_children():
+            self.tree.delete(row)
+        for l in core.list_lignes_expression_besoin(self.conn, self.expression_id):
+            self.tree.insert("", "end", values=(l["id"], l["libelle"], f"{l['quantite']:g}", l["unite"] or ""))
+
+    def add_ligne(self):
+        libelle = self.ligne_libelle_var.get().strip()
+        if not libelle:
+            messagebox.showwarning("Champ manquant", "Le libellé est obligatoire.", parent=self)
+            return
+        try:
+            qte = float(self.ligne_qte_var.get() or 0)
+        except ValueError:
+            messagebox.showerror("Erreur", "La quantité doit être un nombre.", parent=self)
+            return
+        core.add_ligne_expression_besoin(self.conn, self.expression_id, libelle, qte,
+                                          unite=self.ligne_unite_var.get().strip() or None)
+        self.ligne_libelle_var.set("")
+        self.ligne_qte_var.set("1")
+        self.ligne_unite_var.set("")
+        self.refresh_lignes()
+
+    def delete_ligne(self):
+        sel = self.tree.selection()
+        if not sel:
+            messagebox.showinfo("Info", "Sélectionnez d'abord une ligne.", parent=self)
+            return
+        ligne_id = self.tree.item(sel[0], "values")[0]
+        core.delete_ligne_expression_besoin(self.conn, ligne_id)
+        self.refresh_lignes()
+
+    def save(self):
+        date_str = core.to_iso_date(self.date_var.get().strip())
+        core.update_expression_besoin(
+            self.conn, self.expression_id,
+            numero=self.numero_var.get().strip(), date_demande=date_str,
+            demandeur=self.demandeur_var.get().strip(), service=self.service_var.get().strip(),
+        )
+        messagebox.showinfo("Enregistré", "Expression de besoin enregistrée.", parent=self)
+        self.on_saved()
+
+    def valider(self):
+        if not messagebox.askyesno(
+            "Valider cette expression de besoin",
+            "Cette expression va être verrouillée et un Bon de commande va être créé automatiquement "
+            "avec les mêmes lignes (menu ENGAGEMENTS-PROJETS > Bon de commande).\n\n"
+            "Aucune écriture comptable n'est générée à cette étape.\n\nContinuer ?",
+            parent=self,
+        ):
+            return
+        self.save()
+        try:
+            core.valider_expression_besoin(self.conn, self.expression_id)
+        except ValueError as exc:
+            messagebox.showerror("Erreur", str(exc), parent=self)
+            return
+        messagebox.showinfo("Validée", "Expression de besoin validée. Le Bon de commande a été créé.", parent=self)
+        self.on_saved()
+        self.destroy()
+
+
+class ExpressionBesoinTab(ttk.Frame):
+    """Liste des Expressions de besoin (menu ENGAGEMENTS-PROJETS) — double-clic
+    sur une ligne pour l'ouvrir en grand et la valider (bascule en Bon de
+    commande). Circuit interne, sans lien avec la comptabilité."""
+
+    def __init__(self, parent, conn):
+        super().__init__(parent)
+        self.conn = conn
+        ttk.Label(self, text="EXPRESSION DE BESOIN", font=("Segoe UI", 14, "bold")).pack(
+            anchor="w", padx=16, pady=(16, 4))
+        ttk.Label(self, text=(
+            "Circuit interne d'approbation d'achat — sans lien avec la comptabilité. Double-cliquez sur une "
+            "ligne pour l'ouvrir, ajouter des lignes de besoin, et la valider : elle bascule alors "
+            "automatiquement dans le sous-menu « Bon de commande »."
+        ), foreground="#595959", wraplength=1100).pack(anchor="w", padx=16, pady=(0, 8))
+
+        btn_bar = ttk.Frame(self)
+        btn_bar.pack(fill="x", padx=16, pady=4)
+        ttk.Button(btn_bar, text="Nouvelle expression de besoin", command=self.new_expression).pack(side="left")
+        ttk.Button(btn_bar, text="Actualiser", command=self.refresh).pack(side="left", padx=8)
+
+        cols = ("numero", "date", "demandeur", "service", "nb_lignes", "statut")
+        self.tree = ttk.Treeview(self, columns=cols, show="headings", height=22)
+        headers = ["N°", "Date", "Demandeur", "Service", "Lignes", "Statut"]
+        widths = [110, 100, 200, 200, 70, 140]
+        for c, h, w in zip(cols, headers, widths):
+            self.tree.heading(c, text=h)
+            self.tree.column(c, width=w, anchor="w")
+        self.tree.pack(fill="both", expand=True, padx=16, pady=8)
+        self.tree.bind("<Double-1>", self._on_double_click)
+        self._by_iid = {}
+        self.refresh()
+
+    def new_expression(self):
+        numero = simpledialog.askstring("Nouvelle expression de besoin", "N° :", parent=self)
+        if not numero:
+            return
+        eid = core.create_expression_besoin(self.conn, numero, date.today().strftime("%Y-%m-%d"))
+        self.refresh()
+        ExpressionBesoinDialog(self, self.conn, eid, on_saved=self.refresh)
+
+    def _on_double_click(self, event=None):
+        sel = self.tree.selection()
+        if not sel:
+            return
+        eid = self._by_iid.get(sel[0])
+        if eid:
+            ExpressionBesoinDialog(self, self.conn, eid, on_saved=self.refresh)
+
+    def refresh(self):
+        for row in self.tree.get_children():
+            self.tree.delete(row)
+        self._by_iid = {}
+        for exp in core.list_expressions_besoin(self.conn):
+            nb = len(core.list_lignes_expression_besoin(self.conn, exp["id"]))
+            statut = "Validée" if exp["statut"] == "validee" else "Brouillon"
+            iid = self.tree.insert("", "end", values=(
+                exp["numero"], core.to_display_date(exp["date_demande"]), exp["demandeur"] or "",
+                exp["service"] or "", nb, statut,
+            ))
+            self._by_iid[iid] = exp["id"]
+
+
+class BonCommandeEPDialog(tk.Toplevel):
+    """Détail d'un Bon de commande du circuit interne (double-clic depuis la
+    liste) — aucun lien avec la comptabilité (à ne pas confondre avec le
+    « Enregistrer BON DE COMMANDE » de Factures frs, qui lui génère des
+    écritures une fois validé). La validation ici fait basculer ce document
+    en Bordereau de livraison."""
+
+    def __init__(self, parent, conn, bon_id, on_saved):
+        super().__init__(parent)
+        self.conn = conn
+        self.bon_id = bon_id
+        self.on_saved = on_saved
+        self.title("Bon de commande")
+        self.geometry("950x600")
+        self.minsize(750, 450)
+        self.transient(parent)
+        self.grab_set()
+
+        bon = core.get_ep_bon_commande(conn, bon_id)
+        self.validee = bon["statut"] == "validee"
+
+        header = ttk.LabelFrame(self, text="Informations")
+        header.pack(fill="x", padx=10, pady=8)
+        ttk.Label(header, text="N° :").grid(row=0, column=0, sticky="w", padx=4, pady=4)
+        self.numero_var = tk.StringVar(value=bon["numero"])
+        ttk.Entry(header, textvariable=self.numero_var, width=16).grid(row=0, column=1, padx=4)
+        ttk.Label(header, text="Date (JJ/MM/AAAA) :").grid(row=0, column=2, sticky="w", padx=(12, 4))
+        self.date_var = tk.StringVar(value=core.to_display_date(bon["date_commande"]))
+        ttk.Entry(header, textvariable=self.date_var, width=14).grid(row=0, column=3, padx=4)
+        ttk.Label(header, text="Fournisseur :").grid(row=0, column=4, sticky="w", padx=(12, 4))
+        self.fournisseur_var = tk.StringVar(value=bon["fournisseur_code"] or "")
+        self.fournisseur_combo = ttk.Combobox(header, textvariable=self.fournisseur_var, width=26)
+        self.fournisseur_combo.grid(row=0, column=5, padx=4)
+        self.fournisseur_combo.bind("<KeyRelease>", self._on_fournisseur_keyrelease)
+        self.fournisseur_combo.bind("<Button-1>", lambda e: e.widget.event_generate("<Down>"))
+        self._refresh_fournisseur_values()
+        origine = "" if not bon["expression_id"] else f"Issu de l'expression de besoin n° {bon['expression_id']}"
+        self.statut_var = tk.StringVar(
+            value=f"Statut : {'VALIDÉ (bordereau créé)' if self.validee else 'Brouillon'}   {origine}")
+        ttk.Label(header, textvariable=self.statut_var, font=("Segoe UI", 10, "bold")).grid(
+            row=1, column=0, columnspan=6, sticky="w", padx=4, pady=(4, 0))
+
+        lignes_frame = ttk.LabelFrame(self, text="Lignes commandées")
+        lignes_frame.pack(fill="both", expand=True, padx=10, pady=6)
+        form = ttk.Frame(lignes_frame)
+        form.pack(fill="x", padx=6, pady=4)
+        ttk.Label(form, text="Libellé :").grid(row=0, column=0, sticky="w")
+        self.ligne_libelle_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.ligne_libelle_var, width=28).grid(row=0, column=1, padx=4)
+        ttk.Label(form, text="Quantité :").grid(row=0, column=2, sticky="w", padx=(12, 0))
+        self.ligne_qte_var = tk.StringVar(value="1")
+        ttk.Entry(form, textvariable=self.ligne_qte_var, width=10).grid(row=0, column=3, padx=4)
+        ttk.Label(form, text="Prix unitaire :").grid(row=0, column=4, sticky="w", padx=(12, 0))
+        self.ligne_prix_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.ligne_prix_var, width=12).grid(row=0, column=5, padx=4)
+        ttk.Label(form, text="Unité :").grid(row=0, column=6, sticky="w", padx=(12, 0))
+        self.ligne_unite_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.ligne_unite_var, width=8).grid(row=0, column=7, padx=4)
+        self.add_ligne_btn = ttk.Button(form, text="Ajouter la ligne", command=self.add_ligne)
+        self.add_ligne_btn.grid(row=0, column=8, padx=12)
+
+        cols = ("id", "libelle", "quantite", "prix", "montant", "unite")
+        self.tree = ttk.Treeview(lignes_frame, columns=cols, show="headings", height=12)
+        headers = ["ID", "Libellé", "Quantité", "Prix unit.", "Montant estimé", "Unité"]
+        widths = [40, 320, 90, 100, 130, 80]
+        for c, h, w in zip(cols, headers, widths):
+            self.tree.heading(c, text=h)
+            self.tree.column(c, width=w, anchor="w")
+        self.tree.pack(fill="both", expand=True, padx=6, pady=6)
+        self.delete_ligne_btn = ttk.Button(lignes_frame, text="Supprimer la ligne sélectionnée",
+                                            command=self.delete_ligne)
+        self.delete_ligne_btn.pack(anchor="w", padx=6, pady=(0, 6))
+        self.total_var = tk.StringVar()
+        ttk.Label(lignes_frame, textvariable=self.total_var, font=("Segoe UI", 10, "bold")).pack(
+            anchor="w", padx=6, pady=(0, 6))
+
+        btns = ttk.Frame(self)
+        btns.pack(fill="x", padx=10, pady=10)
+        self.save_btn = ttk.Button(btns, text="Enregistrer", command=self.save)
+        self.save_btn.pack(side="left", padx=4)
+        self.valider_btn = ttk.Button(btns, text="Valider → crée le Bordereau de livraison", command=self.valider)
+        self.valider_btn.pack(side="left", padx=4)
+        ttk.Button(btns, text="Fermer", command=self.destroy).pack(side="left", padx=4)
+
+        self.refresh_lignes()
+        self._apply_lock()
+
+    def _refresh_fournisseur_values(self):
+        items = core.list_fournisseurs(self.conn)
+        self.fournisseur_combo["values"] = [f"{f['code']} — {f['raison_sociale']}" for f in items]
+
+    def _on_fournisseur_keyrelease(self, event=None):
+        query = self._extract_code(self.fournisseur_var.get())
+        items = core.list_fournisseurs(self.conn, query)
+        self.fournisseur_combo["values"] = [f"{f['code']} — {f['raison_sociale']}" for f in items]
+
+    @staticmethod
+    def _extract_code(raw):
+        raw = (raw or "").strip()
+        return raw.split(" — ", 1)[0].strip() if " — " in raw else raw
+
+    def _apply_lock(self):
+        state = "disabled" if self.validee else "normal"
+        self.add_ligne_btn.configure(state=state)
+        self.delete_ligne_btn.configure(state=state)
+        self.save_btn.configure(state=state)
+        self.valider_btn.configure(state=state)
+
+    def refresh_lignes(self):
+        for row in self.tree.get_children():
+            self.tree.delete(row)
+        total = 0.0
+        for l in core.list_lignes_ep_bon_commande(self.conn, self.bon_id):
+            montant = l["quantite"] * l["prix_unitaire"]
+            total += montant
+            self.tree.insert("", "end", values=(
+                l["id"], l["libelle"], f"{l['quantite']:g}", f"{l['prix_unitaire']:,.2f}",
+                f"{montant:,.2f}", l["unite"] or ""))
+        self.total_var.set(f"Montant total estimé (indicatif, non comptabilisé) : {total:,.2f}")
+
+    def add_ligne(self):
+        libelle = self.ligne_libelle_var.get().strip()
+        if not libelle:
+            messagebox.showwarning("Champ manquant", "Le libellé est obligatoire.", parent=self)
+            return
+        try:
+            qte = float(self.ligne_qte_var.get() or 0)
+            prix = float(self.ligne_prix_var.get() or 0)
+        except ValueError:
+            messagebox.showerror("Erreur", "Quantité et Prix unitaire doivent être des nombres.", parent=self)
+            return
+        core.add_ligne_ep_bon_commande(self.conn, self.bon_id, libelle, qte, prix_unitaire=prix,
+                                        unite=self.ligne_unite_var.get().strip() or None)
+        self.ligne_libelle_var.set("")
+        self.ligne_qte_var.set("1")
+        self.ligne_prix_var.set("")
+        self.ligne_unite_var.set("")
+        self.refresh_lignes()
+
+    def delete_ligne(self):
+        sel = self.tree.selection()
+        if not sel:
+            messagebox.showinfo("Info", "Sélectionnez d'abord une ligne.", parent=self)
+            return
+        ligne_id = self.tree.item(sel[0], "values")[0]
+        core.delete_ligne_ep_bon_commande(self.conn, ligne_id)
+        self.refresh_lignes()
+
+    def save(self):
+        date_str = core.to_iso_date(self.date_var.get().strip())
+        core.update_ep_bon_commande(
+            self.conn, self.bon_id,
+            numero=self.numero_var.get().strip(), date_commande=date_str,
+            fournisseur_code=self._extract_code(self.fournisseur_var.get()),
+        )
+        messagebox.showinfo("Enregistré", "Bon de commande enregistré.", parent=self)
+        self.on_saved()
+
+    def valider(self):
+        if not messagebox.askyesno(
+            "Valider ce bon de commande",
+            "Ce bon de commande va être verrouillé et un Bordereau de livraison va être créé "
+            "automatiquement avec les mêmes lignes (menu ENGAGEMENTS-PROJETS > Bordereau de livraison).\n\n"
+            "Aucune écriture comptable n'est générée à cette étape.\n\nContinuer ?",
+            parent=self,
+        ):
+            return
+        self.save()
+        try:
+            core.valider_ep_bon_commande(self.conn, self.bon_id)
+        except ValueError as exc:
+            messagebox.showerror("Erreur", str(exc), parent=self)
+            return
+        messagebox.showinfo("Validé", "Bon de commande validé. Le Bordereau de livraison a été créé.", parent=self)
+        self.on_saved()
+        self.destroy()
+
+
+class BonCommandeEPTab(ttk.Frame):
+    """Liste des Bons de commande du circuit interne (menu ENGAGEMENTS-PROJETS)
+    — double-clic pour ouvrir et valider (bascule en Bordereau de livraison).
+    Sans lien avec la comptabilité."""
+
+    def __init__(self, parent, conn):
+        super().__init__(parent)
+        self.conn = conn
+        ttk.Label(self, text="BON DE COMMANDE", font=("Segoe UI", 14, "bold")).pack(
+            anchor="w", padx=16, pady=(16, 4))
+        ttk.Label(self, text=(
+            "Circuit interne d'approbation d'achat — sans lien avec la comptabilité (créé automatiquement "
+            "en validant une Expression de besoin, ou directement ici). Double-cliquez sur une ligne pour "
+            "l'ouvrir et la valider : elle bascule alors dans le sous-menu « Bordereau de livraison »."
+        ), foreground="#595959", wraplength=1100).pack(anchor="w", padx=16, pady=(0, 8))
+
+        btn_bar = ttk.Frame(self)
+        btn_bar.pack(fill="x", padx=16, pady=4)
+        ttk.Button(btn_bar, text="Nouveau bon de commande", command=self.new_bon).pack(side="left")
+        ttk.Button(btn_bar, text="Actualiser", command=self.refresh).pack(side="left", padx=8)
+
+        cols = ("numero", "date", "fournisseur", "nb_lignes", "statut")
+        self.tree = ttk.Treeview(self, columns=cols, show="headings", height=22)
+        headers = ["N°", "Date", "Fournisseur", "Lignes", "Statut"]
+        widths = [110, 100, 260, 70, 140]
+        for c, h, w in zip(cols, headers, widths):
+            self.tree.heading(c, text=h)
+            self.tree.column(c, width=w, anchor="w")
+        self.tree.pack(fill="both", expand=True, padx=16, pady=8)
+        self.tree.bind("<Double-1>", self._on_double_click)
+        self._by_iid = {}
+        self.refresh()
+
+    def new_bon(self):
+        numero = simpledialog.askstring("Nouveau bon de commande", "N° :", parent=self)
+        if not numero:
+            return
+        bid = core.create_ep_bon_commande(self.conn, numero, date.today().strftime("%Y-%m-%d"))
+        self.refresh()
+        BonCommandeEPDialog(self, self.conn, bid, on_saved=self.refresh)
+
+    def _on_double_click(self, event=None):
+        sel = self.tree.selection()
+        if not sel:
+            return
+        bid = self._by_iid.get(sel[0])
+        if bid:
+            BonCommandeEPDialog(self, self.conn, bid, on_saved=self.refresh)
+
+    def refresh(self):
+        for row in self.tree.get_children():
+            self.tree.delete(row)
+        self._by_iid = {}
+        for bon in core.list_ep_bons_commande(self.conn):
+            nb = len(core.list_lignes_ep_bon_commande(self.conn, bon["id"]))
+            statut = "Validé" if bon["statut"] == "validee" else "Brouillon"
+            fournisseur = ""
+            if bon["fournisseur_code"]:
+                f = core.get_fournisseur(self.conn, bon["fournisseur_code"])
+                fournisseur = f"{bon['fournisseur_code']} — {f['raison_sociale']}" if f else bon["fournisseur_code"]
+            iid = self.tree.insert("", "end", values=(
+                bon["numero"], core.to_display_date(bon["date_commande"]), fournisseur, nb, statut,
+            ))
+            self._by_iid[iid] = bon["id"]
+
+
+class BordereauLivraisonDialog(tk.Toplevel):
+    """Détail d'un Bordereau de livraison (double-clic depuis la liste) —
+    dernière étape du circuit interne, sans lien avec la comptabilité. La
+    validation marque simplement la réception comme confirmée."""
+
+    def __init__(self, parent, conn, bordereau_id, on_saved):
+        super().__init__(parent)
+        self.conn = conn
+        self.bordereau_id = bordereau_id
+        self.on_saved = on_saved
+        self.title("Bordereau de livraison")
+        self.geometry("950x600")
+        self.minsize(750, 450)
+        self.transient(parent)
+        self.grab_set()
+
+        bl = core.get_bordereau_livraison(conn, bordereau_id)
+        self.validee = bl["statut"] == "validee"
+
+        header = ttk.LabelFrame(self, text="Informations")
+        header.pack(fill="x", padx=10, pady=8)
+        ttk.Label(header, text="N° :").grid(row=0, column=0, sticky="w", padx=4, pady=4)
+        self.numero_var = tk.StringVar(value=bl["numero"])
+        ttk.Entry(header, textvariable=self.numero_var, width=16).grid(row=0, column=1, padx=4)
+        ttk.Label(header, text="Date (JJ/MM/AAAA) :").grid(row=0, column=2, sticky="w", padx=(12, 4))
+        self.date_var = tk.StringVar(value=core.to_display_date(bl["date_livraison"]))
+        ttk.Entry(header, textvariable=self.date_var, width=14).grid(row=0, column=3, padx=4)
+        origine = "" if not bl["bon_commande_id"] else f"Issu du bon de commande n° {bl['bon_commande_id']}"
+        self.statut_var = tk.StringVar(
+            value=f"Statut : {'VALIDÉ (réception confirmée)' if self.validee else 'Brouillon'}   {origine}")
+        ttk.Label(header, textvariable=self.statut_var, font=("Segoe UI", 10, "bold")).grid(
+            row=1, column=0, columnspan=4, sticky="w", padx=4, pady=(4, 0))
+
+        lignes_frame = ttk.LabelFrame(self, text="Lignes livrées (quantité livrée modifiable)")
+        lignes_frame.pack(fill="both", expand=True, padx=10, pady=6)
+
+        cols = ("id", "libelle", "qte_cmd", "qte_liv", "unite")
+        self.tree = ttk.Treeview(lignes_frame, columns=cols, show="headings", height=14)
+        headers = ["ID", "Libellé", "Quantité commandée", "Quantité livrée", "Unité"]
+        widths = [40, 380, 150, 140, 80]
+        for c, h, w in zip(cols, headers, widths):
+            self.tree.heading(c, text=h)
+            self.tree.column(c, width=w, anchor="w")
+        self.tree.pack(fill="both", expand=True, padx=6, pady=6)
+        self.tree.bind("<Double-1>", self._on_edit_qte_livree)
+
+        ttk.Label(lignes_frame, text=(
+            "Double-cliquez sur une ligne pour corriger la quantité réellement livrée."
+        ), foreground="#595959").pack(anchor="w", padx=6, pady=(0, 6))
+
+        btns = ttk.Frame(self)
+        btns.pack(fill="x", padx=10, pady=10)
+        self.save_btn = ttk.Button(btns, text="Enregistrer", command=self.save)
+        self.save_btn.pack(side="left", padx=4)
+        self.valider_btn = ttk.Button(btns, text="Valider (réception confirmée)", command=self.valider)
+        self.valider_btn.pack(side="left", padx=4)
+        ttk.Button(btns, text="Fermer", command=self.destroy).pack(side="left", padx=4)
+
+        self.refresh_lignes()
+        self._apply_lock()
+
+    def _apply_lock(self):
+        state = "disabled" if self.validee else "normal"
+        self.save_btn.configure(state=state)
+        self.valider_btn.configure(state=state)
+
+    def refresh_lignes(self):
+        for row in self.tree.get_children():
+            self.tree.delete(row)
+        for l in core.list_lignes_bordereau_livraison(self.conn, self.bordereau_id):
+            self.tree.insert("", "end", values=(
+                l["id"], l["libelle"], f"{l['quantite_commandee']:g}", f"{l['quantite_livree']:g}", l["unite"] or ""))
+
+    def _on_edit_qte_livree(self, event=None):
+        if self.validee:
+            return
+        sel = self.tree.selection()
+        if not sel:
+            return
+        values = self.tree.item(sel[0], "values")
+        ligne_id, libelle, qte_cmd, qte_liv_actuelle = values[0], values[1], values[2], values[3]
+        nouvelle = simpledialog.askfloat(
+            "Quantité livrée", f"Quantité réellement livrée pour « {libelle} » (commandé : {qte_cmd}) :",
+            initialvalue=float(qte_liv_actuelle), parent=self,
+        )
+        if nouvelle is None:
+            return
+        core.update_ligne_bordereau_livraison(self.conn, ligne_id, nouvelle)
+        self.refresh_lignes()
+
+    def save(self):
+        date_str = core.to_iso_date(self.date_var.get().strip())
+        core.update_bordereau_livraison(
+            self.conn, self.bordereau_id,
+            numero=self.numero_var.get().strip(), date_livraison=date_str,
+        )
+        messagebox.showinfo("Enregistré", "Bordereau de livraison enregistré.", parent=self)
+        self.on_saved()
+
+    def valider(self):
+        if not messagebox.askyesno(
+            "Valider ce bordereau",
+            "Ce bordereau de livraison va être marqué comme reçu et verrouillé.\n\n"
+            "Aucune écriture comptable n'est générée — c'est la dernière étape du circuit interne.\n\n"
+            "Continuer ?",
+            parent=self,
+        ):
+            return
+        self.save()
+        try:
+            core.valider_bordereau_livraison(self.conn, self.bordereau_id)
+        except ValueError as exc:
+            messagebox.showerror("Erreur", str(exc), parent=self)
+            return
+        messagebox.showinfo("Validé", "Bordereau de livraison validé.", parent=self)
+        self.on_saved()
+        self.destroy()
+
+
+class BordereauLivraisonTab(ttk.Frame):
+    """Liste des Bordereaux de livraison (menu ENGAGEMENTS-PROJETS) —
+    dernière étape du circuit interne, sans lien avec la comptabilité.
+    Double-clic pour ouvrir, corriger les quantités livrées et valider."""
+
+    def __init__(self, parent, conn):
+        super().__init__(parent)
+        self.conn = conn
+        ttk.Label(self, text="BORDEREAU DE LIVRAISON", font=("Segoe UI", 14, "bold")).pack(
+            anchor="w", padx=16, pady=(16, 4))
+        ttk.Label(self, text=(
+            "Circuit interne d'approbation d'achat — sans lien avec la comptabilité (créé automatiquement "
+            "en validant un Bon de commande). Double-cliquez sur une ligne pour l'ouvrir, corriger les "
+            "quantités réellement livrées et confirmer la réception."
+        ), foreground="#595959", wraplength=1100).pack(anchor="w", padx=16, pady=(0, 8))
+
+        btn_bar = ttk.Frame(self)
+        btn_bar.pack(fill="x", padx=16, pady=4)
+        ttk.Button(btn_bar, text="Actualiser", command=self.refresh).pack(side="left")
+
+        cols = ("numero", "date", "nb_lignes", "statut")
+        self.tree = ttk.Treeview(self, columns=cols, show="headings", height=22)
+        headers = ["N°", "Date", "Lignes", "Statut"]
+        widths = [110, 100, 70, 160]
+        for c, h, w in zip(cols, headers, widths):
+            self.tree.heading(c, text=h)
+            self.tree.column(c, width=w, anchor="w")
+        self.tree.pack(fill="both", expand=True, padx=16, pady=8)
+        self.tree.bind("<Double-1>", self._on_double_click)
+        self._by_iid = {}
+        self.refresh()
+
+    def _on_double_click(self, event=None):
+        sel = self.tree.selection()
+        if not sel:
+            return
+        bid = self._by_iid.get(sel[0])
+        if bid:
+            BordereauLivraisonDialog(self, self.conn, bid, on_saved=self.refresh)
+
+    def refresh(self):
+        for row in self.tree.get_children():
+            self.tree.delete(row)
+        self._by_iid = {}
+        for bl in core.list_bordereaux_livraison(self.conn):
+            nb = len(core.list_lignes_bordereau_livraison(self.conn, bl["id"]))
+            statut = "Validé" if bl["statut"] == "validee" else "Brouillon"
+            iid = self.tree.insert("", "end", values=(
+                bl["numero"], core.to_display_date(bl["date_livraison"]), nb, statut,
+            ))
+            self._by_iid[iid] = bl["id"]
 
 
 class ContratsTab(ttk.Frame):

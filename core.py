@@ -535,6 +535,70 @@ def init_db(conn):
         )
     """)
     conn.execute("""
+        CREATE TABLE IF NOT EXISTS expressions_besoin (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            numero TEXT NOT NULL,
+            date_demande TEXT NOT NULL,
+            demandeur TEXT,
+            service TEXT,
+            entete TEXT,
+            pied_page TEXT,
+            statut TEXT NOT NULL DEFAULT 'brouillon'
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS expression_besoin_lignes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            expression_id INTEGER NOT NULL,
+            libelle TEXT NOT NULL,
+            quantite REAL NOT NULL DEFAULT 0,
+            unite TEXT
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS ep_bons_commande (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            numero TEXT NOT NULL,
+            date_commande TEXT NOT NULL,
+            expression_id INTEGER,
+            fournisseur_code TEXT,
+            entete TEXT,
+            pied_page TEXT,
+            statut TEXT NOT NULL DEFAULT 'brouillon'
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS ep_bon_commande_lignes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            bon_commande_id INTEGER NOT NULL,
+            libelle TEXT NOT NULL,
+            quantite REAL NOT NULL DEFAULT 0,
+            prix_unitaire REAL NOT NULL DEFAULT 0,
+            unite TEXT
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS bordereaux_livraison (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            numero TEXT NOT NULL,
+            date_livraison TEXT NOT NULL,
+            bon_commande_id INTEGER,
+            entete TEXT,
+            pied_page TEXT,
+            statut TEXT NOT NULL DEFAULT 'brouillon'
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS bordereau_livraison_lignes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            bordereau_id INTEGER NOT NULL,
+            libelle TEXT NOT NULL,
+            quantite_commandee REAL NOT NULL DEFAULT 0,
+            quantite_livree REAL NOT NULL DEFAULT 0,
+            unite TEXT
+        )
+    """)
+    conn.execute("""
         CREATE TABLE IF NOT EXISTS facture_achat_lignes (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             facture_id INTEGER NOT NULL,
@@ -5192,6 +5256,245 @@ def export_liasse_fiscale_complete(conn, path, stock_initial=0.0):
 
     wb.save(path)
     return path
+
+
+# ---------------------------------------------------------------------------
+# Circuit interne Expression de besoin → Bon de commande → Bordereau de
+# livraison (menu ENGAGEMENTS-PROJETS) — AUCUN lien avec la comptabilité à
+# aucune étape : ce sont des documents de suivi de procédure d'achat interne
+# (workflow d'approbation), pas des pièces comptables. La validation de
+# chaque étape fait simplement basculer le document dans l'étape suivante,
+# en recopiant ses lignes.
+# ---------------------------------------------------------------------------
+
+# ---- Expression de besoin ----
+def create_expression_besoin(conn, numero, date_demande, demandeur="", service="", entete="", pied_page=""):
+    cur = conn.execute(
+        """INSERT INTO expressions_besoin (numero, date_demande, demandeur, service, entete, pied_page, statut)
+           VALUES (?, ?, ?, ?, ?, ?, 'brouillon')""",
+        (numero, date_demande, demandeur, service, entete, pied_page),
+    )
+    conn.commit()
+    return cur.lastrowid
+
+
+def update_expression_besoin(conn, expression_id, **fields):
+    if not fields:
+        return
+    cols = ", ".join(f"{k} = ?" for k in fields)
+    conn.execute(f"UPDATE expressions_besoin SET {cols} WHERE id = ?", (*fields.values(), expression_id))
+    conn.commit()
+
+
+def delete_expression_besoin(conn, expression_id):
+    conn.execute("DELETE FROM expression_besoin_lignes WHERE expression_id = ?", (expression_id,))
+    conn.execute("DELETE FROM expressions_besoin WHERE id = ?", (expression_id,))
+    conn.commit()
+
+
+def get_expression_besoin(conn, expression_id):
+    row = conn.execute("SELECT * FROM expressions_besoin WHERE id = ?", (expression_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def list_expressions_besoin(conn):
+    rows = conn.execute("SELECT * FROM expressions_besoin ORDER BY date_demande DESC, id DESC").fetchall()
+    return [dict(r) for r in rows]
+
+
+def add_ligne_expression_besoin(conn, expression_id, libelle, quantite, unite=None):
+    conn.execute(
+        "INSERT INTO expression_besoin_lignes (expression_id, libelle, quantite, unite) VALUES (?, ?, ?, ?)",
+        (expression_id, libelle, quantite or 0, unite or None),
+    )
+    conn.commit()
+
+
+def delete_ligne_expression_besoin(conn, ligne_id):
+    conn.execute("DELETE FROM expression_besoin_lignes WHERE id = ?", (ligne_id,))
+    conn.commit()
+
+
+def list_lignes_expression_besoin(conn, expression_id):
+    rows = conn.execute(
+        "SELECT * FROM expression_besoin_lignes WHERE expression_id = ? ORDER BY id", (expression_id,)
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def valider_expression_besoin(conn, expression_id):
+    """Fait basculer l'Expression de besoin en Bon de commande (nouveau
+    document, même numéro, lignes recopiées) — AUCUNE écriture comptable.
+    L'expression d'origine passe en statut « validee » (verrouillée).
+    Retourne l'ID du nouveau bon de commande."""
+    exp = get_expression_besoin(conn, expression_id)
+    if not exp:
+        raise ValueError("Expression de besoin introuvable.")
+    if exp["statut"] == "validee":
+        raise ValueError("Cette expression de besoin est déjà validée.")
+    lignes = list_lignes_expression_besoin(conn, expression_id)
+    if not lignes:
+        raise ValueError("Ajoutez au moins une ligne avant de valider.")
+    bon_id = create_ep_bon_commande(conn, exp["numero"], exp["date_demande"], expression_id=expression_id,
+                                     entete=exp["entete"], pied_page=exp["pied_page"])
+    for l in lignes:
+        add_ligne_ep_bon_commande(conn, bon_id, l["libelle"], l["quantite"], prix_unitaire=0, unite=l["unite"])
+    update_expression_besoin(conn, expression_id, statut="validee")
+    return bon_id
+
+
+# ---- Bon de commande (circuit interne, distinct du bon de commande de Factures frs) ----
+def create_ep_bon_commande(conn, numero, date_commande, expression_id=None, fournisseur_code="",
+                            entete="", pied_page=""):
+    cur = conn.execute(
+        """INSERT INTO ep_bons_commande (numero, date_commande, expression_id, fournisseur_code, entete,
+                                          pied_page, statut)
+           VALUES (?, ?, ?, ?, ?, ?, 'brouillon')""",
+        (numero, date_commande, expression_id, fournisseur_code, entete, pied_page),
+    )
+    conn.commit()
+    return cur.lastrowid
+
+
+def update_ep_bon_commande(conn, bon_id, **fields):
+    if not fields:
+        return
+    cols = ", ".join(f"{k} = ?" for k in fields)
+    conn.execute(f"UPDATE ep_bons_commande SET {cols} WHERE id = ?", (*fields.values(), bon_id))
+    conn.commit()
+
+
+def delete_ep_bon_commande(conn, bon_id):
+    conn.execute("DELETE FROM ep_bon_commande_lignes WHERE bon_commande_id = ?", (bon_id,))
+    conn.execute("DELETE FROM ep_bons_commande WHERE id = ?", (bon_id,))
+    conn.commit()
+
+
+def get_ep_bon_commande(conn, bon_id):
+    row = conn.execute("SELECT * FROM ep_bons_commande WHERE id = ?", (bon_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def list_ep_bons_commande(conn):
+    rows = conn.execute("SELECT * FROM ep_bons_commande ORDER BY date_commande DESC, id DESC").fetchall()
+    return [dict(r) for r in rows]
+
+
+def add_ligne_ep_bon_commande(conn, bon_id, libelle, quantite, prix_unitaire=0, unite=None):
+    conn.execute(
+        """INSERT INTO ep_bon_commande_lignes (bon_commande_id, libelle, quantite, prix_unitaire, unite)
+           VALUES (?, ?, ?, ?, ?)""",
+        (bon_id, libelle, quantite or 0, prix_unitaire or 0, unite or None),
+    )
+    conn.commit()
+
+
+def delete_ligne_ep_bon_commande(conn, ligne_id):
+    conn.execute("DELETE FROM ep_bon_commande_lignes WHERE id = ?", (ligne_id,))
+    conn.commit()
+
+
+def list_lignes_ep_bon_commande(conn, bon_id):
+    rows = conn.execute(
+        "SELECT * FROM ep_bon_commande_lignes WHERE bon_commande_id = ? ORDER BY id", (bon_id,)
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def valider_ep_bon_commande(conn, bon_id):
+    """Fait basculer le Bon de commande en Bordereau de livraison (nouveau
+    document, même numéro, lignes recopiées — quantité livrée initialisée à
+    la quantité commandée, modifiable ensuite) — AUCUNE écriture comptable.
+    Le bon d'origine passe en statut « validee » (verrouillé). Retourne
+    l'ID du nouveau bordereau."""
+    bon = get_ep_bon_commande(conn, bon_id)
+    if not bon:
+        raise ValueError("Bon de commande introuvable.")
+    if bon["statut"] == "validee":
+        raise ValueError("Ce bon de commande est déjà validé.")
+    lignes = list_lignes_ep_bon_commande(conn, bon_id)
+    if not lignes:
+        raise ValueError("Ajoutez au moins une ligne avant de valider.")
+    bordereau_id = create_bordereau_livraison(conn, bon["numero"], bon["date_commande"], bon_commande_id=bon_id,
+                                               entete=bon["entete"], pied_page=bon["pied_page"])
+    for l in lignes:
+        add_ligne_bordereau_livraison(conn, bordereau_id, l["libelle"], l["quantite"], l["quantite"], unite=l["unite"])
+    update_ep_bon_commande(conn, bon_id, statut="validee")
+    return bordereau_id
+
+
+# ---- Bordereau de livraison ----
+def create_bordereau_livraison(conn, numero, date_livraison, bon_commande_id=None, entete="", pied_page=""):
+    cur = conn.execute(
+        """INSERT INTO bordereaux_livraison (numero, date_livraison, bon_commande_id, entete, pied_page, statut)
+           VALUES (?, ?, ?, ?, ?, 'brouillon')""",
+        (numero, date_livraison, bon_commande_id, entete, pied_page),
+    )
+    conn.commit()
+    return cur.lastrowid
+
+
+def update_bordereau_livraison(conn, bordereau_id, **fields):
+    if not fields:
+        return
+    cols = ", ".join(f"{k} = ?" for k in fields)
+    conn.execute(f"UPDATE bordereaux_livraison SET {cols} WHERE id = ?", (*fields.values(), bordereau_id))
+    conn.commit()
+
+
+def delete_bordereau_livraison(conn, bordereau_id):
+    conn.execute("DELETE FROM bordereau_livraison_lignes WHERE bordereau_id = ?", (bordereau_id,))
+    conn.execute("DELETE FROM bordereaux_livraison WHERE id = ?", (bordereau_id,))
+    conn.commit()
+
+
+def get_bordereau_livraison(conn, bordereau_id):
+    row = conn.execute("SELECT * FROM bordereaux_livraison WHERE id = ?", (bordereau_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def list_bordereaux_livraison(conn):
+    rows = conn.execute("SELECT * FROM bordereaux_livraison ORDER BY date_livraison DESC, id DESC").fetchall()
+    return [dict(r) for r in rows]
+
+
+def add_ligne_bordereau_livraison(conn, bordereau_id, libelle, quantite_commandee, quantite_livree, unite=None):
+    conn.execute(
+        """INSERT INTO bordereau_livraison_lignes (bordereau_id, libelle, quantite_commandee, quantite_livree, unite)
+           VALUES (?, ?, ?, ?, ?)""",
+        (bordereau_id, libelle, quantite_commandee or 0, quantite_livree or 0, unite or None),
+    )
+    conn.commit()
+
+
+def update_ligne_bordereau_livraison(conn, ligne_id, quantite_livree):
+    conn.execute("UPDATE bordereau_livraison_lignes SET quantite_livree = ? WHERE id = ?",
+                 (quantite_livree or 0, ligne_id))
+    conn.commit()
+
+
+def delete_ligne_bordereau_livraison(conn, ligne_id):
+    conn.execute("DELETE FROM bordereau_livraison_lignes WHERE id = ?", (ligne_id,))
+    conn.commit()
+
+
+def list_lignes_bordereau_livraison(conn, bordereau_id):
+    rows = conn.execute(
+        "SELECT * FROM bordereau_livraison_lignes WHERE bordereau_id = ? ORDER BY id", (bordereau_id,)
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def valider_bordereau_livraison(conn, bordereau_id):
+    """Dernière étape du circuit : marque simplement le bordereau comme
+    validé (réception confirmée) — AUCUNE écriture comptable, fin de
+    chaîne."""
+    bordereau = get_bordereau_livraison(conn, bordereau_id)
+    if not bordereau:
+        raise ValueError("Bordereau de livraison introuvable.")
+    if bordereau["statut"] == "validee":
+        raise ValueError("Ce bordereau est déjà validé.")
+    update_bordereau_livraison(conn, bordereau_id, statut="validee")
 
 
 if __name__ == "__main__":

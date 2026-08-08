@@ -1694,3 +1694,35 @@ pour les réglages textuels), testé.
 
 Testé de bout en bout : bon de commande en brouillon utilisant le modèle
 ADMIN, facture validée imprimant le bon document, Bilan resté équilibré.
+
+### Circuit interne Expression de besoin → Bon de commande → Bordereau de livraison
+
+**Demande** : 3 nouveaux sous-menus dans ENGAGEMENTS-PROJETS, formant un
+circuit d'approbation d'achat interne **sans aucun lien avec la
+comptabilité à aucune étape** — la validation d'une étape fait basculer
+le document dans le sous-menu suivant.
+
+**Réalisé** :
+- **Expression de besoin** : demande interne (numéro, date, demandeur,
+  service, lignes libellé/quantité/unité). Sa validation verrouille
+  l'expression et crée automatiquement un **Bon de commande** avec les
+  mêmes lignes.
+- **Bon de commande** (circuit interne — distinct du bouton "Enregistrer
+  BON DE COMMANDE" de Factures frs, qui lui génère de vraies écritures une
+  fois validé) : peut aussi être créé directement, précise le fournisseur
+  et un prix unitaire par ligne (montant purement indicatif, jamais
+  comptabilisé). Sa validation verrouille le bon et crée automatiquement
+  un **Bordereau de livraison**.
+- **Bordereau de livraison** : dernière étape — reprend les quantités
+  commandées, avec une quantité livrée modifiable (double-clic sur une
+  ligne) pour gérer les livraisons partielles. Sa validation marque
+  simplement la réception comme confirmée — fin du circuit.
+
+**Interface** : chaque sous-menu affiche la liste des documents en
+tableau aligné (N°, date, statut...) ; **double-clic sur une ligne pour
+l'ouvrir en grand**, ajouter/modifier des lignes, et valider — exactement
+comme demandé.
+
+Testé de bout en bout, y compris une réception partielle (200 sacs
+commandés, 180 livrés) : le circuit complet s'exécute sans générer une
+seule écriture comptable, à aucune étape.
