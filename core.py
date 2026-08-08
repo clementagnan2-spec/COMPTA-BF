@@ -4731,6 +4731,10 @@ def compute_situation_financiere(conn, exercice=None):
 
     return {
         "resultat_net_comptable": resultat_net,
+        "valeurs_comptables_cessions_courantes": tft["valeurs_comptables_cessions_courantes"],
+        "produits_cessions_courantes": tft["produits_cessions_courantes"],
+        "transferts_charges_exploitation": tft["transferts_charges_exploitation"],
+        "caf_exploitation": tft["caf_exploitation"],
         "ebe": tft["ebe"], "revenus_financiers": tft["revenus_financiers"],
         "frais_financiers": tft["frais_financiers"], "cafg": cafg,
         "dividendes_verses": dividendes_verses, "autofinancement": autofinancement,

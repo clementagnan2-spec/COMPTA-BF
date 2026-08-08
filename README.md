@@ -1917,3 +1917,55 @@ maintenant bien dans les ressources stables ; un client au solde créditeur
 d'exploitation au lieu de rester en créances — le contrôle de trésorerie
 (Trésorerie nette calculée vs réelle) tombe exactement à 0, Bilan resté
 équilibré.
+
+### Présentation TFT et Situation financière — alignée sur les PDF de référence + validation par les vrais chiffres
+
+**Fourni par l'utilisateur** : les PDF réels (Bilan, TFT, Situation
+financière) avec les vrais montants attendus, en plus des formules déjà
+fournies précédemment.
+
+**Vérification manuelle croisée, chiffre par chiffre** (précieuse : ce
+sont les VRAIS résultats de l'utilisateur, pas un exemple inventé) :
+- CAFG = EBE(6 679 997 354) + Revenus financiers(92 767 739) - Frais
+  financiers(1 356 338 942) = **5 416 426 151** — exact.
+- Ressources stables = Capitaux propres(14 022 638 895) + Dettes
+  financières(17 262 479 052) = **31 285 117 947** — exact.
+- Fonds de roulement = 31 285 117 947 - 29 368 227 937 = **1 916 890 010** — exact.
+- Besoin de financement global = 208 057 048 + (-404 023 042) = **-195 965 994** — exact.
+- Trésorerie nette = 1 916 890 010 - (-195 965 994) = **2 112 856 004** — exact,
+  et cohérent avec la trésorerie du Bilan (Caisse débitrice 2 112 856 004)
+  ET avec le TFT (Trésorerie nette au 31/12/N).
+- TFT : Flux opérationnels (Somme FA-FE, hors CAFG) = -446 083 968 (HAO)
+  + 1 571 701 345 (stocks) + -60 615 663 (créances) + -591 091 968 (dettes)
+  = **473 909 746** — exact ; B = CAFG + ce flux = **5 890 335 897** — exact ;
+  Variation de trésorerie = B+C+D = **1 572 707 188** — exact.
+
+Cette vérification manuelle confirme que la structure de calcul mise en
+place lors des deux sessions précédentes (formules TFT et Situation
+financière) reproduit fidèlement le système de référence, chiffre pour
+chiffre.
+
+**Présentation des écrans TFT et Situation financière reconstruite pour
+suivre exactement l'ordre et les libellés des PDF** :
+- **TFT** : ajout de la ligne intermédiaire « Flux de trésorerie provenant
+  des activités opérationnelles (Somme FA à FE) » (variation du BFR seule,
+  avant ajout de la CAFG) en plus du flux « B » déjà affiché (CAFG + BFR) —
+  les deux valeurs sont désormais visibles, comme dans le PDF. Ordre des
+  lignes de variation du BFR corrigé (HAO, puis Stocks, puis Créances, puis
+  Dettes, comme le PDF) — l'ordre n'affecte pas le résultat mais facilite
+  la comparaison ligne à ligne avec le rapport de référence. Cessions
+  d'immobilisations incorporelles et corporelles fusionnées en une seule
+  ligne, comme dans le PDF.
+- **Situation financière** : « RÉSULTAT NET COMPTABLE » ajouté en première
+  ligne (manquant auparavant) ; détail de la CAF d'exploitation (654/754/
+  781) ajouté, comme pour le TFT ; tous les libellés et l'ordre des
+  sections (CAFG, Analyse de la situation financière, BFR, Trésorerie
+  nette, Flux de la période, Endettement financier) alignés sur le PDF ;
+  affichage de la ligne « Actifs immobilisés » en négatif, comme dans le
+  PDF (le calcul sous-jacent, lui, reste inchangé).
+- Les deux écrans utilisent maintenant le même format de montant que le
+  Bilan (séparateur espace, style SYSCOHADA) au lieu du séparateur virgule.
+
+Testé : écart de contrôle du TFT et de la Situation financière toujours à
+0 après ces changements de présentation, cohérence Bilan/TFT/Situation
+financière vérifiée sur un scénario simple.

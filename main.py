@@ -2622,7 +2622,7 @@ class TftIndirectTab(ttk.Frame):
         self.refresh()
 
     def _row(self, tag, label, val):
-        self.tree.insert("", "end", tags=(tag,), values=(f"  {label}", f"{val:,.2f}"))
+        self.tree.insert("", "end", tags=(tag,), values=(f"  {label}", fmt_cfa(val)))
 
     def _header(self, tag, titre):
         self.tree.insert("", "end", tags=(tag + "_header",), values=(titre, ""))
@@ -2631,58 +2631,70 @@ class TftIndirectTab(ttk.Frame):
         for row in self.tree.get_children():
             self.tree.delete(row)
         t = core.compute_tft_indirect(self.conn)
+        bfr_variation_totale = (t["variation_actif_circulant_hao"] + t["variation_stocks"]
+                                 + t["variation_creances"] + t["variation_dettes_circulantes"])
+        cessions_immo_incorp_corp = t["cessions_incorp"] + t["cessions_corp"]
 
         self._header("ouverture", "A — TRÉSORERIE NETTE AU 1ER JANVIER")
-        self._row("ouverture", "Trésorerie d'ouverture", t["treso_ouverture"])
+        self._row("ouverture", "Trésorerie nette au 1er janvier", t["treso_ouverture"])
 
-        self._header("cafg", "DÉTERMINATION DE LA CAFG")
-        self._row("cafg", "Excédent Brut d'Exploitation (EBE)", t["ebe"])
-        self._row("cafg", "+ Produits des cessions courantes d'immobilisations (754)", t["produits_cessions_courantes"])
-        self._row("cafg", "- Valeurs comptables des cessions courantes (654)", t["valeurs_comptables_cessions_courantes"])
-        self._row("cafg", "+ Transferts de charges d'exploitation (781)", t["transferts_charges_exploitation"])
+        self._header("cafg", "DÉTERMINATION DE LA CAPACITÉ D'AUTOFINANCEMENT")
+        self._row("cafg", "EBE", t["ebe"])
+        self._row("cafg", "- Valeurs comptables de cession courantes d'immobilisations (654)",
+                   t["valeurs_comptables_cessions_courantes"])
+        self._row("cafg", "+ Produits de cession courantes d'immobilisations (754)", t["produits_cessions_courantes"])
+        self._row("cafg", "+ Transfert de charges d'exploitation (781)", t["transferts_charges_exploitation"])
         self._row("cafg", "CAPACITÉ D'AUTOFINANCEMENT D'EXPLOITATION", t["caf_exploitation"])
         self._row("cafg", "+ Revenus financiers", t["revenus_financiers"])
         self._row("cafg", "- Frais financiers", t["frais_financiers"])
-        self._row("cafg", "CAPACITÉ D'AUTOFINANCEMENT GLOBALE (CAFG)", t["cafg"])
+        self._row("cafg", "CAPACITÉ D'AUTOFINANCEMENT GLOBAL (CAFG)", t["cafg"])
+        self._row("cafg", "- Variation d'actif circulant HAO (racines 46-49)", t["variation_actif_circulant_hao"])
         self._row("cafg", "- Variation des stocks", t["variation_stocks"])
         self._row("cafg", "- Variation des créances (racines 40-45)", t["variation_creances"])
-        self._row("cafg", "- Variation de l'actif circulant HAO (racines 46-49)", t["variation_actif_circulant_hao"])
-        self._row("cafg", "+ Variation du passif circulant (dettes)", t["variation_dettes_circulantes"])
-        self._row("cafg", "FLUX DES ACTIVITÉS OPÉRATIONNELLES (A)", t["flux_operationnel"])
+        self._row("cafg", "+ Variation du passif circulant (racines 40-49)", t["variation_dettes_circulantes"])
+        self._row("cafg", "Flux de trésorerie provenant des activités opérationnelles (Somme FA à FE)",
+                   bfr_variation_totale)
+        self._row("cafg", "B — Flux de trésorerie provenant des activités opérationnelles + CAFG",
+                   t["flux_operationnel"])
 
-        self._header("invest", "FLUX DES ACTIVITÉS D'INVESTISSEMENT")
-        self._row("invest", "- Acquisitions d'immobilisations incorporelles", t["acquisitions_incorp"])
-        self._row("invest", "- Acquisitions d'immobilisations corporelles", t["acquisitions_corp"])
-        self._row("invest", "- Acquisitions d'immobilisations financières", t["acquisitions_fin"])
-        self._row("invest", "+ Cessions d'immobilisations incorporelles", t["cessions_incorp"])
-        self._row("invest", "+ Cessions d'immobilisations corporelles", t["cessions_corp"])
-        self._row("invest", "+ Cessions d'immobilisations financières", t["cessions_fin"])
-        self._row("invest", "FLUX DES ACTIVITÉS D'INVESTISSEMENT (B)", t["flux_investissement"])
+        self._header("invest", "FLUX DE TRÉSORERIE PROVENANT DES ACTIVITÉS D'INVESTISSEMENT")
+        self._row("invest", "- Décaissements liés aux acquisitions d'immobilisations incorporelles",
+                   t["acquisitions_incorp"])
+        self._row("invest", "- Décaissements liés aux acquisitions d'immobilisations corporelles",
+                   t["acquisitions_corp"])
+        self._row("invest", "- Décaissements liés aux acquisitions d'immobilisations financières",
+                   t["acquisitions_fin"])
+        self._row("invest", "+ Encaissements liés aux cessions d'immobilisations incorporelles et corporelles",
+                   cessions_immo_incorp_corp)
+        self._row("invest", "+ Encaissements liés aux cessions d'immobilisations financières", t["cessions_fin"])
+        self._row("invest", "C — Flux de trésorerie provenant des activités d'investissement (somme FF à FJ)",
+                   t["flux_investissement"])
 
-        self._header("finance", "FLUX DES ACTIVITÉS DE FINANCEMENT")
-        self._row("finance", "+ Augmentation de capital par apports nouveaux", t["augmentation_capital"])
+        self._header("finance", "FLUX DE TRÉSORERIE PROVENANT DES CAPITAUX")
+        self._row("finance", "+ Augmentations de capital par apports nouveaux", t["augmentation_capital"])
         self._row("finance", "+ Subventions d'investissement reçues", t["subventions_recues"])
         self._row("finance", "- Prélèvements sur le capital", t["prelevements_capital"])
         self._row("finance", "- Dividendes versés", t["dividendes_verses"])
-        self._row("finance", "Flux de trésorerie provenant des capitaux propres", t["flux_capitaux_propres"])
-        self._row("finance", "+ Emprunts nouveaux", t["emprunts_nouveaux"])
-        self._row("finance", "- Remboursements des emprunts", t["remboursements_emprunts"])
-        self._row("finance", "Flux de trésorerie provenant des capitaux étrangers", t["flux_capitaux_etrangers"])
-        self._row("finance", "FLUX DES ACTIVITÉS DE FINANCEMENT (C)", t["flux_financement"])
+        self._row("finance", "Flux de trésorerie provenant des capitaux propres (somme FK à FN)",
+                   t["flux_capitaux_propres"])
+        self._row("finance", "+ Emprunts", t["emprunts_nouveaux"])
+        self._row("finance", "- Remboursements des emprunts et autres dettes financières",
+                   t["remboursements_emprunts"])
+        self._row("finance", "Flux de trésorerie provenant des capitaux étrangers (somme FO à FQ)",
+                   t["flux_capitaux_etrangers"])
+        self._row("finance", "D — Flux de trésorerie provenant des capitaux", t["flux_financement"])
 
         self._header("controle", "VARIATION ET CONTRÔLE")
-        self._row("controle", "VARIATION DE LA TRÉSORERIE NETTE (A+B+C)", t["variation_treso_nette"])
-        self._row("controle", "Trésorerie nette calculée au 31/12/N", t["treso_cloture_calculee"])
-        self._row("controle", "Contrôle — Trésorerie réelle (Balance, classe 5)", t["treso_cloture_reelle"])
+        self._row("controle", "VARIATION DE LA TRÉSORERIE NETTE DE LA PÉRIODE (B+C+D)", t["variation_treso_nette"])
+        self._row("controle", "TRÉSORERIE NETTE AU 31/12/N (B+C+D)+A", t["treso_cloture_calculee"])
+        self._row("controle", "CONTRÔLE TRÉSORERIE NETTE AU 31/12/N (Balance, classe 5)", t["treso_cloture_reelle"])
         self._row("controle", "ÉCART", t["ecart"])
-        self.tree.insert("", "end", tags=("total",), values=(
-            "TRÉSORERIE NETTE DE CLÔTURE", f"{t['treso_cloture_reelle']:,.2f}"))
 
         if abs(t["ecart"]) < 1:
             self.ecart_var.set("✓ La trésorerie calculée correspond exactement à la trésorerie de la Balance.")
         else:
             self.ecart_var.set(
-                f"⚠ Écart de {t['ecart']:,.2f} — un mouvement de trésorerie n'est peut-être pas "
+                f"⚠ Écart de {fmt_cfa(t['ecart'])} — un mouvement de trésorerie n'est peut-être pas "
                 f"correctement classé (comptes d'immobilisations, capital ou emprunts)."
             )
 
@@ -2786,7 +2798,8 @@ class SituationFinanciereTab(ttk.Frame):
 
     def _row(self, tag, label, val, pct=False):
         suffix = " %" if pct else ""
-        self.tree.insert("", "end", tags=(tag,), values=(f"  {label}", f"{val:,.2f}{suffix}"))
+        display = f"{val:,.2f}{suffix}" if pct else fmt_cfa(val)
+        self.tree.insert("", "end", tags=(tag,), values=(f"  {label}", display))
 
     def _header(self, tag, titre):
         self.tree.insert("", "end", tags=(tag + "_header",), values=(titre, ""))
@@ -2796,46 +2809,55 @@ class SituationFinanciereTab(ttk.Frame):
             self.tree.delete(row)
         s = core.compute_situation_financiere(self.conn)
 
-        self._header("cafg", "RÉSULTAT ET CAPACITÉ D'AUTOFINANCEMENT")
-        self._row("cafg", "Résultat net comptable", s["resultat_net_comptable"])
-        self._row("cafg", "Excédent Brut d'Exploitation (EBE)", s["ebe"])
+        self._row("cafg", "RÉSULTAT NET COMPTABLE", s["resultat_net_comptable"])
+
+        self._header("cafg", "DÉTERMINATION DE LA CAPACITÉ D'AUTOFINANCEMENT")
+        self._row("cafg", "EBE", s["ebe"])
+        self._row("cafg", "- Valeurs comptables de cession courantes d'immobilisations (654)",
+                   s["valeurs_comptables_cessions_courantes"])
+        self._row("cafg", "+ Produits de cession courantes d'immobilisations (754)", s["produits_cessions_courantes"])
+        self._row("cafg", "+ Transfert de charges d'exploitation (781)", s["transferts_charges_exploitation"])
+        self._row("cafg", "CAPACITÉ D'AUTOFINANCEMENT D'EXPLOITATION", s["caf_exploitation"])
         self._row("cafg", "+ Revenus financiers", s["revenus_financiers"])
         self._row("cafg", "- Frais financiers", s["frais_financiers"])
-        self._row("cafg", "CAPACITÉ D'AUTOFINANCEMENT GLOBALE (CAFG)", s["cafg"])
-        self._row("cafg", "- Dividendes versés durant l'exercice", s["dividendes_verses"])
+        self._row("cafg", "CAPACITÉ D'AUTOFINANCEMENT GLOBAL (CAFG)", s["cafg"])
+        self._row("cafg", "- Distribution de dividendes opérées durant l'exercice", s["dividendes_verses"])
         self._row("cafg", "AUTOFINANCEMENT", s["autofinancement"])
-        self._row("cafg", "Rentabilité économique (Résultat exploit. / Cap. propres)", s["rentabilite_economique"], pct=True)
-        self._row("cafg", "Rentabilité financière (Résultat net / Cap. propres)", s["rentabilite_financiere"], pct=True)
+        self._row("cafg", "Rentabilité économique = Résultat exploitation / Capitaux propres",
+                   s["rentabilite_economique"], pct=True)
+        self._row("cafg", "Rentabilité financière = Résultat net / Capitaux propres",
+                   s["rentabilite_financiere"], pct=True)
 
-        self._header("fr", "FONDS DE ROULEMENT (FR)")
+        self._header("fr", "ANALYSE DE LA SITUATION FINANCIÈRE")
         self._row("fr", "Capitaux propres et ressources assimilées", s["capitaux_propres_ressources"])
         self._row("fr", "+ Dettes financières", s["dettes_financieres"])
         self._row("fr", "= RESSOURCES STABLES", s["ressources_stables"])
-        self._row("fr", "- Actifs immobilisés", s["actifs_immobilises"])
-        self._row("fr", "= FONDS DE ROULEMENT (FR)", s["fonds_de_roulement"])
+        self._row("fr", "- Actifs immobilisés", -s["actifs_immobilises"])
+        self._row("fr", "= FONDS DE ROULEMENT -1", s["fonds_de_roulement"])
 
         self._header("bfr", "BESOIN EN FONDS DE ROULEMENT (BFR)")
         self._row("bfr", "+ Actif circulant d'exploitation", s["actif_circulant_exploitation"])
         self._row("bfr", "- Passif circulant d'exploitation", s["passif_circulant_exploitation"])
-        self._row("bfr", "= BESOIN DE FINANCEMENT D'EXPLOITATION", s["besoin_financement_exploitation"])
+        self._row("bfr", "= BESOIN DE FINANCEMENT D'EXPLOITATION -2", s["besoin_financement_exploitation"])
         self._row("bfr", "+ Actif circulant HAO", s["actif_circulant_hao"])
         self._row("bfr", "- Passif circulant HAO", s["passif_circulant_hao"])
-        self._row("bfr", "= BESOIN DE FINANCEMENT HAO", s["besoin_financement_hao"])
-        self._row("bfr", "= BESOIN DE FINANCEMENT GLOBAL (BFR)", s["besoin_financement_global"])
+        self._row("bfr", "= BESOIN DE FINANCEMENT HAO -3", s["besoin_financement_hao"])
+        self._row("bfr", "BESOIN DE FINANCEMENT GLOBAL -4 = 2+3", s["besoin_financement_global"])
 
-        self._header("tn", "TRÉSORERIE NETTE (TN = FR - BFR)")
-        self._row("tn", "TRÉSORERIE NETTE (FR - BFR)", s["tresorerie_nette"])
-        self._row("tn", "Contrôle — Trésorerie réelle (Balance, classe 5)", s["controle_treso_reelle"])
+        self._header("tn", "TRÉSORERIE NETTE")
+        self._row("tn", "TRÉSORERIE NETTE -5 = 1-4", s["tresorerie_nette"])
+        self._row("tn", "CONTRÔLE TRÉSORERIE NETTE (Balance, classe 5)", s["controle_treso_reelle"])
         self._row("tn", "ÉCART", s["controle_ecart"])
 
         self._header("flux", "FLUX DE TRÉSORERIE DE LA PÉRIODE (cf. onglet TFT)")
-        self._row("flux", "+ Flux des activités opérationnelles", s["flux_operationnel"])
-        self._row("flux", "- Flux des activités d'investissement", s["flux_investissement"])
-        self._row("flux", "+ Flux des activités de financement", s["flux_financement"])
+        self._row("flux", "+ Flux de la trésorerie des activités opérationnelles", s["flux_operationnel"])
+        self._row("flux", "- Flux de la trésorerie des activités d'investissement", s["flux_investissement"])
+        self._row("flux", "+ Flux de la trésorerie des activités de financement", s["flux_financement"])
         self._row("flux", "VARIATION DE LA TRÉSORERIE NETTE DE LA PÉRIODE", s["variation_treso_nette"])
 
         self._header("endettement", "ENDETTEMENT FINANCIER")
-        self._row("endettement", "Endettement financier brut (dettes fin. + trésorerie passif)", s["endettement_financier_brut"])
+        self._row("endettement", "Endettement financier brut (dettes fin. + trésorerie passif)",
+                   s["endettement_financier_brut"])
         self._row("endettement", "- Trésorerie actif", s["treso_actif"])
         self._row("endettement", "= ENDETTEMENT FINANCIER NET", s["endettement_financier_net"])
 
