@@ -2010,3 +2010,40 @@ extension de bâtiment et une nouvelle créance client en 2026) : le Total
 Actif N (6 700 000) et N-1 (4 000 000) sont corrects, une créance créée en
 2026 affiche bien N-1 = 0 (n'existait pas en 2025), écart resté à 0 sur
 Bilan, Situation financière et TFT.
+
+### Export du Bilan dans le GABARIT EXACT fourni par l'utilisateur
+
+**Demande** : utiliser le fichier gabarit Excel fourni tel quel dans le
+sous-menu Bilan, à la place de l'ancien export.
+
+**Réalisé** :
+- Le gabarit (`templates/bilan_template.xls`, format SpreadsheetML —
+  reconnu par Excel malgré l'extension .xls) est embarqué dans
+  l'application et copié dans le `.exe` au build (workflow GitHub Actions
+  mis à jour).
+- **`core.export_bilan_gabarit_xlsx()`** (nouveau) : un interpréteur
+  générique des formules du gabarit (`CtaCptSolde`, `CtaCptSoldeDébit`,
+  `CtaCptSoldeCrédit`, et leurs variantes N-1 `...Nm1`) — chaque formule
+  est retrouvée dans le fichier XML brut, évaluée directement à partir de
+  la Balance (exercice N et N-1), puis remplacée par sa valeur numérique.
+  Gère les références nommées internes au gabarit (`[R120.EtLoc]=...`,
+  utilisées par ex. pour sommer plusieurs lignes de capitaux propres dans
+  le TOTAL I). **131 formules** au total dans ce gabarit, toutes évaluées
+  automatiquement — aucune n'a eu besoin d'être recopiée à la main.
+- Bouton **« Exporter (.xlsx) »** du Bilan pointant maintenant sur ce
+  nouvel export (`.xls`, comme le gabarit d'origine) — l'ancien export
+  personnalisé (`export_bilan_detaille_xlsx`) reste disponible dans le
+  code mais n'est plus utilisé par ce bouton, comme demandé.
+
+**Bug découvert et corrigé pendant le développement** : certaines
+cellules du gabarit portent un attribut Excel supplémentaire
+(`x:Ticked="1"`), que le premier motif de recherche ne reconnaissait pas
+— 64 formules sur 131 auraient été oubliées silencieusement. Corrigé et
+vérifié : les 131 formules sont maintenant toutes détectées et évaluées.
+
+Testé avec un historique réel sur 2 exercices (2025 clôturé puis reporté
+sur 2026, avec une extension de bâtiment) : le gabarit exporté n'a plus
+aucune formule non évaluée, la valeur Brut N-1 du Bâtiment (5 000 000)
+est correcte, et TOTAL GENERAL Actif = TOTAL GENERAL Passif selon les
+propres formules du gabarit (calcul indépendant de compute_bilan(),
+donc une vérification croisée supplémentaire de la cohérence globale).

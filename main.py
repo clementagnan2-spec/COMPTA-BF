@@ -1715,13 +1715,13 @@ class BilanTab(ttk.Frame):
 
     def export_xlsx(self):
         path = filedialog.asksaveasfilename(
-            defaultextension=".xlsx", filetypes=[("Classeur Excel", "*.xlsx")],
-            initialfile="Bilan.xlsx", title="Exporter le Bilan",
+            defaultextension=".xls", filetypes=[("Classeur Excel", "*.xls")],
+            initialfile="Bilan.xls", title="Exporter le Bilan (gabarit officiel)",
         )
         if not path:
             return
-        core.export_bilan_detaille_xlsx(self.conn, path)
-        messagebox.showinfo("Export terminé", f"Bilan exporté :\n{path}")
+        core.export_bilan_gabarit_xlsx(self.conn, path)
+        messagebox.showinfo("Export terminé", f"Bilan exporté dans le gabarit officiel :\n{path}")
 
 
 class PiecesNonEquilibreesTab(ttk.Frame):

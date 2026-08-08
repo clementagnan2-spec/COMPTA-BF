@@ -6,6 +6,7 @@ testable en ligne de commande. main.py ne fait qu'appeler ces fonctions.
 """
 import json
 import os
+import re
 import sys
 import sqlite3
 from datetime import date, datetime, timedelta
@@ -3216,6 +3217,150 @@ def compute_bilan_detaille(conn, exercice=None):
         "total_passif": n["total_passif"], "total_passif_n1": n1["total_passif"],
         "ecart": n["total_actif"] - n["total_passif"],
     }
+
+
+# ---------------------------------------------------------------------------
+# Export du Bilan dans le GABARIT EXCEL EXACT du rapport financier de
+# référence de l'utilisateur (templates/bilan_template.xls, format
+# SpreadsheetML — un fichier XML valide malgré l'extension .xls). Plutôt que
+# de reconstruire péniblement les 283 cellules une par une, un petit
+# interpréteur générique évalue chaque formule (CtaCptSolde, CtaCptSoldeDébit,
+# CtaCptSoldeCrédit, et leurs variantes N-1 CtaCptSoldeNm1/...Nm1) directement
+# à partir de la Balance — garantissant que TOUTE cellule du gabarit reçoit
+# la bonne valeur, y compris les cas particuliers (plages "50*","56*",
+# TOTAL II sur "4*","59*"...), sans recopier une logique métier séparée.
+# ---------------------------------------------------------------------------
+BILAN_TEMPLATE_PATH = os.path.join(_resource_dir(), "templates", "bilan_template.xls")
+
+
+def _prefix_to_range(prefix):
+    """'201*' -> (201000, 201999) ; '6032*' -> (603200, 603299) ; '707'
+    (sans étoile) -> (707000, 707999) — un compte SYSCOHADA a 6 chiffres."""
+    p = prefix.rstrip("*")
+    lo = int(p.ljust(6, "0"))
+    hi = int(p.ljust(6, "9"))
+    return lo, hi
+
+
+def _cta_cpt_solde(balance, args, sign=None):
+    """Réplique CtaCptSolde()/CtaCptSoldeDébit()/CtaCptSoldeCrédit() du
+    gabarit : somme des soldes de clôture des comptes dont le code est dans
+    la plage couverte par `args` (1 racine/préfixe, ou 2 = une plage de
+    préfixes), filtrés par signe (sign='pos' -> Débit uniquement, valeur
+    positive renvoyée ; sign='neg' -> Crédit uniquement, valeur positive
+    renvoyée par convention du gabarit ; sign=None -> solde naturel, signé)."""
+    if len(args) == 1:
+        lo, hi = _prefix_to_range(args[0])
+    elif len(args) >= 2:
+        lo, _ = _prefix_to_range(args[0])
+        _, hi = _prefix_to_range(args[1])
+    else:
+        return 0.0
+    total = 0.0
+    for b in balance:
+        code_int = int(b["code"])
+        if not (lo <= code_int <= hi):
+            continue
+        v = b["solde_cloture"]
+        if sign == "pos":
+            if v > 0:
+                total += v
+        elif sign == "neg":
+            if v < 0:
+                total += -v
+        else:
+            total += v
+    return total
+
+
+_CTA_FUNC_RE = re.compile(r"CtaCptSolde(Débit|Crédit)?(Nm1)?\(([^)]*)\)")
+_NAMED_REF_RE = re.compile(r"\[(\w+)\.EtLoc\]")
+_NAMED_DEF_RE = re.compile(r"^\[(\w+)\.EtLoc\]=(.*)$")
+
+
+def _eval_bilan_formula(formula, balance_n, balance_n1, named_refs):
+    """Évalue une formule du gabarit (voir _CTA_FUNC_RE/_NAMED_REF_RE) et
+    retourne (valeur, nom_défini_ou_None). `named_refs` est mis à jour au
+    fil de l'eau : les cellules sont évaluées dans l'ordre du document, donc
+    toute référence [Rxxx.EtLoc] a déjà été résolue par une cellule
+    précédente au moment où elle est utilisée."""
+    s = formula.strip()
+    if s.startswith("="):
+        s = s[1:]
+    defined_name = None
+    m = _NAMED_DEF_RE.match(s)
+    if m:
+        defined_name = m.group(1)
+        s = m.group(2)
+
+    def repl_ref(m2):
+        return f"({named_refs.get(m2.group(1), 0.0)})"
+    s = _NAMED_REF_RE.sub(repl_ref, s)
+
+    def repl_func(m2):
+        debit_credit, nm1, args_str = m2.group(1), m2.group(2), m2.group(3)
+        args = re.findall(r'"([^"]*)"', args_str)
+        if not args and args_str.strip():
+            args = [args_str.strip()]
+        sign = "pos" if debit_credit == "Débit" else ("neg" if debit_credit == "Crédit" else None)
+        balance = balance_n1 if nm1 else balance_n
+        return f"({_cta_cpt_solde(balance, args, sign=sign)})"
+    s = _CTA_FUNC_RE.sub(repl_func, s)
+
+    s = s.strip()
+    if not s:
+        return 0.0, defined_name
+    try:
+        value = eval(s, {"__builtins__": {}}, {})
+    except Exception:
+        value = 0.0
+    return float(value), defined_name
+
+
+def export_bilan_gabarit_xlsx(conn, path, exercice=None):
+    """Exporte le Bilan dans le GABARIT EXACT du rapport financier de
+    référence de l'utilisateur (mêmes libellés, mêmes cellules, même mise en
+    forme/couleurs/bordures — le fichier est recopié tel quel, seules les
+    valeurs changent). Le gabarit stocke chaque formule (CtaCptSolde...)
+    comme simple TEXTE dans la cellule (pas une formule Excel vivante) :
+    on repère ce texte par une substitution directe (regex sur le XML brut,
+    sans reconstruire tout le document — pour ne prendre aucun risque avec
+    les espaces de noms XML/le format SpreadsheetML), on l'évalue avec le
+    même interpréteur générique que celui utilisé pour vérifier ces
+    formules, et on remplace le texte par la valeur numérique calculée."""
+    exercice = exercice or get_current_exercice(conn)
+    exercice_n1 = str(int(exercice) - 1)
+    balance_n = compute_balance(conn, only_with_movement=False, exercice=exercice)
+    try:
+        balance_n1 = compute_balance(conn, only_with_movement=False, exercice=exercice_n1)
+    except Exception:
+        balance_n1 = []
+
+    with open(BILAN_TEMPLATE_PATH, encoding="utf-8") as f:
+        content = f.read()
+
+    named_refs = {}
+    pattern = re.compile(r'<Data ss:Type="String"[^>]*>(=[^<]*)</Data>')
+
+    def repl(m):
+        raw = m.group(1)
+        unescaped = (raw.replace("&quot;", '"').replace("&amp;", "&")
+                     .replace("&lt;", "<").replace("&gt;", ">").replace("&apos;", "'"))
+        value, defined_name = _eval_bilan_formula(unescaped, balance_n, balance_n1, named_refs)
+        if defined_name:
+            named_refs[defined_name] = value
+        return f'<Data ss:Type="Number">{value:.4f}</Data>'
+
+    new_content = pattern.sub(repl, content)
+    new_content = re.sub(
+        r'(<Data ss:Type="String">)Edition du : [^<]*(</Data>)',
+        rf"\g<1>Edition du : 01/01/{exercice} au 31/12/{exercice}   (comparatif exercice {exercice_n1})\g<2>",
+        new_content, count=1,
+    )
+
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(new_content)
+    return path
 
 
 def export_bilan_detaille_xlsx(conn, path, exercice=None):
