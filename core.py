@@ -4590,7 +4590,11 @@ def compute_tft_indirect(conn, exercice=None):
     prelevements_capital = -capital_debit
     subv_debit, subv_credit = _debit_classe(["14"])
     subventions_recues = subv_credit
-    dividendes_verses = 0.0  # non isolé dans le plan comptable par défaut
+    # Dividendes distribués durant l'exercice (compte 465, Associés — dividendes
+    # à payer) — tiré du rapport de référence (=CtaCptSolde("465*")). Un
+    # décaissement de dividendes DÉBITE ce compte (le réglant), donc son
+    # solde de la période (débit-crédit) représente le montant décaissé.
+    dividendes_verses = -_sum_range(balance, [(465000, 465999)], classe="4")
     flux_capitaux_propres = augmentation_capital + subventions_recues + prelevements_capital + dividendes_verses
 
     emprunts_debit, emprunts_credit = _debit_classe(["16", "17"])
@@ -4640,7 +4644,14 @@ def compute_situation_financiere(conn, exercice=None):
     analyse Fonds de Roulement / Besoin en Fonds de Roulement / Trésorerie
     Nette. Entièrement recalculé à partir de compute_bilan(),
     compute_liasse_resultat() et compute_tft_indirect() — donc toujours
-    cohérent avec la Balance, le Bilan et le TFT."""
+    cohérent avec la Balance, le Bilan et le TFT.
+
+    Ressources stables, Fonds de roulement et Besoin en fonds de roulement
+    sont calculés à partir de sommes EXHAUSTIVES par classe/racine (jamais
+    de liste de comptes partielle) — voir compute_bilan() et le principe
+    déjà appliqué pour la Balance/le Bilan : un compte de classe 1 (ou de
+    racine 40-49) hors des catégories usuelles ne doit jamais disparaître
+    silencieusement du calcul."""
     exercice = exercice or get_current_exercice(conn)
     balance = compute_balance(conn, only_with_movement=False, exercice=exercice)
     b = compute_bilan(conn, exercice=exercice)
@@ -4653,15 +4664,28 @@ def compute_situation_financiere(conn, exercice=None):
     dividendes_verses = tft["dividendes_verses"]
     autofinancement = cafg + dividendes_verses
 
-    capitaux_propres_ressources = (b["passif"]["Capital et réserves"] + b["passif"]["Subventions d'investissement"]
-                                    + b["passif"]["Provisions pour risques et charges"] + resultat_net)
-    dettes_financieres = b["passif"]["Dettes financières"]
-    ressources_stables = capitaux_propres_ressources + dettes_financieres
+    # ---- Ressources stables : classe 1 ENTIÈRE + résultat net (exhaustif,
+    # garanti complet — comme le Bilan). Détail Capitaux propres (racines
+    # 10-15) / Dettes financières (racines 16-17) / Autres (18-19 et tout
+    # reliquat) affiché à titre indicatif, mais qui somme TOUJOURS
+    # exactement au total (comme pour le Bilan détaillé).
+    ressources_durables_total = -_sum_class(balance, "1")
+    capitaux_propres_10_15 = -sum(b2["solde_cloture"] for b2 in balance
+                                   if b2["classe"] == "1" and b2["code"][:2] in ("10", "11", "12", "13", "14", "15"))
+    dettes_financieres_16_17 = -sum(b2["solde_cloture"] for b2 in balance
+                                     if b2["classe"] == "1" and b2["code"][:2] in ("16", "17"))
+    autres_ressources_18_19 = ressources_durables_total - capitaux_propres_10_15 - dettes_financieres_16_17
+
+    capitaux_propres_ressources = capitaux_propres_10_15 + resultat_net + autres_ressources_18_19
+    dettes_financieres = dettes_financieres_16_17
+    ressources_stables = ressources_durables_total + resultat_net
     actifs_immobilises = b["actif"]["Immobilisations nettes"]
     fonds_de_roulement = ressources_stables - actifs_immobilises
 
-    racines_exploit = ["42", "43", "44", "45", "46"]
-
+    # ---- BFR exploitation : classe 3 (stocks) + racines 40 à 46, CHAQUE
+    # COMPTE selon le signe de son propre solde — même méthode que le Bilan
+    # (plus de racine 40/41 traitée « en bloc »), conforme au rapport de
+    # référence (CtaCptSoldeDébit/Crédit("3*","46*")).
     def _somme_racine(racine, sign=None):
         total = 0.0
         for x in balance:
@@ -4675,14 +4699,11 @@ def compute_situation_financiere(conn, exercice=None):
             total += v
         return total
 
-    creances_exploit = _somme_racine(RACINE_CLIENTS)
-    for r in racines_exploit:
-        creances_exploit += _somme_racine(r, sign="pos")
+    racines_exploit = [str(r) for r in range(40, 47)]
+    creances_exploit = sum(_somme_racine(r, sign="pos") for r in racines_exploit)
     actif_circulant_exploitation = b["actif"]["Stocks"] + creances_exploit
 
-    dettes_exploit = -_somme_racine(RACINE_FOURNISSEURS)
-    for r in racines_exploit:
-        dettes_exploit += -_somme_racine(r, sign="neg")
+    dettes_exploit = sum(-_somme_racine(r, sign="neg") for r in racines_exploit)
     passif_circulant_exploitation = dettes_exploit
 
     besoin_financement_exploitation = actif_circulant_exploitation - passif_circulant_exploitation
@@ -4700,10 +4721,10 @@ def compute_situation_financiere(conn, exercice=None):
     treso_reelle = treso_actif - treso_passif
     controle_ecart = tresorerie_nette - treso_reelle
 
-    rentabilite_economique = (resultat_exploitation / capitaux_propres_ressources * 100
-                               ) if capitaux_propres_ressources else 0.0
-    rentabilite_financiere = (resultat_net / capitaux_propres_ressources * 100
-                               ) if capitaux_propres_ressources else 0.0
+    rentabilite_economique = (resultat_exploitation / ressources_stables * 100
+                               ) if ressources_stables else 0.0
+    rentabilite_financiere = (resultat_net / ressources_stables * 100
+                               ) if ressources_stables else 0.0
 
     endettement_financier_brut = dettes_financieres + treso_passif
     endettement_financier_net = endettement_financier_brut - treso_actif

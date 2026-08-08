@@ -1876,3 +1876,44 @@ Testé : un compte de stock 380000 (hors ancienne liste), une avance sur
 immobilisation (compte 251000), et un apport en capital sur compte 101
 (racine 10 entière) sont tous correctement pris en compte — écart de
 contrôle du TFT resté à 0, Bilan resté équilibré.
+
+### Situation financière — corrections majeures à partir des formules du système de référence
+
+**Fourni par l'utilisateur** : les formules exactes de la Situation
+financière (FR-BFR-TN) de son ancien système. Deux **vrais bugs** trouvés
+en les comparant à mon implémentation — les mêmes catégories de bugs déjà
+corrigées ailleurs dans l'application, mais qui n'avaient jamais été
+propagées à cet écran :
+
+1. **Bug corrigé — Ressources stables tronquées** :
+   `capitaux_propres_ressources` sommait uniquement les catégories
+   curées du Bilan simple (`COMPTES_CAPITAL=["101","118","121"]`,
+   `COMPTE_SUBVENTIONS="141"`, `COMPTE_PROVISIONS="191"`), en oubliant la
+   ligne « Autres postes de ressources durables » qui absorbe tout le
+   reste — tout compte de classe 1 hors de ces 3 codes précis (soit la
+   quasi-totalité d'un vrai plan comptable de 1591 comptes) disparaissait
+   silencieusement du Fonds de Roulement, de la Rentabilité économique et
+   financière. Corrigé : somme exhaustive de la classe 1 entière (comme
+   `CtaCptSolde("1*")` dans le rapport de référence), avec un détail
+   indicatif Capitaux propres (racines 10-15) / Dettes financières
+   (racines 16-17) / Autres (18-19) qui somme toujours exactement au
+   total.
+2. **Bug corrigé — BFR exploitation avec racines 40/41 « en bloc »** :
+   le calcul utilisait encore l'ancienne convention (racine 41 toujours
+   en créances, racine 40 toujours en dettes, quel que soit le signe du
+   compte) — la même erreur déjà corrigée dans le Bilan il y a plusieurs
+   sessions (un client créditeur y restait affiché, à tort, dans les
+   créances). Corrigé : racines 40 à 46 classées compte par compte selon
+   le signe de leur solde, comme le Bilan et comme
+   `CtaCptSoldeDébit/Crédit("3*","46*")` dans le rapport de référence.
+3. **Dividendes versés désormais calculés** (compte 465, Associés —
+   dividendes à payer, `=CtaCptSolde("465*")` dans la référence) au lieu
+   d'être toujours à 0 (non isolé auparavant).
+
+Testé avec un scénario ciblant précisément ces deux bugs : un compte de
+classe 1 hors des anciennes listes curées (105000, +5 000 000) apparaît
+maintenant bien dans les ressources stables ; un client au solde créditeur
+(419100, avoir de 300 000) bascule correctement en passif circulant
+d'exploitation au lieu de rester en créances — le contrôle de trésorerie
+(Trésorerie nette calculée vs réelle) tombe exactement à 0, Bilan resté
+équilibré.
