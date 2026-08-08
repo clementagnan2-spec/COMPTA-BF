@@ -2972,13 +2972,24 @@ def _detail_prefix2(balance, classe, prefix2, sign=None):
 
 
 IMMO_CATEGORIES = [
-    ("Charges immobilisées, brevets, logiciels et licences", [RANGES_INCORP["AE"], RANGES_INCORP["AF"],
-                                                                RANGES_INCORP["AG"], RANGES_INCORP["AH"]]),
-    ("Terrains", RANGES_CORP["AJ"]),
-    ("Bâtiments", [(230000, 233999)]),
-    ("Installations, agencements et aménagements", [(234000, 239999)]),
-    ("Matériel, mobilier et actifs biologiques", RANGES_CORP["AM"]),
-    ("Matériel de transport", RANGES_CORP["AN"]),
+    # (libellé, plages de comptes BRUT, plages de comptes AMORTISSEMENT/PROVISION)
+    # — tirées directement des formules du rapport de référence de l'utilisateur
+    # (CtaCptSolde sur les mêmes plages de comptes 28*/29*) : plus de répartition
+    # proportionnelle indicative, l'amortissement de chaque catégorie est EXACT.
+    ("Charges immobilisées (frais d'établissement, charges à répartir)",
+     [(201000, 209999)], [(280000, 280999), (290000, 290999)]),
+    ("Brevets, licences, logiciels et immobilisations incorporelles",
+     [(210000, 219999)], [(281000, 281999), (291000, 291999)]),
+    ("Terrains", [(220000, 229999)], [(282000, 282999), (292000, 292999)]),
+    ("Bâtiments", [(231000, 233999)], [(283100, 283399), (293100, 293399)]),
+    ("Installations, agencements et aménagements",
+     [(234000, 239999)], [(283400, 283999), (293400, 293999)]),
+    ("Matériel", [(240000, 244999)], [(284000, 284499), (294000, 294499)]),
+    ("Matériel de transport", [(245000, 245999)], [(284500, 284999), (294500, 294999)]),
+    ("Avances et acomptes versés sur immobilisations",
+     [(250000, 259999)], [(285000, 285999), (295000, 295999)]),
+    ("Immobilisations financières (titres, prêts, dépôts...)",
+     [(260000, 279999)], [(286000, 286999), (296000, 296999)]),
 ]
 
 
@@ -3001,23 +3012,24 @@ def compute_bilan_detaille(conn, exercice=None):
     total_brut = sum(b["solde_cloture"] for b in balance if b["classe"] == "2" and int(b["code"]) < 280000)
     total_amort = sum(b["solde_cloture"] for b in balance if b["classe"] == "2" and int(b["code"]) >= 280000)
 
-    cat_brut = {}
-    for label, ranges in IMMO_CATEGORIES:
-        cat_brut[label] = _sum_range(balance, ranges, classe="2")
-    cat_brut["Avances et acomptes versés sur immobilisations"] = _sum_range(balance, [RANGE_AVANCES_IMMO])
-    cat_brut["Immobilisations financières (titres, prêts, dépôts...)"] = (
-        _sum_range(balance, [RANGE_TITRES_PARTICIPATION]) + _sum_range(balance, [RANGE_AUTRES_IMMO_FIN]))
-    autres_immo = total_brut - sum(cat_brut.values())
-    if abs(autres_immo) >= 1:
-        cat_brut["Autres immobilisations non classées"] = autres_immo
-
-    somme_brut_categories = sum(cat_brut.values()) or 1.0  # évite une division par zéro
     immobilisations = []
-    for label, brut in cat_brut.items():
-        if not brut:
-            continue
-        amort = total_amort * (brut / somme_brut_categories)  # répartition proportionnelle (indicatif)
-        immobilisations.append({"label": label, "brut": brut, "amort": amort, "net": brut + amort})
+    somme_brut_categories = somme_amort_categories = 0.0
+    for label, brut_ranges, amort_ranges in IMMO_CATEGORIES:
+        brut = _sum_range(balance, brut_ranges, classe="2")
+        amort = _sum_range(balance, amort_ranges, classe="2")
+        somme_brut_categories += brut
+        somme_amort_categories += amort
+        if brut or amort:
+            immobilisations.append({"label": label, "brut": brut, "amort": amort, "net": brut + amort})
+
+    # Reliquat (comptes hors des plages ci-dessus, ex. racine 200 isolée) : une
+    # seule ligne « Autres », brut ET amortissement exacts par différence —
+    # garantit que le détail somme TOUJOURS exactement au total (immo_nettes).
+    autres_brut = total_brut - somme_brut_categories
+    autres_amort = total_amort - somme_amort_categories
+    if abs(autres_brut) >= 1 or abs(autres_amort) >= 1:
+        immobilisations.append({"label": "Autres immobilisations non classées",
+                                 "brut": autres_brut, "amort": autres_amort, "net": autres_brut + autres_amort})
     immobilisations.sort(key=lambda l: -abs(l["brut"]))
 
     # ---- ACTIF : Stocks (classe 3, groupée par préfixe à 2 chiffres) ----

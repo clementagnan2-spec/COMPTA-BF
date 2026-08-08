@@ -1787,3 +1787,45 @@ au nouveau circuit :
 Testé : date de saisie postérieure à la date de paiement attendu → retard
 correctement calculé à 19 jours ; circuit complet (Bon de commande →
 Bordereau + Règlement) toujours fonctionnel, Bilan resté équilibré.
+
+### Amortissements exacts par catégorie (à partir des formules du système de référence)
+
+**Fourni par l'utilisateur** : les formules exactes (`CtaCptSolde`,
+`CtaCptSoldeDébit`, `CtaCptSoldeCrédit`) de son ancien système de rapport
+financier, avec les plages de comptes précises utilisées pour chaque
+ligne du Bilan.
+
+**Vérifié — déjà conforme** : la classification Actif/Passif par racine
+(compte par compte, débiteur → Actif / créditeur → Passif pour les
+racines 40 à 49), le regroupement des capitaux propres par racine
+classe 1, et le calcul du total Actif/Passif à partir de la Balance
+correspondent déjà exactement à la logique de ces formules.
+
+**Corrigé — répartition proportionnelle remplacée par les vraies plages
+de comptes** : `IMMO_CATEGORIES` utilisait jusqu'ici une répartition
+*proportionnelle* de l'amortissement entre catégories (faute de connaître
+la correspondance exacte compte-immo ↔ compte-amortissement). Les
+formules fournies donnent cette correspondance exacte (ex. Bâtiments
+231-233 ↔ amortissements 2831*-2833*/2931*-2933* ; Matériel 240-244 ↔
+2840*-2844*/2940*-2944*...) — désormais utilisée telle quelle pour
+calculer un amortissement **exact** par catégorie, plus indicatif. Une
+ligne « Autres immobilisations non classées » absorbe automatiquement
+tout compte hors de ces plages précises (garantit que le détail somme
+toujours exactement au total, sans rien perdre).
+
+**Écart volontairement conservé avec le système de référence** : leur
+formule de résultat (`=-CtaCptSolde("7*")-CtaCptSolde("6*")`) ne couvre
+que les classes 6 et 7, et leur ligne « Prov fin + banq créditrices *19* »
+n'est, dans leurs formules, pas négée contrairement à toutes les autres
+lignes du Passif (`=CtaCptSolde("19*")` au lieu de `-CtaCptSolde("19*")`)
+— ce qui, si des comptes de classe 8 ou 19 sont utilisés, désaligne leur
+propre TOTAL I. `compute_resultat_net_complet()` de cette application
+inclut délibérément la classe 8 et négie systématiquement la classe 1
+(déjà garanti équilibré, voir la section plus haut sur le diagnostic
+d'écart) — pour ne pas réintroduire le bug d'origine.
+
+Testé : compte 231100 (10 000 000, amort 283100 = -3 000 000) → Bâtiments
+net 7 000 000 exact ; compte 244100 (5 000 000, amort 284100 = -1 000 000)
+→ Matériel net 4 000 000 exact ; un compte hors plage (200000, racine
+isolée) bascule proprement dans « Autres immobilisations non classées »
+sans casser l'écart (resté à 0 dans tous les cas).
