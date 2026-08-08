@@ -1726,3 +1726,40 @@ comme demandé.
 Testé de bout en bout, y compris une réception partielle (200 sacs
 commandés, 180 livrés) : le circuit complet s'exécute sans générer une
 seule écriture comptable, à aucune étape.
+
+### Sous-menu Règlements — la comptabilisation du circuit interne
+
+**Demande** : ajouter « Règlements » dans ENGAGEMENTS-PROJETS. La
+validation d'un Bon de commande (circuit interne) doit aussi le ventiler
+dans ce sous-menu, ET là, contrairement aux 3 étapes précédentes, générer
+la vraie saisie comptable — avec compte de charge, code analytique et
+retenue fiscale à choisir par ligne.
+
+**Réalisé** :
+- `valider_ep_bon_commande()` crée maintenant, EN PLUS du Bordereau de
+  livraison, un **Règlement en brouillon** (lignes recopiées du bon de
+  commande — libellé, quantité, prix unitaire — mais **sans compte de
+  charge ni code analytique**, à choisir dans ce nouvel écran).
+- **`core.valider_reglement()`** (nouveau) : comptabilise réellement le
+  règlement — débit de chaque compte de charge choisi (avec son code
+  analytique), crédit fournisseur (net à payer), crédit retenue fiscale si
+  applicable, plus entrée de stock automatique pour les lignes liées à un
+  compte de marchandises/matières premières — même principe que
+  `valider_facture_achat()`. **Refuse explicitement la validation tant
+  qu'une ligne n'a pas de compte de charge choisi**, avec le détail des
+  lignes manquantes dans le message d'erreur.
+- **`core.devalider_reglement()`** (correction) : symétrique aux autres
+  modules, retire les écritures et repasse en brouillon.
+- **Écran Règlements** (liste + double-clic pour ouvrir en grand) : pour
+  chaque ligne, sélection d'un **compte de charge** (classe 6, recherche
+  filtrée) et d'un **code analytique**, plus une section **retenue
+  fiscale** avec préréglages ADMIN (taux + compte, comme Factures frs).
+  Boutons Enregistrer / Valider (comptabiliser) / Corriger (repasser en
+  brouillon).
+
+Testé de bout en bout : circuit complet Expression de besoin → Bon de
+commande → Règlement, refus de validation tant que le compte de charge
+manque, comptabilisation correcte une fois complété (débit charge avec
+code analytique, crédit fournisseur, crédit retenue, entrée de stock
+automatique), correction puis recomptabilisation — Bilan resté équilibré
+à chaque étape.

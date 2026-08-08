@@ -599,6 +599,32 @@ def init_db(conn):
         )
     """)
     conn.execute("""
+        CREATE TABLE IF NOT EXISTS reglements (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            numero TEXT NOT NULL,
+            date_reglement TEXT NOT NULL,
+            bon_commande_id INTEGER,
+            fournisseur_code TEXT,
+            entete TEXT,
+            pied_page TEXT,
+            retenue_taux REAL NOT NULL DEFAULT 0,
+            retenue_compte TEXT NOT NULL DEFAULT '447800',
+            statut TEXT NOT NULL DEFAULT 'brouillon',
+            piece TEXT
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS reglement_lignes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            reglement_id INTEGER NOT NULL,
+            compte_charge TEXT,
+            libelle TEXT NOT NULL,
+            quantite REAL NOT NULL DEFAULT 0,
+            prix_unitaire REAL NOT NULL DEFAULT 0,
+            analytic_code TEXT
+        )
+    """)
+    conn.execute("""
         CREATE TABLE IF NOT EXISTS facture_achat_lignes (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             facture_id INTEGER NOT NULL,
@@ -5405,8 +5431,12 @@ def valider_ep_bon_commande(conn, bon_id):
     """Fait basculer le Bon de commande en Bordereau de livraison (nouveau
     document, même numéro, lignes recopiées — quantité livrée initialisée à
     la quantité commandée, modifiable ensuite) — AUCUNE écriture comptable.
-    Le bon d'origine passe en statut « validee » (verrouillé). Retourne
-    l'ID du nouveau bordereau."""
+    Crée EN MÊME TEMPS un Règlement en brouillon (menu ENGAGEMENTS-PROJETS >
+    Règlements, lignes recopiées SANS compte de charge ni code analytique —
+    à choisir dans cet écran avant de comptabiliser) : c'est cet écran, et
+    lui seul, qui génère les écritures comptables une fois complété et
+    validé. Le bon d'origine passe en statut « validee » (verrouillé).
+    Retourne (bordereau_id, reglement_id)."""
     bon = get_ep_bon_commande(conn, bon_id)
     if not bon:
         raise ValueError("Bon de commande introuvable.")
@@ -5419,8 +5449,14 @@ def valider_ep_bon_commande(conn, bon_id):
                                                entete=bon["entete"], pied_page=bon["pied_page"])
     for l in lignes:
         add_ligne_bordereau_livraison(conn, bordereau_id, l["libelle"], l["quantite"], l["quantite"], unite=l["unite"])
+    reglement_id = create_reglement(conn, bon["numero"], bon["date_commande"], bon_commande_id=bon_id,
+                                     fournisseur_code=bon["fournisseur_code"] or "",
+                                     entete=bon["entete"], pied_page=bon["pied_page"])
+    for l in lignes:
+        add_ligne_reglement(conn, reglement_id, compte_charge=None, libelle=l["libelle"],
+                             quantite=l["quantite"], prix_unitaire=l["prix_unitaire"])
     update_ep_bon_commande(conn, bon_id, statut="validee")
-    return bordereau_id
+    return bordereau_id, reglement_id
 
 
 # ---- Bordereau de livraison ----
@@ -5495,6 +5531,194 @@ def valider_bordereau_livraison(conn, bordereau_id):
     if bordereau["statut"] == "validee":
         raise ValueError("Ce bordereau est déjà validé.")
     update_bordereau_livraison(conn, bordereau_id, statut="validee")
+
+
+# ---- Règlements (menu ENGAGEMENTS-PROJETS) ----
+# Créés automatiquement à la validation d'un Bon de commande interne (lignes
+# recopiées, SANS compte de charge ni code analytique — à choisir ici) ou
+# directement. C'EST CET ÉCRAN, ET LUI SEUL, qui comptabilise le circuit
+# interne : une fois chaque ligne rattachée à un compte de charge (classe 6),
+# avec code analytique et retenue fiscale optionnels, sa validation envoie
+# une écriture équilibrée en Saisie — même principe que valider_facture_achat.
+def create_reglement(conn, numero, date_reglement, bon_commande_id=None, fournisseur_code="",
+                      entete="", pied_page="", retenue_taux=None, retenue_compte=None):
+    if retenue_taux is None:
+        retenue_taux = get_setting(conn, "retenue_taux_defaut", RETENUE_TAUX_DEFAUT)
+    if retenue_compte is None:
+        retenue_compte = get_text_setting(conn, "retenue_compte_defaut", COMPTE_RETENUE_DEFAUT)
+    cur = conn.execute(
+        """INSERT INTO reglements (numero, date_reglement, bon_commande_id, fournisseur_code, entete,
+                                    pied_page, retenue_taux, retenue_compte, statut)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'brouillon')""",
+        (numero, date_reglement, bon_commande_id, fournisseur_code, entete, pied_page, retenue_taux, retenue_compte),
+    )
+    conn.commit()
+    return cur.lastrowid
+
+
+def update_reglement(conn, reglement_id, **fields):
+    if not fields:
+        return
+    cols = ", ".join(f"{k} = ?" for k in fields)
+    conn.execute(f"UPDATE reglements SET {cols} WHERE id = ?", (*fields.values(), reglement_id))
+    conn.commit()
+
+
+def delete_reglement(conn, reglement_id):
+    reglement = get_reglement(conn, reglement_id)
+    if reglement and reglement["statut"] == "validee":
+        raise ValueError("Impossible de supprimer un règlement déjà validé — dévalidez-le d'abord.")
+    conn.execute("DELETE FROM reglement_lignes WHERE reglement_id = ?", (reglement_id,))
+    conn.execute("DELETE FROM reglements WHERE id = ?", (reglement_id,))
+    conn.commit()
+
+
+def get_reglement(conn, reglement_id):
+    row = conn.execute("SELECT * FROM reglements WHERE id = ?", (reglement_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def list_reglements(conn):
+    rows = conn.execute(
+        """SELECT r.*, COALESCE(f.raison_sociale, r.fournisseur_code, '') AS raison_sociale
+           FROM reglements r LEFT JOIN fournisseurs f ON f.code = r.fournisseur_code
+           ORDER BY r.date_reglement DESC, r.id DESC"""
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def add_ligne_reglement(conn, reglement_id, compte_charge, libelle, quantite, prix_unitaire=0, analytic_code=None):
+    conn.execute(
+        """INSERT INTO reglement_lignes (reglement_id, compte_charge, libelle, quantite, prix_unitaire,
+                                          analytic_code)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        (reglement_id, compte_charge or None, libelle, quantite or 0, prix_unitaire or 0, analytic_code or None),
+    )
+    conn.commit()
+
+
+def update_ligne_reglement(conn, ligne_id, **fields):
+    if not fields:
+        return
+    cols = ", ".join(f"{k} = ?" for k in fields)
+    conn.execute(f"UPDATE reglement_lignes SET {cols} WHERE id = ?", (*fields.values(), ligne_id))
+    conn.commit()
+
+
+def delete_ligne_reglement(conn, ligne_id):
+    conn.execute("DELETE FROM reglement_lignes WHERE id = ?", (ligne_id,))
+    conn.commit()
+
+
+def list_lignes_reglement(conn, reglement_id):
+    rows = conn.execute(
+        "SELECT * FROM reglement_lignes WHERE reglement_id = ? ORDER BY id", (reglement_id,)
+    ).fetchall()
+    result = []
+    for r in rows:
+        d = dict(r)
+        d["montant_ht"] = (d["quantite"] or 0) * (d["prix_unitaire"] or 0)
+        type_stock, stock_compte, contre_compte = (
+            _match_stock_mapping(d["compte_charge"], ACHAT_STOCK_MAPPING) if d["compte_charge"] else (None, None, None)
+        ) or (None, None, None)
+        d["type_stock"] = type_stock
+        result.append(d)
+    return result
+
+
+def compute_reglement_totals(conn, reglement_id):
+    reglement = get_reglement(conn, reglement_id)
+    lignes = list_lignes_reglement(conn, reglement_id)
+    total_ht = sum(l["montant_ht"] for l in lignes)
+    retenue_taux = reglement["retenue_taux"] if reglement else 0
+    retenue_montant = total_ht * (retenue_taux or 0) / 100
+    net_a_payer = total_ht - retenue_montant
+    return {"total_ht": total_ht, "retenue_taux": retenue_taux, "retenue_montant": retenue_montant,
+            "net_a_payer": net_a_payer}
+
+
+def valider_reglement(conn, reglement_id, exercice=None):
+    """Comptabilise le règlement : une écriture équilibrée (Débit comptes de
+    charge choisis par ligne, avec code analytique / Crédit fournisseur +
+    retenue fiscale), plus une entrée de stock automatique pour chaque
+    ligne liée à un compte de marchandises (31) ou de matières premières
+    (32) — même principe que valider_facture_achat(). Chaque ligne DOIT
+    avoir un compte de charge choisi, sous peine de refus explicite.
+    Retourne la liste des avertissements."""
+    reglement = get_reglement(conn, reglement_id)
+    if not reglement:
+        raise ValueError("Règlement introuvable.")
+    if reglement["statut"] == "validee":
+        raise ValueError("Ce règlement est déjà validé.")
+    lignes = list_lignes_reglement(conn, reglement_id)
+    if not lignes:
+        raise ValueError("Le règlement ne contient aucune ligne.")
+    sans_compte = [l["libelle"] for l in lignes if not l["compte_charge"]]
+    if sans_compte:
+        raise ValueError(
+            "Chaque ligne doit avoir un compte de charge choisi avant validation — manquant pour : "
+            + ", ".join(sans_compte)
+        )
+    if not reglement["fournisseur_code"] or not fournisseur_exists(conn, reglement["fournisseur_code"]):
+        raise ValueError(f"Le fournisseur « {reglement['fournisseur_code']} » n'existe pas ou n'est pas renseigné.")
+
+    totals = compute_reglement_totals(conn, reglement_id)
+    date_str = reglement["date_reglement"]
+    piece = reglement["numero"]
+
+    for l in lignes:
+        add_entry(conn, date_str, piece, "AC", l["compte_charge"], "", l["libelle"],
+                  l["montant_ht"], 0, analytic_code=l.get("analytic_code") or "",
+                  fournisseur_code=reglement["fournisseur_code"], quantite=l["quantite"])
+
+    fournisseur = get_fournisseur(conn, reglement["fournisseur_code"])
+    tiers_label = fournisseur["raison_sociale"] if fournisseur else reglement["fournisseur_code"]
+    add_entry(conn, date_str, piece, "AC", "401000", tiers_label,
+              reglement["numero"], 0, totals["net_a_payer"], fournisseur_code=reglement["fournisseur_code"])
+
+    if totals["retenue_montant"]:
+        add_entry(conn, date_str, piece, "AC", reglement["retenue_compte"], "",
+                  f"Retenue {totals['retenue_taux']:g}% règlement {piece}", 0, totals["retenue_montant"])
+
+    for l in lignes:
+        if not l["type_stock"]:
+            continue
+        _, stock_compte, contre_compte = _match_stock_mapping(l["compte_charge"], ACHAT_STOCK_MAPPING)
+        montant_entree = l["montant_ht"]
+        if montant_entree <= 0:
+            continue
+        add_entry(conn, date_str, piece, "AC", stock_compte, "", f"Entrée stock — {l['libelle']}",
+                  montant_entree, 0, quantite=l["quantite"])
+        add_entry(conn, date_str, piece, "AC", contre_compte, "", f"Entrée stock — {l['libelle']}",
+                  0, montant_entree)
+
+    update_reglement(conn, reglement_id, statut="validee", piece=piece)
+    return []
+
+
+def devalider_reglement(conn, reglement_id):
+    """Repasse un règlement VALIDÉ en brouillon modifiable, en cas d'erreur
+    sur les chiffres constatée après validation : supprime toutes les
+    écritures comptables générées par sa validation (piece=numéro,
+    journal='AC') puis remet son statut à « brouillon ». Refuse si
+    l'exercice comptable est clôturé. Retourne le nombre d'écritures
+    supprimées."""
+    reglement = get_reglement(conn, reglement_id)
+    if not reglement:
+        raise ValueError("Règlement introuvable.")
+    if reglement["statut"] != "validee":
+        raise ValueError("Ce règlement n'est pas validé — rien à corriger.")
+    exercice_reglement = _exercice_of_date(reglement["date_reglement"])
+    if is_exercice_cloture(conn, exercice_reglement):
+        raise ValueError(f"L'exercice {exercice_reglement} de ce règlement est clôturé : impossible de le corriger.")
+    ids = [r["id"] for r in conn.execute(
+        "SELECT id FROM entries WHERE piece = ? AND journal = 'AC'", (reglement["numero"],)
+    ).fetchall()]
+    deleted, errors = delete_entries_bulk(conn, ids)
+    if errors:
+        raise ValueError("Impossible de corriger ce règlement : " + " ; ".join(errors))
+    update_reglement(conn, reglement_id, statut="brouillon")
+    return deleted
 
 
 if __name__ == "__main__":
