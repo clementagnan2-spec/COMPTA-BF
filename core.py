@@ -564,7 +564,10 @@ def init_db(conn):
             fournisseur_code TEXT,
             entete TEXT,
             pied_page TEXT,
-            statut TEXT NOT NULL DEFAULT 'brouillon'
+            statut TEXT NOT NULL DEFAULT 'brouillon',
+            date_facture TEXT,
+            date_saisie TEXT,
+            date_paiement_attendu TEXT
         )
     """)
     conn.execute("""
@@ -684,6 +687,10 @@ def _migrate(conn):
     fv_cols = [r["name"] for r in conn.execute("PRAGMA table_info(factures_vente)")]
     if fv_cols and "tva_compte" not in fv_cols:
         conn.execute("ALTER TABLE factures_vente ADD COLUMN tva_compte TEXT")
+    bc_cols = [r["name"] for r in conn.execute("PRAGMA table_info(ep_bons_commande)")]
+    for col in ("date_facture", "date_saisie", "date_paiement_attendu"):
+        if bc_cols and col not in bc_cols:
+            conn.execute(f"ALTER TABLE ep_bons_commande ADD COLUMN {col} TEXT")
 
     # Migre l'ancien mécanisme "stock_initial_<compte>" (settings) vers opening_balances
     default_exercice = str(datetime.today().year)
@@ -5402,8 +5409,34 @@ def get_ep_bon_commande(conn, bon_id):
 
 
 def list_ep_bons_commande(conn):
-    rows = conn.execute("SELECT * FROM ep_bons_commande ORDER BY date_commande DESC, id DESC").fetchall()
-    return [dict(r) for r in rows]
+    """Liste des bons de commande, avec calcul du retard de paiement : basé
+    sur la date de saisie une fois renseignée (paiement enregistré), sinon
+    sur la date du jour tant que la date de saisie est vide (retard « en
+    cours »), comparée à la date de paiement attendu — même principe que
+    list_factures()/list_commandes() (Recouvrement/Achats)."""
+    rows = [dict(r) for r in conn.execute(
+        "SELECT * FROM ep_bons_commande ORDER BY date_commande DESC, id DESC"
+    ).fetchall()]
+    today = date.today().strftime("%Y-%m-%d")
+    for r in rows:
+        if not r.get("date_paiement_attendu"):
+            r["statut_paiement"] = ""
+            r["depassement_paiement"] = False
+            continue
+        if r.get("date_saisie"):
+            retard = (datetime.strptime(r["date_saisie"], "%Y-%m-%d")
+                      - datetime.strptime(r["date_paiement_attendu"], "%Y-%m-%d")).days
+            r["statut_paiement"] = f"Saisi (retard {retard} j)" if retard > 0 else "Saisi à temps"
+            r["depassement_paiement"] = retard > 0
+        elif today > r["date_paiement_attendu"]:
+            retard = (datetime.strptime(today, "%Y-%m-%d")
+                      - datetime.strptime(r["date_paiement_attendu"], "%Y-%m-%d")).days
+            r["statut_paiement"] = f"EN RETARD ({retard} j)"
+            r["depassement_paiement"] = True
+        else:
+            r["statut_paiement"] = "En attente"
+            r["depassement_paiement"] = False
+    return rows
 
 
 def add_ligne_ep_bon_commande(conn, bon_id, libelle, quantite, prix_unitaire=0, unite=None):

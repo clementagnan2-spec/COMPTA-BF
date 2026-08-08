@@ -1763,3 +1763,27 @@ manque, comptabilisation correcte une fois complété (débit charge avec
 code analytique, crédit fournisseur, crédit retenue, entrée de stock
 automatique), correction puis recomptabilisation — Bilan resté équilibré
 à chaque étape.
+
+### Suivi des retards de paiement sur le Bon de commande (circuit interne)
+
+**Demande** : à partir du Bon de commande, ajouter la date de facture, la
+date de saisie, la date de paiement attendu, et le retard de paiement
+calculé par rapport à la date de saisie.
+
+**Réalisé** — même principe déjà utilisé pour Achats/Recouvrement, appliqué
+au nouveau circuit :
+- 3 nouvelles colonnes sur `ep_bons_commande` : `date_facture`,
+  `date_saisie`, `date_paiement_attendu` (migration incluse).
+- **`list_ep_bons_commande()`** calcule désormais le statut de paiement :
+  tant que la date de saisie n'est pas renseignée, retard « en cours »
+  comparé à aujourd'hui ; une fois la date de saisie renseignée, le retard
+  se fige définitivement (date de saisie − date de paiement attendu).
+- **Écran Bon de commande** : 3 nouveaux champs dans le détail (double-clic),
+  et une ligne de statut « Paiement : ... » colorée en rouge si en retard,
+  vert sinon. La liste affiche aussi les colonnes « Paiement attendu » et
+  « Statut paiement », avec les lignes en retard mises en évidence en
+  rouge gras.
+
+Testé : date de saisie postérieure à la date de paiement attendu → retard
+correctement calculé à 19 jours ; circuit complet (Bon de commande →
+Bordereau + Règlement) toujours fonctionnel, Bilan resté équilibré.

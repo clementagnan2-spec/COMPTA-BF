@@ -4844,11 +4844,26 @@ class BonCommandeEPDialog(tk.Toplevel):
         self.fournisseur_combo.bind("<KeyRelease>", self._on_fournisseur_keyrelease)
         self.fournisseur_combo.bind("<Button-1>", lambda e: e.widget.event_generate("<Down>"))
         self._refresh_fournisseur_values()
+
+        ttk.Label(header, text="Date de facture (JJ/MM/AAAA) :").grid(row=1, column=0, sticky="w", padx=4, pady=(6, 0))
+        self.date_facture_var = tk.StringVar(value=core.to_display_date(bon.get("date_facture") or ""))
+        ttk.Entry(header, textvariable=self.date_facture_var, width=14).grid(row=1, column=1, padx=4, pady=(6, 0), sticky="w")
+        ttk.Label(header, text="Date de saisie (JJ/MM/AAAA) :").grid(row=1, column=2, sticky="w", padx=(12, 4), pady=(6, 0))
+        self.date_saisie_var = tk.StringVar(value=core.to_display_date(bon.get("date_saisie") or ""))
+        ttk.Entry(header, textvariable=self.date_saisie_var, width=14).grid(row=1, column=3, padx=4, pady=(6, 0), sticky="w")
+        ttk.Label(header, text="Paiement attendu (JJ/MM/AAAA) :").grid(row=1, column=4, sticky="w", padx=(12, 4), pady=(6, 0))
+        self.date_paiement_var = tk.StringVar(value=core.to_display_date(bon.get("date_paiement_attendu") or ""))
+        ttk.Entry(header, textvariable=self.date_paiement_var, width=14).grid(row=1, column=5, padx=4, pady=(6, 0), sticky="w")
+
         origine = "" if not bon["expression_id"] else f"Issu de l'expression de besoin n° {bon['expression_id']}"
         self.statut_var = tk.StringVar(
             value=f"Statut : {'VALIDÉ (bordereau créé)' if self.validee else 'Brouillon'}   {origine}")
         ttk.Label(header, textvariable=self.statut_var, font=("Segoe UI", 10, "bold")).grid(
-            row=1, column=0, columnspan=6, sticky="w", padx=4, pady=(4, 0))
+            row=2, column=0, columnspan=4, sticky="w", padx=4, pady=(4, 0))
+        self.retard_var = tk.StringVar()
+        self.retard_label = ttk.Label(header, textvariable=self.retard_var, font=("Segoe UI", 10, "bold"))
+        self.retard_label.grid(row=2, column=4, columnspan=2, sticky="w", padx=4, pady=(4, 0))
+        self._refresh_retard()
 
         lignes_frame = ttk.LabelFrame(self, text="Lignes commandées")
         lignes_frame.pack(fill="both", expand=True, padx=10, pady=6)
@@ -4956,13 +4971,27 @@ class BonCommandeEPDialog(tk.Toplevel):
         core.delete_ligne_ep_bon_commande(self.conn, ligne_id)
         self.refresh_lignes()
 
+    def _refresh_retard(self):
+        bon = core.get_ep_bon_commande(self.conn, self.bon_id)
+        bons = core.list_ep_bons_commande(self.conn)
+        match = next((b for b in bons if b["id"] == self.bon_id), None)
+        if not match or not match.get("statut_paiement"):
+            self.retard_var.set("")
+            return
+        self.retard_var.set(f"Paiement : {match['statut_paiement']}")
+        self.retard_label.configure(foreground="#B00020" if match["depassement_paiement"] else "#1F7A1F")
+
     def save(self):
         date_str = core.to_iso_date(self.date_var.get().strip())
         core.update_ep_bon_commande(
             self.conn, self.bon_id,
             numero=self.numero_var.get().strip(), date_commande=date_str,
             fournisseur_code=self._extract_code(self.fournisseur_var.get()),
+            date_facture=core.to_iso_date(self.date_facture_var.get().strip()) or None,
+            date_saisie=core.to_iso_date(self.date_saisie_var.get().strip()) or None,
+            date_paiement_attendu=core.to_iso_date(self.date_paiement_var.get().strip()) or None,
         )
+        self._refresh_retard()
         messagebox.showinfo("Enregistré", "Bon de commande enregistré.", parent=self)
         self.on_saved()
 
@@ -5014,13 +5043,14 @@ class BonCommandeEPTab(ttk.Frame):
         ttk.Button(btn_bar, text="Nouveau bon de commande", command=self.new_bon).pack(side="left")
         ttk.Button(btn_bar, text="Actualiser", command=self.refresh).pack(side="left", padx=8)
 
-        cols = ("numero", "date", "fournisseur", "nb_lignes", "statut")
+        cols = ("numero", "date", "fournisseur", "nb_lignes", "statut", "paiement_attendu", "statut_paiement")
         self.tree = ttk.Treeview(self, columns=cols, show="headings", height=22)
-        headers = ["N°", "Date", "Fournisseur", "Lignes", "Statut"]
-        widths = [110, 100, 260, 70, 140]
+        headers = ["N°", "Date", "Fournisseur", "Lignes", "Statut", "Paiement attendu", "Statut paiement"]
+        widths = [110, 100, 220, 60, 130, 130, 160]
         for c, h, w in zip(cols, headers, widths):
             self.tree.heading(c, text=h)
             self.tree.column(c, width=w, anchor="w")
+        self.tree.tag_configure("retard", foreground="#B00020", font=("Segoe UI", 9, "bold"))
         self.tree.pack(fill="both", expand=True, padx=16, pady=8)
         self.tree.bind("<Double-1>", self._on_double_click)
         self._by_iid = {}
@@ -5053,8 +5083,10 @@ class BonCommandeEPTab(ttk.Frame):
             if bon["fournisseur_code"]:
                 f = core.get_fournisseur(self.conn, bon["fournisseur_code"])
                 fournisseur = f"{bon['fournisseur_code']} — {f['raison_sociale']}" if f else bon["fournisseur_code"]
-            iid = self.tree.insert("", "end", values=(
+            tags = ("retard",) if bon.get("depassement_paiement") else ()
+            iid = self.tree.insert("", "end", tags=tags, values=(
                 bon["numero"], core.to_display_date(bon["date_commande"]), fournisseur, nb, statut,
+                core.to_display_date(bon.get("date_paiement_attendu") or ""), bon.get("statut_paiement") or "",
             ))
             self._by_iid[iid] = bon["id"]
 
