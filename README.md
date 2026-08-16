@@ -2118,3 +2118,40 @@ Testé : démarrage de l'application, tous les onglets enregistrés
 correspondent à une classe existante (29 onglets au total), le moteur de
 calcul comptable interne (Bilan, clôture d'exercice) reste pleinement
 fonctionnel malgré le retrait de ses écrans d'affichage.
+
+### Menus TRANSPORT et IMMOBILISATIONS + Pièces de rechange partagées
+
+**Réalisé** :
+- **TRANSPORT** : 4 sous-menus, sans lien avec la comptabilité (même
+  principe que le circuit Expression de besoin) :
+  - **Parc auto** : fiche véhicule (immatriculation, marque, modèle, type,
+    chauffeur affecté, statut).
+  - **Missions** : trajets par véhicule (chauffeur, destination, dates,
+    km départ/retour — calcule automatiquement les km parcourus).
+  - **Pièces de rechange** : stock (code, désignation, quantité, coût
+    unitaire) — **PARTAGÉ** avec le menu MAINTENANCE-ÉNERGIE, comme
+    demandé, pour servir aussi bien aux réparations de véhicules qu'à la
+    maintenance générale d'équipement.
+  - **Réparations** : par véhicule, avec un détail (double-clic) où
+    chaque pièce utilisée **décrémente automatiquement** le stock de
+    Pièces de rechange (refuse si stock insuffisant), plus la main
+    d'œuvre — calcule le coût total (pièces + main d'œuvre).
+- **IMMOBILISATIONS** : 2 sous-menus :
+  - **Immobilisations** : liste des comptes de classe 2 ayant un solde
+    dans la Balance, avec Fournisseur et Prix d'achat (fiche éditable par
+    compte), Catégorie (même catégorisation que le Bilan), Taux
+    d'amortissement configuré, et **Valeur Brute / Amortissement / Valeur
+    Nette** — l'amortissement affiché reste celui RÉELLEMENT comptabilisé
+    (comptes 28x/29x de la Balance, réparti au prorata au sein d'une
+    catégorie s'il y a plusieurs comptes), jamais une simulation, pour ne
+    jamais diverger du Bilan.
+  - **Amortissements** : taux annuel (%) paramétrable par catégorie
+    d'immobilisation (double-clic pour modifier), réutilisé dans l'écran
+    Immobilisations.
+
+Testé de bout en bout : véhicule → mission (700 km calculés) → réparation
+avec 4 plaquettes de frein (stock 10→6, coût total 47 000 = 4×8 000 +
+15 000 main d'œuvre) ; immobilisation véhicule avec fournisseur/prix
+d'achat et taux 20%, valeur nette calculée exactement depuis la Balance
+(15M brut - 3M amort = 12M net). Bilan resté équilibré (non-régression
+vérifiée).

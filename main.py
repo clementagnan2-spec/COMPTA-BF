@@ -96,12 +96,12 @@ class App(tk.Tk):
         register("plan_bailleur", PlanBailleurTab)
         register("stocks", StocksTab)
         register("production", ProductionTab)
-        register("transport", PlaceholderTab, "Transport",
-                 "À définir — dites-moi ce que vous voulez suivre ici (véhicules, chauffeurs, trajets, "
-                 "consommation, entretien...) et je construis l'écran.")
-        register("immobilisations", PlaceholderTab, "Immobilisations",
-                 "À définir — dites-moi ce que vous voulez suivre ici (fiche par immobilisation, "
-                 "amortissements, affectations, sorties/cessions...) et je construis l'écran.")
+        register("transport", ParcAutoTab)
+        register("missions", MissionsTab)
+        register("pieces_rechange", PiecesRechangeTab)
+        register("reparations", ReparationsTab)
+        register("immobilisations", ImmobilisationsTab)
+        register("amortissements", AmortissementsTab)
         register("rapports_technique", PlaceholderTab, "Rapports technique",
                  "À définir — dites-moi quels rapports techniques vous voulez ici et je construis l'écran.")
         register("ventes", VentesTab)
@@ -164,10 +164,14 @@ class App(tk.Tk):
             ("Règlements", "reglements"),
         ])
         add_top_menu("TRANSPORT", [
-            ("Transport", "transport"),
+            ("Parc auto", "transport"),
+            ("Missions", "missions"),
+            ("Pièces de rechange", "pieces_rechange"),
+            ("Réparations", "reparations"),
         ])
         add_top_menu("IMMOBILISATIONS", [
             ("Immobilisations", "immobilisations"),
+            ("Amortissements", "amortissements"),
         ])
         add_top_menu("RAPPORTS TECHNIQUE", [
             ("Rapports technique", "rapports_technique"),
@@ -175,6 +179,7 @@ class App(tk.Tk):
         add_top_menu("MAINTENANCE-ÉNERGIE", [
             ("Énergie", "energie"),
             ("Maintenance", "maintenance"),
+            ("Pièces de rechange", "pieces_rechange"),
         ])
         add_top_menu("PARAMÈTRES", [
             ("Exercices comptables (clôture)", "exercices"),
@@ -3024,6 +3029,651 @@ class LiasseFiscaleTab(ttk.Frame):
             return
         self.status_var.set(f"Export réussi : {path}")
         messagebox.showinfo("Export terminé", f"Liasse fiscale enregistrée :\n{path}")
+
+
+class ParcAutoTab(ttk.Frame):
+    """Parc automobile — liste des véhicules, sans lien avec la comptabilité."""
+
+    def __init__(self, parent, conn):
+        super().__init__(parent)
+        self.conn = conn
+        self.selected_id = None
+        ttk.Label(self, text="PARC AUTO", font=("Segoe UI", 14, "bold")).pack(anchor="w", padx=16, pady=(16, 8))
+
+        form = ttk.LabelFrame(self, text="Véhicule")
+        form.pack(fill="x", padx=16, pady=4)
+        ttk.Label(form, text="Immatriculation :").grid(row=0, column=0, sticky="w", padx=4, pady=4)
+        self.immat_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.immat_var, width=16).grid(row=0, column=1, padx=4)
+        ttk.Label(form, text="Marque :").grid(row=0, column=2, sticky="w", padx=(12, 4))
+        self.marque_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.marque_var, width=14).grid(row=0, column=3, padx=4)
+        ttk.Label(form, text="Modèle :").grid(row=0, column=4, sticky="w", padx=(12, 4))
+        self.modele_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.modele_var, width=14).grid(row=0, column=5, padx=4)
+        ttk.Label(form, text="Type :").grid(row=1, column=0, sticky="w", padx=4, pady=(4, 0))
+        self.type_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.type_var, width=16).grid(row=1, column=1, padx=4, pady=(4, 0))
+        ttk.Label(form, text="Chauffeur affecté :").grid(row=1, column=2, sticky="w", padx=(12, 4), pady=(4, 0))
+        self.chauffeur_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.chauffeur_var, width=16).grid(row=1, column=3, padx=4, pady=(4, 0))
+        ttk.Label(form, text="Statut :").grid(row=1, column=4, sticky="w", padx=(12, 4), pady=(4, 0))
+        self.statut_var = tk.StringVar(value="actif")
+        ttk.Combobox(form, textvariable=self.statut_var, width=13, state="readonly",
+                     values=["actif", "en panne", "en réparation", "vendu"]).grid(row=1, column=5, padx=4, pady=(4, 0))
+
+        btns = ttk.Frame(self)
+        btns.pack(fill="x", padx=16, pady=6)
+        ttk.Button(btns, text="Ajouter", command=self.add).pack(side="left")
+        ttk.Button(btns, text="Mettre à jour la sélection", command=self.update_sel).pack(side="left", padx=8)
+        ttk.Button(btns, text="Supprimer la sélection", command=self.delete_sel).pack(side="left")
+        ttk.Button(btns, text="Effacer le formulaire", command=self.clear_form).pack(side="left", padx=8)
+
+        cols = ("id", "immat", "marque", "modele", "type", "chauffeur", "statut")
+        self.tree = ttk.Treeview(self, columns=cols, show="headings", height=20)
+        for c, h, w in zip(cols, ["ID", "Immatriculation", "Marque", "Modèle", "Type", "Chauffeur", "Statut"],
+                           [40, 140, 120, 120, 120, 150, 110]):
+            self.tree.heading(c, text=h)
+            self.tree.column(c, width=w, anchor="w")
+        self.tree.pack(fill="both", expand=True, padx=16, pady=8)
+        self.tree.bind("<<TreeviewSelect>>", self._on_select)
+        self.refresh()
+
+    def _on_select(self, event=None):
+        sel = self.tree.selection()
+        if not sel:
+            return
+        v = self.tree.item(sel[0], "values")
+        self.selected_id = v[0]
+        self.immat_var.set(v[1]); self.marque_var.set(v[2]); self.modele_var.set(v[3])
+        self.type_var.set(v[4]); self.chauffeur_var.set(v[5]); self.statut_var.set(v[6])
+
+    def clear_form(self):
+        self.selected_id = None
+        for var in (self.immat_var, self.marque_var, self.modele_var, self.type_var, self.chauffeur_var):
+            var.set("")
+        self.statut_var.set("actif")
+
+    def add(self):
+        if not self.immat_var.get().strip():
+            messagebox.showwarning("Champ manquant", "L'immatriculation est obligatoire.")
+            return
+        core.add_vehicule(self.conn, self.immat_var.get().strip(), marque=self.marque_var.get().strip(),
+                           modele=self.modele_var.get().strip(), type_vehicule=self.type_var.get().strip(),
+                           chauffeur_affecte=self.chauffeur_var.get().strip(), statut=self.statut_var.get())
+        self.clear_form()
+        self.refresh()
+
+    def update_sel(self):
+        if not self.selected_id:
+            messagebox.showinfo("Info", "Sélectionnez d'abord un véhicule.")
+            return
+        core.update_vehicule(self.conn, self.selected_id, immatriculation=self.immat_var.get().strip(),
+                              marque=self.marque_var.get().strip(), modele=self.modele_var.get().strip(),
+                              type_vehicule=self.type_var.get().strip(),
+                              chauffeur_affecte=self.chauffeur_var.get().strip(), statut=self.statut_var.get())
+        self.clear_form()
+        self.refresh()
+
+    def delete_sel(self):
+        if not self.selected_id:
+            messagebox.showinfo("Info", "Sélectionnez d'abord un véhicule.")
+            return
+        if messagebox.askyesno("Confirmer", "Supprimer ce véhicule ?"):
+            core.delete_vehicule(self.conn, self.selected_id)
+            self.clear_form()
+            self.refresh()
+
+    def refresh(self):
+        for row in self.tree.get_children():
+            self.tree.delete(row)
+        for v in core.list_vehicules(self.conn):
+            self.tree.insert("", "end", values=(v["id"], v["immatriculation"], v["marque"] or "", v["modele"] or "",
+                                                  v["type_vehicule"] or "", v["chauffeur_affecte"] or "", v["statut"]))
+
+
+class MissionsTab(ttk.Frame):
+    """Missions des véhicules du parc auto — sans lien avec la comptabilité."""
+
+    def __init__(self, parent, conn):
+        super().__init__(parent)
+        self.conn = conn
+        ttk.Label(self, text="MISSIONS", font=("Segoe UI", 14, "bold")).pack(anchor="w", padx=16, pady=(16, 8))
+
+        form = ttk.LabelFrame(self, text="Nouvelle mission")
+        form.pack(fill="x", padx=16, pady=4)
+        ttk.Label(form, text="Véhicule :").grid(row=0, column=0, sticky="w", padx=4, pady=4)
+        self.vehicule_var = tk.StringVar()
+        self.vehicule_combo = ttk.Combobox(form, textvariable=self.vehicule_var, width=22, state="readonly")
+        self.vehicule_combo.grid(row=0, column=1, padx=4)
+        ttk.Label(form, text="Chauffeur :").grid(row=0, column=2, sticky="w", padx=(12, 4))
+        self.chauffeur_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.chauffeur_var, width=16).grid(row=0, column=3, padx=4)
+        ttk.Label(form, text="Destination :").grid(row=0, column=4, sticky="w", padx=(12, 4))
+        self.destination_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.destination_var, width=18).grid(row=0, column=5, padx=4)
+        ttk.Label(form, text="Motif :").grid(row=1, column=0, sticky="w", padx=4, pady=(4, 0))
+        self.motif_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.motif_var, width=22).grid(row=1, column=1, padx=4, pady=(4, 0))
+        ttk.Label(form, text="Date départ :").grid(row=1, column=2, sticky="w", padx=(12, 4), pady=(4, 0))
+        self.date_depart_var = tk.StringVar(value=date.today().strftime("%d/%m/%Y"))
+        ttk.Entry(form, textvariable=self.date_depart_var, width=12).grid(row=1, column=3, padx=4, pady=(4, 0))
+        ttk.Label(form, text="Date retour :").grid(row=1, column=4, sticky="w", padx=(12, 4), pady=(4, 0))
+        self.date_retour_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.date_retour_var, width=12).grid(row=1, column=5, padx=4, pady=(4, 0))
+        ttk.Label(form, text="Km départ :").grid(row=2, column=0, sticky="w", padx=4, pady=(4, 0))
+        self.km_depart_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.km_depart_var, width=10).grid(row=2, column=1, padx=4, pady=(4, 0), sticky="w")
+        ttk.Label(form, text="Km retour :").grid(row=2, column=2, sticky="w", padx=(12, 4), pady=(4, 0))
+        self.km_retour_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.km_retour_var, width=10).grid(row=2, column=3, padx=4, pady=(4, 0), sticky="w")
+        ttk.Button(form, text="Ajouter la mission", command=self.add).grid(row=2, column=5, padx=4, pady=(4, 0))
+
+        cols = ("id", "vehicule", "chauffeur", "destination", "depart", "retour", "km", "statut")
+        self.tree = ttk.Treeview(self, columns=cols, show="headings", height=18)
+        headers = ["ID", "Véhicule", "Chauffeur", "Destination", "Départ", "Retour", "Km parcourus", "Statut"]
+        widths = [40, 130, 130, 160, 90, 90, 110, 100]
+        for c, h, w in zip(cols, headers, widths):
+            self.tree.heading(c, text=h)
+            self.tree.column(c, width=w, anchor="w")
+        self.tree.pack(fill="both", expand=True, padx=16, pady=8)
+        self.refresh()
+
+    def _refresh_vehicule_values(self):
+        self.vehicules = core.list_vehicules(self.conn)
+        self.vehicule_combo["values"] = [f"{v['id']} — {v['immatriculation']}" for v in self.vehicules]
+
+    def add(self):
+        if not self.destination_var.get().strip():
+            messagebox.showwarning("Champ manquant", "La destination est obligatoire.")
+            return
+        vehicule_id = None
+        raw = self.vehicule_var.get()
+        if raw:
+            vehicule_id = int(raw.split(" — ", 1)[0])
+        try:
+            km_depart = float(self.km_depart_var.get()) if self.km_depart_var.get().strip() else None
+            km_retour = float(self.km_retour_var.get()) if self.km_retour_var.get().strip() else None
+        except ValueError:
+            messagebox.showerror("Erreur", "Les km doivent être des nombres.")
+            return
+        core.add_mission(
+            self.conn, self.destination_var.get().strip(), vehicule_id=vehicule_id,
+            chauffeur=self.chauffeur_var.get().strip(), motif=self.motif_var.get().strip(),
+            date_depart=core.to_iso_date(self.date_depart_var.get().strip()),
+            date_retour=core.to_iso_date(self.date_retour_var.get().strip()),
+            km_depart=km_depart, km_retour=km_retour,
+        )
+        self.destination_var.set(""); self.motif_var.set(""); self.chauffeur_var.set("")
+        self.km_depart_var.set(""); self.km_retour_var.set("")
+        self.refresh()
+
+    def refresh(self):
+        self._refresh_vehicule_values()
+        for row in self.tree.get_children():
+            self.tree.delete(row)
+        for m in core.list_missions(self.conn):
+            km = ""
+            if m["km_depart"] is not None and m["km_retour"] is not None:
+                km = f"{m['km_retour'] - m['km_depart']:g}"
+            self.tree.insert("", "end", values=(
+                m["id"], m["immatriculation"], m["chauffeur"] or "", m["destination"],
+                core.to_display_date(m["date_depart"] or ""), core.to_display_date(m["date_retour"] or ""),
+                km, m["statut"]))
+
+
+class PiecesRechangeTab(ttk.Frame):
+    """Stock de pièces de rechange — PARTAGÉ entre le menu TRANSPORT
+    (réparations de véhicules) et le menu MAINTENANCE-ÉNERGIE (maintenance
+    générale). Sans lien avec la comptabilité."""
+
+    def __init__(self, parent, conn):
+        super().__init__(parent)
+        self.conn = conn
+        self.selected_id = None
+        ttk.Label(self, text="PIÈCES DE RECHANGE", font=("Segoe UI", 14, "bold")).pack(
+            anchor="w", padx=16, pady=(16, 4))
+        ttk.Label(self, text=(
+            "Stock partagé, utilisé aussi bien pour les réparations de véhicules (menu TRANSPORT) que pour "
+            "la maintenance générale (menu MAINTENANCE-ÉNERGIE)."
+        ), foreground="#595959").pack(anchor="w", padx=16, pady=(0, 8))
+
+        form = ttk.LabelFrame(self, text="Pièce")
+        form.pack(fill="x", padx=16, pady=4)
+        ttk.Label(form, text="Code :").grid(row=0, column=0, sticky="w", padx=4, pady=4)
+        self.code_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.code_var, width=12).grid(row=0, column=1, padx=4)
+        ttk.Label(form, text="Désignation :").grid(row=0, column=2, sticky="w", padx=(12, 4))
+        self.designation_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.designation_var, width=28).grid(row=0, column=3, padx=4)
+        ttk.Label(form, text="Quantité en stock :").grid(row=1, column=0, sticky="w", padx=4, pady=(4, 0))
+        self.qte_var = tk.StringVar(value="0")
+        ttk.Entry(form, textvariable=self.qte_var, width=10).grid(row=1, column=1, padx=4, pady=(4, 0), sticky="w")
+        ttk.Label(form, text="Unité :").grid(row=1, column=2, sticky="w", padx=(12, 4), pady=(4, 0))
+        self.unite_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.unite_var, width=10).grid(row=1, column=3, padx=4, pady=(4, 0), sticky="w")
+        ttk.Label(form, text="Coût unitaire :").grid(row=2, column=0, sticky="w", padx=4, pady=(4, 0))
+        self.cout_var = tk.StringVar(value="0")
+        ttk.Entry(form, textvariable=self.cout_var, width=12).grid(row=2, column=1, padx=4, pady=(4, 0), sticky="w")
+
+        btns = ttk.Frame(self)
+        btns.pack(fill="x", padx=16, pady=6)
+        ttk.Button(btns, text="Ajouter", command=self.add).pack(side="left")
+        ttk.Button(btns, text="Mettre à jour la sélection", command=self.update_sel).pack(side="left", padx=8)
+        ttk.Button(btns, text="Supprimer la sélection", command=self.delete_sel).pack(side="left")
+        ttk.Button(btns, text="Effacer le formulaire", command=self.clear_form).pack(side="left", padx=8)
+
+        cols = ("id", "code", "designation", "qte", "unite", "cout", "valeur")
+        self.tree = ttk.Treeview(self, columns=cols, show="headings", height=18)
+        headers = ["ID", "Code", "Désignation", "Qté en stock", "Unité", "Coût unitaire", "Valeur du stock"]
+        widths = [40, 90, 260, 100, 80, 110, 130]
+        for c, h, w in zip(cols, headers, widths):
+            self.tree.heading(c, text=h)
+            self.tree.column(c, width=w, anchor="w")
+        self.tree.pack(fill="both", expand=True, padx=16, pady=8)
+        self.tree.bind("<<TreeviewSelect>>", self._on_select)
+        self.refresh()
+
+    def _on_select(self, event=None):
+        sel = self.tree.selection()
+        if not sel:
+            return
+        v = self.tree.item(sel[0], "values")
+        self.selected_id = v[0]
+        self.code_var.set(v[1]); self.designation_var.set(v[2]); self.qte_var.set(v[3])
+        self.unite_var.set(v[4]); self.cout_var.set(v[5])
+
+    def clear_form(self):
+        self.selected_id = None
+        self.code_var.set(""); self.designation_var.set(""); self.qte_var.set("0")
+        self.unite_var.set(""); self.cout_var.set("0")
+
+    def _parse(self):
+        if not self.designation_var.get().strip():
+            messagebox.showwarning("Champ manquant", "La désignation est obligatoire.")
+            return None
+        try:
+            qte = float(self.qte_var.get() or 0)
+            cout = float(self.cout_var.get() or 0)
+        except ValueError:
+            messagebox.showerror("Erreur", "Quantité et coût unitaire doivent être des nombres.")
+            return None
+        return qte, cout
+
+    def add(self):
+        parsed = self._parse()
+        if not parsed:
+            return
+        qte, cout = parsed
+        core.add_piece_rechange(self.conn, self.designation_var.get().strip(), code=self.code_var.get().strip(),
+                                 quantite_stock=qte, unite=self.unite_var.get().strip(), cout_unitaire=cout)
+        self.clear_form()
+        self.refresh()
+
+    def update_sel(self):
+        if not self.selected_id:
+            messagebox.showinfo("Info", "Sélectionnez d'abord une pièce.")
+            return
+        parsed = self._parse()
+        if not parsed:
+            return
+        qte, cout = parsed
+        core.update_piece_rechange(self.conn, self.selected_id, code=self.code_var.get().strip(),
+                                    designation=self.designation_var.get().strip(), quantite_stock=qte,
+                                    unite=self.unite_var.get().strip(), cout_unitaire=cout)
+        self.clear_form()
+        self.refresh()
+
+    def delete_sel(self):
+        if not self.selected_id:
+            messagebox.showinfo("Info", "Sélectionnez d'abord une pièce.")
+            return
+        if messagebox.askyesno("Confirmer", "Supprimer cette pièce ?"):
+            core.delete_piece_rechange(self.conn, self.selected_id)
+            self.clear_form()
+            self.refresh()
+
+    def refresh(self):
+        for row in self.tree.get_children():
+            self.tree.delete(row)
+        for p in core.list_pieces_rechange(self.conn):
+            valeur = p["quantite_stock"] * p["cout_unitaire"]
+            self.tree.insert("", "end", values=(
+                p["id"], p["code"] or "", p["designation"], f"{p['quantite_stock']:g}", p["unite"] or "",
+                f"{p['cout_unitaire']:,.2f}", f"{valeur:,.2f}"))
+
+
+class ReparationDialog(tk.Toplevel):
+    """Détail d'une réparation (double-clic) — pièces utilisées (décrémente
+    automatiquement le stock de Pièces de rechange) + main d'œuvre."""
+
+    def __init__(self, parent, conn, reparation_id, on_saved):
+        super().__init__(parent)
+        self.conn = conn
+        self.reparation_id = reparation_id
+        self.on_saved = on_saved
+        self.title("Réparation")
+        self.geometry("850x560")
+        self.transient(parent)
+        self.grab_set()
+
+        rep = core.get_reparation(conn, reparation_id)
+        header = ttk.LabelFrame(self, text="Informations")
+        header.pack(fill="x", padx=10, pady=8)
+        ttk.Label(header, text="Description :").grid(row=0, column=0, sticky="w", padx=4, pady=4)
+        self.description_var = tk.StringVar(value=rep["description"])
+        ttk.Entry(header, textvariable=self.description_var, width=40).grid(row=0, column=1, padx=4)
+        ttk.Label(header, text="Garage :").grid(row=0, column=2, sticky="w", padx=(12, 4))
+        self.garage_var = tk.StringVar(value=rep["garage"] or "")
+        ttk.Entry(header, textvariable=self.garage_var, width=20).grid(row=0, column=3, padx=4)
+        ttk.Label(header, text="Main d'œuvre :").grid(row=1, column=0, sticky="w", padx=4, pady=(4, 0))
+        self.mo_var = tk.StringVar(value=str(rep["cout_main_oeuvre"]))
+        ttk.Entry(header, textvariable=self.mo_var, width=14).grid(row=1, column=1, padx=4, pady=(4, 0), sticky="w")
+        ttk.Label(header, text="Statut :").grid(row=1, column=2, sticky="w", padx=(12, 4), pady=(4, 0))
+        self.statut_var = tk.StringVar(value=rep["statut"])
+        ttk.Combobox(header, textvariable=self.statut_var, width=17, state="readonly",
+                     values=["en_cours", "terminee"]).grid(row=1, column=3, padx=4, pady=(4, 0))
+
+        lignes_frame = ttk.LabelFrame(self, text="Pièces utilisées (décrémente le stock)")
+        lignes_frame.pack(fill="both", expand=True, padx=10, pady=6)
+        form = ttk.Frame(lignes_frame)
+        form.pack(fill="x", padx=6, pady=4)
+        ttk.Label(form, text="Pièce :").grid(row=0, column=0, sticky="w")
+        self.piece_var = tk.StringVar()
+        self.piece_combo = ttk.Combobox(form, textvariable=self.piece_var, width=32, state="readonly")
+        self.piece_combo.grid(row=0, column=1, padx=4)
+        self._refresh_pieces()
+        ttk.Label(form, text="Quantité :").grid(row=0, column=2, sticky="w", padx=(12, 0))
+        self.qte_var = tk.StringVar(value="1")
+        ttk.Entry(form, textvariable=self.qte_var, width=8).grid(row=0, column=3, padx=4)
+        ttk.Button(form, text="Ajouter", command=self.add_ligne).grid(row=0, column=4, padx=12)
+
+        cols = ("id", "designation", "qte", "cout_unit", "montant")
+        self.tree = ttk.Treeview(lignes_frame, columns=cols, show="headings", height=10)
+        for c, h, w in zip(cols, ["ID", "Pièce", "Quantité", "Coût unit.", "Montant"], [40, 300, 90, 100, 110]):
+            self.tree.heading(c, text=h)
+            self.tree.column(c, width=w, anchor="w")
+        self.tree.pack(fill="both", expand=True, padx=6, pady=6)
+        ttk.Button(lignes_frame, text="Supprimer la ligne sélectionnée (restitue le stock)",
+                   command=self.delete_ligne).pack(anchor="w", padx=6, pady=(0, 6))
+        self.total_var = tk.StringVar()
+        ttk.Label(lignes_frame, textvariable=self.total_var, font=("Segoe UI", 10, "bold")).pack(
+            anchor="w", padx=6, pady=(0, 6))
+
+        btns = ttk.Frame(self)
+        btns.pack(fill="x", padx=10, pady=10)
+        ttk.Button(btns, text="Enregistrer", command=self.save).pack(side="left", padx=4)
+        ttk.Button(btns, text="Fermer", command=self.destroy).pack(side="left", padx=4)
+
+        self.refresh_lignes()
+
+    def _refresh_pieces(self):
+        self.pieces = core.list_pieces_rechange(self.conn)
+        self.piece_combo["values"] = [f"{p['id']} — {p['designation']} ({p['quantite_stock']:g} en stock)"
+                                       for p in self.pieces]
+
+    def add_ligne(self):
+        raw = self.piece_var.get()
+        if not raw:
+            messagebox.showwarning("Champ manquant", "Choisissez une pièce.", parent=self)
+            return
+        piece_id = int(raw.split(" — ", 1)[0])
+        try:
+            qte = float(self.qte_var.get())
+        except ValueError:
+            messagebox.showerror("Erreur", "La quantité doit être un nombre.", parent=self)
+            return
+        try:
+            core.add_ligne_reparation(self.conn, self.reparation_id, piece_id, quantite=qte)
+        except ValueError as exc:
+            messagebox.showerror("Erreur", str(exc), parent=self)
+            return
+        self.qte_var.set("1")
+        self._refresh_pieces()
+        self.refresh_lignes()
+
+    def delete_ligne(self):
+        sel = self.tree.selection()
+        if not sel:
+            messagebox.showinfo("Info", "Sélectionnez d'abord une ligne.", parent=self)
+            return
+        ligne_id = self.tree.item(sel[0], "values")[0]
+        core.delete_ligne_reparation(self.conn, ligne_id)
+        self._refresh_pieces()
+        self.refresh_lignes()
+
+    def refresh_lignes(self):
+        for row in self.tree.get_children():
+            self.tree.delete(row)
+        for l in core.list_lignes_reparation(self.conn, self.reparation_id):
+            self.tree.insert("", "end", values=(
+                l["id"], l["designation"], f"{l['quantite']:g}", f"{l['cout_unitaire']:,.2f}", f"{l['montant']:,.2f}"))
+        cout_total = core.compute_cout_total_reparation(self.conn, self.reparation_id)
+        self.total_var.set(f"Coût total (pièces + main d'œuvre) : {cout_total:,.2f}")
+
+    def save(self):
+        try:
+            mo = float(self.mo_var.get() or 0)
+        except ValueError:
+            messagebox.showerror("Erreur", "La main d'œuvre doit être un nombre.", parent=self)
+            return
+        core.update_reparation(self.conn, self.reparation_id, description=self.description_var.get().strip(),
+                                garage=self.garage_var.get().strip(), cout_main_oeuvre=mo,
+                                statut=self.statut_var.get())
+        self.refresh_lignes()
+        messagebox.showinfo("Enregistré", "Réparation enregistrée.", parent=self)
+        self.on_saved()
+
+
+class ReparationsTab(ttk.Frame):
+    """Réparations de véhicules — double-clic pour ajouter les pièces
+    utilisées (décrémente le stock de Pièces de rechange)."""
+
+    def __init__(self, parent, conn):
+        super().__init__(parent)
+        self.conn = conn
+        ttk.Label(self, text="RÉPARATIONS", font=("Segoe UI", 14, "bold")).pack(anchor="w", padx=16, pady=(16, 8))
+
+        form = ttk.Frame(self)
+        form.pack(fill="x", padx=16, pady=4)
+        ttk.Label(form, text="Véhicule :").grid(row=0, column=0, sticky="w")
+        self.vehicule_var = tk.StringVar()
+        self.vehicule_combo = ttk.Combobox(form, textvariable=self.vehicule_var, width=22, state="readonly")
+        self.vehicule_combo.grid(row=0, column=1, padx=4)
+        ttk.Label(form, text="Description :").grid(row=0, column=2, sticky="w", padx=(12, 4))
+        self.description_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.description_var, width=30).grid(row=0, column=3, padx=4)
+        ttk.Button(form, text="Nouvelle réparation", command=self.new_reparation).grid(row=0, column=4, padx=12)
+
+        cols = ("id", "vehicule", "date", "description", "garage", "cout_mo", "cout_total", "statut")
+        self.tree = ttk.Treeview(self, columns=cols, show="headings", height=20)
+        headers = ["ID", "Véhicule", "Date", "Description", "Garage", "Main d'œuvre", "Coût total", "Statut"]
+        widths = [40, 130, 90, 220, 130, 100, 100, 100]
+        for c, h, w in zip(cols, headers, widths):
+            self.tree.heading(c, text=h)
+            self.tree.column(c, width=w, anchor="w")
+        self.tree.pack(fill="both", expand=True, padx=16, pady=8)
+        self.tree.bind("<Double-1>", self._on_double_click)
+        self._by_iid = {}
+        self.refresh()
+
+    def _refresh_vehicule_values(self):
+        self.vehicules = core.list_vehicules(self.conn)
+        self.vehicule_combo["values"] = [f"{v['id']} — {v['immatriculation']}" for v in self.vehicules]
+
+    def new_reparation(self):
+        if not self.description_var.get().strip():
+            messagebox.showwarning("Champ manquant", "La description est obligatoire.")
+            return
+        vehicule_id = None
+        raw = self.vehicule_var.get()
+        if raw:
+            vehicule_id = int(raw.split(" — ", 1)[0])
+        rid = core.create_reparation(self.conn, self.description_var.get().strip(), vehicule_id=vehicule_id)
+        self.description_var.set("")
+        self.refresh()
+        ReparationDialog(self, self.conn, rid, on_saved=self.refresh)
+
+    def _on_double_click(self, event=None):
+        sel = self.tree.selection()
+        if not sel:
+            return
+        rid = self._by_iid.get(sel[0])
+        if rid:
+            ReparationDialog(self, self.conn, rid, on_saved=self.refresh)
+
+    def refresh(self):
+        self._refresh_vehicule_values()
+        for row in self.tree.get_children():
+            self.tree.delete(row)
+        self._by_iid = {}
+        for r in core.list_reparations(self.conn):
+            cout_total = core.compute_cout_total_reparation(self.conn, r["id"])
+            iid = self.tree.insert("", "end", values=(
+                r["id"], r["immatriculation"] or "", core.to_display_date(r["date_reparation"]), r["description"],
+                r["garage"] or "", f"{r['cout_main_oeuvre']:,.2f}", f"{cout_total:,.2f}", r["statut"]))
+            self._by_iid[iid] = r["id"]
+
+
+class ImmobilisationsTab(ttk.Frame):
+    """Liste des comptes de classe 2 (immobilisations), avec fournisseur,
+    prix d'achat, catégorie/taux d'amortissement, et Valeur Brute /
+    Amortissement / Valeur Nette (calculés depuis la Balance, même méthode
+    exacte que le Bilan)."""
+
+    def __init__(self, parent, conn):
+        super().__init__(parent)
+        self.conn = conn
+        self.selected_compte = None
+        ttk.Label(self, text="IMMOBILISATIONS", font=("Segoe UI", 14, "bold")).pack(
+            anchor="w", padx=16, pady=(16, 4))
+        ttk.Label(self, text=(
+            "Comptes de classe 2 ayant un solde dans la Balance. Sélectionnez une ligne pour renseigner son "
+            "fournisseur et son prix d'achat. Le taux d'amortissement par catégorie se paramètre dans le "
+            "sous-menu « Amortissements »."
+        ), foreground="#595959", wraplength=1100).pack(anchor="w", padx=16, pady=(0, 8))
+
+        form = ttk.LabelFrame(self, text="Fiche du compte sélectionné")
+        form.pack(fill="x", padx=16, pady=4)
+        self.compte_label_var = tk.StringVar(value="(sélectionnez une ligne dans le tableau ci-dessous)")
+        ttk.Label(form, textvariable=self.compte_label_var, font=("Segoe UI", 9, "bold")).grid(
+            row=0, column=0, columnspan=4, sticky="w", padx=4, pady=4)
+        ttk.Label(form, text="Fournisseur :").grid(row=1, column=0, sticky="w", padx=4)
+        self.fournisseur_var = tk.StringVar()
+        self.fournisseur_combo = ttk.Combobox(form, textvariable=self.fournisseur_var, width=28)
+        self.fournisseur_combo.grid(row=1, column=1, padx=4, pady=4)
+        self.fournisseur_combo.bind("<KeyRelease>", self._on_fournisseur_keyrelease)
+        self._refresh_fournisseur_values()
+        ttk.Label(form, text="Prix d'achat :").grid(row=1, column=2, sticky="w", padx=(12, 4))
+        self.prix_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.prix_var, width=16).grid(row=1, column=3, padx=4)
+        ttk.Label(form, text="Date d'acquisition :").grid(row=1, column=4, sticky="w", padx=(12, 4))
+        self.date_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.date_var, width=12).grid(row=1, column=5, padx=4)
+        ttk.Button(form, text="Enregistrer la fiche", command=self.save_fiche).grid(row=1, column=6, padx=12)
+
+        cols = ("compte", "libelle", "categorie", "fournisseur", "prix_achat", "taux", "brut", "amort", "net")
+        self.tree = ttk.Treeview(self, columns=cols, show="headings", height=18)
+        headers = ["Compte", "Libellé", "Catégorie", "Fournisseur", "Prix d'achat", "Taux %",
+                    "Valeur brute", "Amortissement", "Valeur nette"]
+        widths = [80, 200, 220, 160, 110, 60, 110, 110, 110]
+        for c, h, w in zip(cols, headers, widths):
+            self.tree.heading(c, text=h)
+            self.tree.column(c, width=w, anchor="w")
+        self.tree.pack(fill="both", expand=True, padx=16, pady=8)
+        self.tree.bind("<<TreeviewSelect>>", self._on_select)
+        ttk.Button(self, text="Actualiser", command=self.refresh).pack(anchor="w", padx=16, pady=(0, 12))
+        self.refresh()
+
+    def _refresh_fournisseur_values(self):
+        self.fournisseur_combo["values"] = [f"{f['code']} — {f['raison_sociale']}"
+                                             for f in core.list_fournisseurs(self.conn)]
+
+    def _on_fournisseur_keyrelease(self, event=None):
+        query = self.fournisseur_var.get().strip()
+        items = core.list_fournisseurs(self.conn, query)
+        self.fournisseur_combo["values"] = [f"{f['code']} — {f['raison_sociale']}" for f in items]
+
+    def _on_select(self, event=None):
+        sel = self.tree.selection()
+        if not sel:
+            return
+        v = self.tree.item(sel[0], "values")
+        self.selected_compte = v[0]
+        self.compte_label_var.set(f"{v[0]} — {v[1]}")
+        fiche = core.get_immobilisation_fiche(self.conn, v[0])
+        fournisseur = core.get_fournisseur(self.conn, fiche["fournisseur_code"]) if fiche["fournisseur_code"] else None
+        self.fournisseur_var.set(f"{fiche['fournisseur_code']} — {fournisseur['raison_sociale']}"
+                                  if fournisseur else (fiche["fournisseur_code"] or ""))
+        self.prix_var.set(str(fiche["prix_achat"]) if fiche["prix_achat"] else "")
+        self.date_var.set(core.to_display_date(fiche["date_acquisition"] or ""))
+
+    def save_fiche(self):
+        if not self.selected_compte:
+            messagebox.showinfo("Info", "Sélectionnez d'abord un compte dans le tableau.")
+            return
+        raw = self.fournisseur_var.get().strip()
+        fournisseur_code = raw.split(" — ", 1)[0].strip() if " — " in raw else raw
+        try:
+            prix = float(self.prix_var.get()) if self.prix_var.get().strip() else 0
+        except ValueError:
+            messagebox.showerror("Erreur", "Le prix d'achat doit être un nombre.")
+            return
+        core.set_immobilisation_fiche(self.conn, self.selected_compte, fournisseur_code=fournisseur_code or None,
+                                       prix_achat=prix, date_acquisition=core.to_iso_date(self.date_var.get().strip()))
+        self.refresh()
+        messagebox.showinfo("Enregistré", "Fiche d'immobilisation enregistrée.")
+
+    def refresh(self):
+        for row in self.tree.get_children():
+            self.tree.delete(row)
+        for l in core.compute_immobilisations_liste(self.conn):
+            self.tree.insert("", "end", values=(
+                l["compte"], l["libelle"], l["categorie"], l["fournisseur_nom"] or l["fournisseur_code"] or "",
+                f"{l['prix_achat']:,.2f}" if l["prix_achat"] else "", f"{l['taux_pct']:g}",
+                f"{l['valeur_brute']:,.2f}", f"{l['amortissement']:,.2f}", f"{l['valeur_nette']:,.2f}"))
+
+
+class AmortissementsTab(ttk.Frame):
+    """Taux d'amortissement par catégorie d'immobilisation (même
+    catégorisation que le Bilan) — utilisés à titre indicatif dans le
+    sous-menu Immobilisations."""
+
+    def __init__(self, parent, conn):
+        super().__init__(parent)
+        self.conn = conn
+        ttk.Label(self, text="TAUX D'AMORTISSEMENT PAR CATÉGORIE", font=("Segoe UI", 14, "bold")).pack(
+            anchor="w", padx=16, pady=(16, 8))
+        cols = ("categorie", "taux")
+        self.tree = ttk.Treeview(self, columns=cols, show="headings", height=12)
+        self.tree.heading("categorie", text="Catégorie d'immobilisation")
+        self.tree.heading("taux", text="Taux annuel (%)")
+        self.tree.column("categorie", width=560, anchor="w")
+        self.tree.column("taux", width=120, anchor="e")
+        self.tree.pack(fill="both", expand=True, padx=16, pady=8)
+        self.tree.bind("<Double-1>", self._on_double_click)
+        ttk.Label(self, text="Double-cliquez sur une catégorie pour modifier son taux.",
+                  foreground="#595959").pack(anchor="w", padx=16)
+        self.refresh()
+
+    def _on_double_click(self, event=None):
+        sel = self.tree.selection()
+        if not sel:
+            return
+        values = self.tree.item(sel[0], "values")
+        categorie, taux_actuel = values[0], values[1]
+        nouveau = simpledialog.askfloat("Taux d'amortissement", f"Taux annuel (%) pour « {categorie} » :",
+                                         initialvalue=float(taux_actuel), parent=self, minvalue=0, maxvalue=100)
+        if nouveau is None:
+            return
+        core.set_taux_amortissement(self.conn, categorie, nouveau)
+        self.refresh()
+
+    def refresh(self):
+        for row in self.tree.get_children():
+            self.tree.delete(row)
+        for t in core.list_taux_amortissement(self.conn):
+            self.tree.insert("", "end", values=(t["categorie"], f"{t['taux_pct']:g}"))
 
 
 class PlaceholderTab(ttk.Frame):

@@ -639,6 +639,80 @@ def init_db(conn):
             analytic_code TEXT
         )
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS pieces_rechange (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            code TEXT,
+            designation TEXT NOT NULL,
+            quantite_stock REAL NOT NULL DEFAULT 0,
+            unite TEXT,
+            cout_unitaire REAL NOT NULL DEFAULT 0,
+            fournisseur_code TEXT,
+            notes TEXT
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS vehicules (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            immatriculation TEXT NOT NULL,
+            marque TEXT,
+            modele TEXT,
+            type_vehicule TEXT,
+            date_acquisition TEXT,
+            chauffeur_affecte TEXT,
+            statut TEXT NOT NULL DEFAULT 'actif',
+            notes TEXT
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS missions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            vehicule_id INTEGER,
+            chauffeur TEXT,
+            destination TEXT NOT NULL,
+            motif TEXT,
+            date_depart TEXT,
+            date_retour TEXT,
+            km_depart REAL,
+            km_retour REAL,
+            statut TEXT NOT NULL DEFAULT 'en_cours',
+            notes TEXT
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS reparations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            vehicule_id INTEGER,
+            date_reparation TEXT NOT NULL,
+            description TEXT NOT NULL,
+            garage TEXT,
+            cout_main_oeuvre REAL NOT NULL DEFAULT 0,
+            statut TEXT NOT NULL DEFAULT 'en_cours',
+            notes TEXT
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS reparation_lignes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            reparation_id INTEGER NOT NULL,
+            piece_id INTEGER NOT NULL,
+            quantite REAL NOT NULL DEFAULT 1
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS immobilisations_fiche (
+            compte TEXT PRIMARY KEY,
+            fournisseur_code TEXT,
+            prix_achat REAL NOT NULL DEFAULT 0,
+            date_acquisition TEXT
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS taux_amortissement (
+            categorie TEXT PRIMARY KEY,
+            taux_pct REAL NOT NULL DEFAULT 0
+        )
+    """)
     conn.commit()
     _migrate(conn)
     if conn.execute("SELECT COUNT(*) FROM accounts").fetchone()[0] == 0:
@@ -6306,6 +6380,326 @@ def devalider_reglement(conn, reglement_id):
         raise ValueError("Impossible de corriger ce règlement : " + " ; ".join(errors))
     update_reglement(conn, reglement_id, statut="brouillon")
     return deleted
+
+
+# ---------------------------------------------------------------------------
+# TRANSPORT (Parc auto, Missions, Pièces de rechange, Réparations) — suivi
+# opérationnel, sans lien avec la comptabilité (même principe que le circuit
+# Expression de besoin / Bon de commande). « Pièces de rechange » est un
+# stock PARTAGÉ, utilisé aussi bien pour les réparations de véhicules
+# (menu TRANSPORT) que pour la maintenance générale (menu MAINTENANCE-ÉNERGIE).
+# ---------------------------------------------------------------------------
+
+# ---- Parc auto ----
+def add_vehicule(conn, immatriculation, marque="", modele="", type_vehicule="",
+                  date_acquisition="", chauffeur_affecte="", statut="actif", notes=""):
+    cur = conn.execute(
+        """INSERT INTO vehicules (immatriculation, marque, modele, type_vehicule, date_acquisition,
+                                   chauffeur_affecte, statut, notes)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+        (immatriculation, marque, modele, type_vehicule, date_acquisition, chauffeur_affecte, statut, notes),
+    )
+    conn.commit()
+    return cur.lastrowid
+
+
+def update_vehicule(conn, vehicule_id, **fields):
+    if not fields:
+        return
+    cols = ", ".join(f"{k} = ?" for k in fields)
+    conn.execute(f"UPDATE vehicules SET {cols} WHERE id = ?", (*fields.values(), vehicule_id))
+    conn.commit()
+
+
+def delete_vehicule(conn, vehicule_id):
+    conn.execute("DELETE FROM vehicules WHERE id = ?", (vehicule_id,))
+    conn.commit()
+
+
+def get_vehicule(conn, vehicule_id):
+    row = conn.execute("SELECT * FROM vehicules WHERE id = ?", (vehicule_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def list_vehicules(conn):
+    return [dict(r) for r in conn.execute("SELECT * FROM vehicules ORDER BY immatriculation").fetchall()]
+
+
+# ---- Missions ----
+def add_mission(conn, destination, vehicule_id=None, chauffeur="", motif="", date_depart="", date_retour="",
+                 km_depart=None, km_retour=None, statut="en_cours", notes=""):
+    cur = conn.execute(
+        """INSERT INTO missions (vehicule_id, chauffeur, destination, motif, date_depart, date_retour,
+                                  km_depart, km_retour, statut, notes)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (vehicule_id, chauffeur, destination, motif, date_depart, date_retour, km_depart, km_retour, statut, notes),
+    )
+    conn.commit()
+    return cur.lastrowid
+
+
+def update_mission(conn, mission_id, **fields):
+    if not fields:
+        return
+    cols = ", ".join(f"{k} = ?" for k in fields)
+    conn.execute(f"UPDATE missions SET {cols} WHERE id = ?", (*fields.values(), mission_id))
+    conn.commit()
+
+
+def delete_mission(conn, mission_id):
+    conn.execute("DELETE FROM missions WHERE id = ?", (mission_id,))
+    conn.commit()
+
+
+def list_missions(conn):
+    rows = conn.execute(
+        """SELECT m.*, COALESCE(v.immatriculation, '') AS immatriculation
+           FROM missions m LEFT JOIN vehicules v ON v.id = m.vehicule_id
+           ORDER BY COALESCE(m.date_depart, '') DESC, m.id DESC"""
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+# ---- Pièces de rechange (stock partagé Transport / Maintenance) ----
+def add_piece_rechange(conn, designation, code="", quantite_stock=0, unite="", cout_unitaire=0,
+                        fournisseur_code="", notes=""):
+    cur = conn.execute(
+        """INSERT INTO pieces_rechange (code, designation, quantite_stock, unite, cout_unitaire,
+                                         fournisseur_code, notes)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (code, designation, quantite_stock or 0, unite, cout_unitaire or 0, fournisseur_code, notes),
+    )
+    conn.commit()
+    return cur.lastrowid
+
+
+def update_piece_rechange(conn, piece_id, **fields):
+    if not fields:
+        return
+    cols = ", ".join(f"{k} = ?" for k in fields)
+    conn.execute(f"UPDATE pieces_rechange SET {cols} WHERE id = ?", (*fields.values(), piece_id))
+    conn.commit()
+
+
+def delete_piece_rechange(conn, piece_id):
+    conn.execute("DELETE FROM pieces_rechange WHERE id = ?", (piece_id,))
+    conn.commit()
+
+
+def get_piece_rechange(conn, piece_id):
+    row = conn.execute("SELECT * FROM pieces_rechange WHERE id = ?", (piece_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def list_pieces_rechange(conn):
+    return [dict(r) for r in conn.execute("SELECT * FROM pieces_rechange ORDER BY designation").fetchall()]
+
+
+# ---- Réparations (véhicule optionnel — une réparation sans véhicule =
+# maintenance générale d'équipement, utilisée depuis le menu MAINTENANCE) ----
+def create_reparation(conn, description, vehicule_id=None, date_reparation=None, garage="",
+                       cout_main_oeuvre=0, statut="en_cours", notes=""):
+    date_reparation = date_reparation or date.today().strftime("%Y-%m-%d")
+    cur = conn.execute(
+        """INSERT INTO reparations (vehicule_id, date_reparation, description, garage, cout_main_oeuvre,
+                                     statut, notes)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (vehicule_id, date_reparation, description, garage, cout_main_oeuvre or 0, statut, notes),
+    )
+    conn.commit()
+    return cur.lastrowid
+
+
+def update_reparation(conn, reparation_id, **fields):
+    if not fields:
+        return
+    cols = ", ".join(f"{k} = ?" for k in fields)
+    conn.execute(f"UPDATE reparations SET {cols} WHERE id = ?", (*fields.values(), reparation_id))
+    conn.commit()
+
+
+def delete_reparation(conn, reparation_id):
+    conn.execute("DELETE FROM reparation_lignes WHERE reparation_id = ?", (reparation_id,))
+    conn.execute("DELETE FROM reparations WHERE id = ?", (reparation_id,))
+    conn.commit()
+
+
+def get_reparation(conn, reparation_id):
+    row = conn.execute("SELECT * FROM reparations WHERE id = ?", (reparation_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def list_reparations(conn):
+    rows = conn.execute(
+        """SELECT r.*, COALESCE(v.immatriculation, '') AS immatriculation
+           FROM reparations r LEFT JOIN vehicules v ON v.id = r.vehicule_id
+           ORDER BY r.date_reparation DESC, r.id DESC"""
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def add_ligne_reparation(conn, reparation_id, piece_id, quantite=1):
+    """Ajoute une pièce utilisée à une réparation et DÉCRÉMENTE le stock de
+    cette pièce (pieces_rechange.quantite_stock) — refuse si le stock est
+    insuffisant."""
+    piece = get_piece_rechange(conn, piece_id)
+    if not piece:
+        raise ValueError("Pièce de rechange introuvable.")
+    if piece["quantite_stock"] < quantite:
+        raise ValueError(
+            f"Stock insuffisant pour « {piece['designation']} » : {piece['quantite_stock']:g} disponible(s), "
+            f"{quantite:g} demandé(s)."
+        )
+    conn.execute("INSERT INTO reparation_lignes (reparation_id, piece_id, quantite) VALUES (?, ?, ?)",
+                 (reparation_id, piece_id, quantite))
+    conn.execute("UPDATE pieces_rechange SET quantite_stock = quantite_stock - ? WHERE id = ?",
+                 (quantite, piece_id))
+    conn.commit()
+
+
+def delete_ligne_reparation(conn, ligne_id):
+    """Supprime une ligne de réparation et RESTITUE la quantité au stock de
+    la pièce (correction d'une erreur de saisie)."""
+    row = conn.execute("SELECT * FROM reparation_lignes WHERE id = ?", (ligne_id,)).fetchone()
+    if not row:
+        return
+    conn.execute("UPDATE pieces_rechange SET quantite_stock = quantite_stock + ? WHERE id = ?",
+                 (row["quantite"], row["piece_id"]))
+    conn.execute("DELETE FROM reparation_lignes WHERE id = ?", (ligne_id,))
+    conn.commit()
+
+
+def list_lignes_reparation(conn, reparation_id):
+    rows = conn.execute(
+        """SELECT rl.*, p.designation, p.cout_unitaire, p.unite
+           FROM reparation_lignes rl JOIN pieces_rechange p ON p.id = rl.piece_id
+           WHERE rl.reparation_id = ? ORDER BY rl.id""",
+        (reparation_id,),
+    ).fetchall()
+    result = []
+    for r in rows:
+        d = dict(r)
+        d["montant"] = d["quantite"] * d["cout_unitaire"]
+        result.append(d)
+    return result
+
+
+def compute_cout_total_reparation(conn, reparation_id):
+    reparation = get_reparation(conn, reparation_id)
+    lignes = list_lignes_reparation(conn, reparation_id)
+    cout_pieces = sum(l["montant"] for l in lignes)
+    return cout_pieces + (reparation["cout_main_oeuvre"] if reparation else 0)
+
+
+# ---------------------------------------------------------------------------
+# IMMOBILISATIONS — liste des comptes de classe 2 avec fournisseur/prix
+# d'achat (fiche), et taux d'amortissement paramétrables par catégorie
+# (réutilise IMMO_CATEGORIES, la même catégorisation que le Bilan).
+# ---------------------------------------------------------------------------
+def set_immobilisation_fiche(conn, compte, fournisseur_code=None, prix_achat=None, date_acquisition=None):
+    """Crée ou met à jour la fiche (fournisseur, prix d'achat, date) d'un
+    compte d'immobilisation — les champs non fournis (None) conservent leur
+    valeur existante plutôt que d'être écrasés à vide."""
+    existing = conn.execute("SELECT * FROM immobilisations_fiche WHERE compte = ?", (compte,)).fetchone()
+    if fournisseur_code is None:
+        fournisseur_code = existing["fournisseur_code"] if existing else ""
+    if prix_achat is None:
+        prix_achat = existing["prix_achat"] if existing else 0
+    if date_acquisition is None:
+        date_acquisition = existing["date_acquisition"] if existing else ""
+    conn.execute(
+        """INSERT OR REPLACE INTO immobilisations_fiche (compte, fournisseur_code, prix_achat, date_acquisition)
+           VALUES (?, ?, ?, ?)""",
+        (compte, fournisseur_code, prix_achat or 0, date_acquisition),
+    )
+    conn.commit()
+
+
+def get_immobilisation_fiche(conn, compte):
+    row = conn.execute("SELECT * FROM immobilisations_fiche WHERE compte = ?", (compte,)).fetchone()
+    return dict(row) if row else {"compte": compte, "fournisseur_code": "", "prix_achat": 0, "date_acquisition": ""}
+
+
+def categorie_immobilisation(compte):
+    """Renvoie le libellé de catégorie IMMO_CATEGORIES correspondant à un
+    compte de classe 2 (celle utilisée par le Bilan) — None si hors plage
+    (ex. racine 200 isolée)."""
+    try:
+        code_int = int(compte)
+    except (TypeError, ValueError):
+        return None
+    for label, brut_ranges, _amort_ranges in IMMO_CATEGORIES:
+        for lo, hi in brut_ranges:
+            if lo <= code_int <= hi:
+                return label
+    return None
+
+
+def list_taux_amortissement(conn):
+    rows = {r["categorie"]: r["taux_pct"] for r in conn.execute("SELECT * FROM taux_amortissement").fetchall()}
+    return [{"categorie": label, "taux_pct": rows.get(label, 0.0)} for label, _b, _a in IMMO_CATEGORIES]
+
+
+def set_taux_amortissement(conn, categorie, taux_pct):
+    conn.execute("INSERT OR REPLACE INTO taux_amortissement (categorie, taux_pct) VALUES (?, ?)",
+                 (categorie, taux_pct or 0))
+    conn.commit()
+
+
+def compute_immobilisations_liste(conn, exercice=None):
+    """Liste des comptes de classe 2 (immobilisations) AYANT un solde non
+    nul dans la Balance, enrichie de leur fiche (fournisseur, prix d'achat)
+    et de leur catégorie/taux d'amortissement — avec Valeur Brute (solde du
+    compte), Amortissement (solde réel du compte 28x/29x correspondant,
+    même méthode exacte que le Bilan — voir IMMO_CATEGORIES) et Valeur
+    Nette. `taux_pct` est indicatif (paramétré dans Amortissements) : le
+    montant Amortissement affiché reste celui RÉELLEMENT comptabilisé, pas
+    une simulation, pour ne jamais diverger de la Balance/du Bilan."""
+    exercice = exercice or get_current_exercice(conn)
+    balance = compute_balance(conn, only_with_movement=False, exercice=exercice)
+    taux_par_categorie = {t["categorie"]: t["taux_pct"] for t in list_taux_amortissement(conn)}
+
+    amort_par_compte = {}
+    for label, _brut_ranges, amort_ranges in IMMO_CATEGORIES:
+        for b in balance:
+            if b["classe"] != "2":
+                continue
+            code_int = int(b["code"])
+            for lo, hi in amort_ranges:
+                if lo <= code_int <= hi:
+                    amort_par_compte.setdefault(label, 0.0)
+                    amort_par_compte[label] += b["solde_cloture"]
+
+    result = []
+    for b in balance:
+        if b["classe"] != "2" or not b["solde_cloture"]:
+            continue
+        code_int = int(b["code"])
+        if code_int >= 280000:
+            continue  # comptes d'amortissement eux-mêmes : pas une immobilisation
+        categorie = categorie_immobilisation(b["code"]) or "Non classé"
+        fiche = get_immobilisation_fiche(conn, b["code"])
+        fournisseur = get_fournisseur(conn, fiche["fournisseur_code"]) if fiche["fournisseur_code"] else None
+        brut = b["solde_cloture"]
+        amort_categorie = amort_par_compte.get(categorie, 0.0)
+        # Répartit l'amortissement RÉEL de la catégorie au prorata du brut de
+        # chaque compte de cette catégorie (l'amortissement est comptabilisé
+        # par compte 28x global, pas par sous-compte 2x individuel).
+        brut_categorie_total = sum(
+            x["solde_cloture"] for x in balance
+            if x["classe"] == "2" and int(x["code"]) < 280000 and (categorie_immobilisation(x["code"]) or "Non classé") == categorie
+        )
+        amort = (amort_categorie * (brut / brut_categorie_total)) if brut_categorie_total else 0.0
+        result.append({
+            "compte": b["code"], "libelle": b["label"], "categorie": categorie,
+            "taux_pct": taux_par_categorie.get(categorie, 0.0),
+            "fournisseur_code": fiche["fournisseur_code"],
+            "fournisseur_nom": fournisseur["raison_sociale"] if fournisseur else "",
+            "prix_achat": fiche["prix_achat"], "date_acquisition": fiche["date_acquisition"],
+            "valeur_brute": brut, "amortissement": amort, "valeur_nette": brut + amort,
+        })
+    result.sort(key=lambda l: (l["categorie"], l["compte"]))
+    return result
 
 
 if __name__ == "__main__":
