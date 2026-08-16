@@ -2090,3 +2090,31 @@ soldes, les 4 états générés sans erreur (Bilan 132/132, Compte de Résultat
 utilise une fonction `Ratio(...)` que le projet de référence lui-même ne
 gère pas non plus, comportement identique à l'original), Bilan resté
 équilibré après report.
+
+### Suppression du menu ÉTATS ET RAPPORTS + nouveaux menus TRANSPORT / IMMOBILISATIONS / RAPPORTS TECHNIQUE
+
+**Demande confirmée par l'utilisateur** (après vérification explicite,
+étant donné l'ampleur du travail concerné) : suppression complète du menu
+ÉTATS ET RAPPORTS et de son contenu (Grand livre, Balance, Bilan, Compte
+de résultat, TFT, Situation financière, Liasse fiscale, Écritures non
+équilibrées, Tableaux d'exécution budgétaire, Impôts, Déclarations
+sociales, Rapprochements bancaires).
+
+**Réalisé** :
+- Le menu et les 12 entrées correspondantes retirés de l'interface.
+- **Le moteur de calcul sous-jacent (`core.py`) n'a PAS été touché** :
+  `compute_bilan()`, `compute_balance()`, `compute_liasse_resultat()`,
+  `compute_tft_indirect()`, `compute_situation_financiere()`,
+  `generate_etat_xlsx()`, etc. restent pleinement fonctionnels et
+  continuent d'être utilisés en interne par d'autres fonctionnalités
+  actives (clôture d'exercice, validation des Règlements, calcul du
+  résultat net...) — seuls les ÉCRANS d'affichage ont été retirés du menu.
+- **3 nouveaux menus ajoutés** : TRANSPORT, IMMOBILISATIONS, RAPPORTS
+  TECHNIQUE — chacun avec un écran provisoire en attente de précisions sur
+  leur contenu exact (structure de menu en place, prête à être développée
+  dès que le besoin est précisé).
+
+Testé : démarrage de l'application, tous les onglets enregistrés
+correspondent à une classe existante (29 onglets au total), le moteur de
+calcul comptable interne (Bilan, clôture d'exercice) reste pleinement
+fonctionnel malgré le retrait de ses écrans d'affichage.
