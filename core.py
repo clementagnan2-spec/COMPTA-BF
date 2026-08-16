@@ -6702,6 +6702,61 @@ def compute_immobilisations_liste(conn, exercice=None):
     return result
 
 
+# ---------------------------------------------------------------------------
+# Balance âgée des créances clients (menu COMMERCE > Recouvrement) — répartit
+# le montant des factures NON PAYÉES (table factures_clients) par tranche
+# d'ancienneté, selon des seuils (en jours) choisis par l'utilisateur.
+# ---------------------------------------------------------------------------
+def compute_balance_agee(conn, seuils=(30, 60, 90), date_reference=None):
+    """Balance âgée par client : pour chaque client ayant au moins une
+    facture non payée (date_paiement_reel vide), répartit le montant de ces
+    factures par tranche d'ancienneté (jours écoulés entre la date de
+    facture et `date_reference` — aujourd'hui par défaut), selon `seuils`
+    (ex. (30,60,90) -> tranches « 0-30 », « 31-60 », « 61-90 », « >90 »).
+    Chaque client renvoyé porte aussi le détail facture par facture
+    (`factures`), pour l'écran de détail (double-clic)."""
+    date_reference = date_reference or date.today().strftime("%Y-%m-%d")
+    try:
+        ref = datetime.strptime(date_reference, "%Y-%m-%d")
+    except ValueError:
+        ref = datetime.today()
+
+    rows = conn.execute(
+        """SELECT f.*, COALESCE(c.raison_sociale, f.client_code) AS raison_sociale
+           FROM factures_clients f LEFT JOIN clients c ON c.code = f.client_code
+           WHERE f.date_paiement_reel IS NULL OR f.date_paiement_reel = ''
+           ORDER BY f.client_code, f.date_facture"""
+    ).fetchall()
+
+    par_client = {}
+    for r in rows:
+        try:
+            d = datetime.strptime(r["date_facture"], "%Y-%m-%d")
+            age = (ref - d).days
+        except (TypeError, ValueError):
+            age = 0
+        client_code = r["client_code"]
+        if client_code not in par_client:
+            par_client[client_code] = {
+                "client_code": client_code, "raison_sociale": r["raison_sociale"],
+                "tranches": [0.0] * (len(seuils) + 1), "total": 0.0, "factures": [],
+            }
+        bucket_idx = len(seuils)
+        for i, s in enumerate(seuils):
+            if age <= s:
+                bucket_idx = i
+                break
+        entry = par_client[client_code]
+        entry["tranches"][bucket_idx] += r["montant"]
+        entry["total"] += r["montant"]
+        entry["factures"].append({
+            "id": r["id"], "piece": r["piece"] or "", "libelle": r["libelle"] or "",
+            "montant": r["montant"], "date_facture": r["date_facture"], "age_jours": age,
+            "tranche": bucket_idx,
+        })
+    return sorted(par_client.values(), key=lambda c: -c["total"])
+
+
 if __name__ == "__main__":
     # Petit auto-test en ligne de commande (sans Tkinter).
     conn = get_connection(":memory:" if False else "test_core.db")

@@ -2155,3 +2155,25 @@ avec 4 plaquettes de frein (stock 10→6, coût total 47 000 = 4×8 000 +
 d'achat et taux 20%, valeur nette calculée exactement depuis la Balance
 (15M brut - 3M amort = 12M net). Bilan resté équilibré (non-régression
 vérifiée).
+
+### Suppression du sous-menu Ventes + Balance âgée des créances clients
+
+**Réalisé** :
+- **Sous-menu « Ventes »** retiré du menu COMMERCE.
+- **Recouvrement** transformé en deux onglets :
+  - **Factures** : le suivi existant (inchangé).
+  - **Balance âgée** (nouveau) : pour chaque client ayant des factures
+    impayées, répartit le montant dû par tranche d'ancienneté (jours
+    écoulés depuis la date de facture). **Seuils des tranches sélectionnables**
+    (3 champs modifiables + préréglages 30/60/90, 15/30/60, 30/60/120),
+    avec ligne de total général. **Double-clic sur un client** ouvre une
+    fenêtre de détail listant chaque facture impayée avec son ancienneté
+    exacte en jours, triée de la plus ancienne à la plus récente.
+- `core.compute_balance_agee()` (nouveau) : s'appuie sur la table
+  `factures_clients` déjà existante (onglet Factures du Recouvrement) —
+  ignore les factures déjà payées (date de paiement réel renseignée).
+
+Testé : 3 factures sur 2 clients avec des anciennetés différentes (5, 95 et
+40 jours) — chaque montant tombe dans la bonne tranche (0-30/31-60/61-90/
+>90), total général exact (850 000), non-régression vérifiée (Bilan resté
+équilibré, ce module étant sans lien avec la comptabilité).

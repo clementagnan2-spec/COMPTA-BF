@@ -104,7 +104,6 @@ class App(tk.Tk):
         register("amortissements", AmortissementsTab)
         register("rapports_technique", PlaceholderTab, "Rapports technique",
                  "À définir — dites-moi quels rapports techniques vous voulez ici et je construis l'écran.")
-        register("ventes", VentesTab)
         register("clients", ClientsTab)
         register("recouvrement", RecouvrementTab)
         register("facturation", FacturationTab)
@@ -143,7 +142,6 @@ class App(tk.Tk):
             ("Soldes d'ouverture", "ouverture"),
         ])
         add_top_menu("COMMERCE", [
-            ("Ventes", "ventes"),
             ("Clients", "clients"),
             ("Recouvrement", "recouvrement"),
             ("Facturation", "facturation"),
@@ -4760,21 +4758,36 @@ class FacturationTab(ttk.Frame):
 
 
 class RecouvrementTab(ttk.Frame):
-    """Journal des factures clients : suivi des retards de paiement (recouvrement)."""
+    """Journal des factures clients : suivi des retards de paiement
+    (recouvrement) + balance âgée des créances (onglet séparé)."""
 
     def __init__(self, parent, conn):
         super().__init__(parent)
         self.conn = conn
-        ttk.Label(self, text="RECOUVREMENT — SUIVI DES RETARDS DE PAIEMENT CLIENTS",
+
+        notebook = ttk.Notebook(self)
+        notebook.pack(fill="both", expand=True)
+        tab_factures = ttk.Frame(notebook)
+        tab_agee = ttk.Frame(notebook)
+        notebook.add(tab_factures, text="Factures")
+        notebook.add(tab_agee, text="Balance âgée")
+
+        self._build_factures(tab_factures)
+        self._build_balance_agee(tab_agee)
+        self.selected_id = None
+        self.refresh()
+
+    def _build_factures(self, parent):
+        ttk.Label(parent, text="RECOUVREMENT — SUIVI DES RETARDS DE PAIEMENT CLIENTS",
                   font=("Segoe UI", 14, "bold")).pack(anchor="w", padx=16, pady=(16, 4))
-        ttk.Label(self, text=(
+        ttk.Label(parent, text=(
             "Enregistrez ici chaque facture émise à un client. L'échéance de paiement est calculée "
             "automatiquement à partir du délai par défaut du client (modifiable dans l'onglet "
             "Clients), à la date de facture. Renseignez ensuite la date réelle de paiement au fur "
             "et à mesure des encaissements — les retards sont signalés automatiquement."
         ), foreground="#595959", wraplength=1050).pack(anchor="w", padx=16, pady=(0, 8))
 
-        form = ttk.LabelFrame(self, text="Nouvelle facture")
+        form = ttk.LabelFrame(parent, text="Nouvelle facture")
         form.pack(fill="x", padx=16, pady=4)
         ttk.Label(form, text="Client :").grid(row=0, column=0, sticky="w", padx=4, pady=4)
         self.client_var = tk.StringVar()
@@ -4802,7 +4815,7 @@ class RecouvrementTab(ttk.Frame):
         ttk.Button(form, text="Créer la facture (échéance auto)", command=self.add_facture).grid(
             row=1, column=4, columnspan=2, sticky="w", padx=12, pady=4)
 
-        update_frame = ttk.LabelFrame(self, text="Mettre à jour la facture sélectionnée")
+        update_frame = ttk.LabelFrame(parent, text="Mettre à jour la facture sélectionnée")
         update_frame.pack(fill="x", padx=16, pady=(8, 4))
         ttk.Label(update_frame, text="Date paiement réel (JJ/MM/AAAA) :").grid(row=0, column=0, sticky="w", padx=4, pady=4)
         self.paiement_reel_var = tk.StringVar()
@@ -4814,7 +4827,7 @@ class RecouvrementTab(ttk.Frame):
 
         cols = ("id", "client", "piece", "libelle", "montant", "date_facture",
                 "echeance_paiement", "statut_paiement")
-        self.tree = ttk.Treeview(self, columns=cols, show="headings")
+        self.tree = ttk.Treeview(parent, columns=cols, show="headings")
         headers = ["ID", "Client", "Pièce", "Libellé", "Montant", "Date facture",
                    "Échéance paiement", "Statut paiement"]
         widths = [40, 180, 90, 200, 110, 110, 130, 160]
@@ -4824,8 +4837,99 @@ class RecouvrementTab(ttk.Frame):
         self.tree.tag_configure("depasse", foreground="#B00020")
         self.tree.pack(fill="both", expand=True, padx=16, pady=8)
         self.tree.bind("<<TreeviewSelect>>", self._on_select)
-        self.selected_id = None
-        self.refresh()
+
+    def _build_balance_agee(self, parent):
+        ttk.Label(parent, text="BALANCE ÂGÉE DES CRÉANCES CLIENTS", font=("Segoe UI", 14, "bold")).pack(
+            anchor="w", padx=16, pady=(16, 4))
+        ttk.Label(parent, text=(
+            "Répartit le montant des factures NON PAYÉES de chaque client par ancienneté (jours écoulés "
+            "depuis la date de facture). Choisissez les seuils des tranches ci-dessous, puis double-cliquez "
+            "sur un client pour voir le détail de ses factures impayées."
+        ), foreground="#595959", wraplength=1050).pack(anchor="w", padx=16, pady=(0, 8))
+
+        seuils_bar = ttk.Frame(parent)
+        seuils_bar.pack(fill="x", padx=16, pady=4)
+        ttk.Label(seuils_bar, text="Seuils des tranches (jours) :").pack(side="left")
+        self.seuil1_var = tk.StringVar(value="30")
+        self.seuil2_var = tk.StringVar(value="60")
+        self.seuil3_var = tk.StringVar(value="90")
+        ttk.Entry(seuils_bar, textvariable=self.seuil1_var, width=6).pack(side="left", padx=4)
+        ttk.Label(seuils_bar, text="/").pack(side="left")
+        ttk.Entry(seuils_bar, textvariable=self.seuil2_var, width=6).pack(side="left", padx=4)
+        ttk.Label(seuils_bar, text="/").pack(side="left")
+        ttk.Entry(seuils_bar, textvariable=self.seuil3_var, width=6).pack(side="left", padx=4)
+        ttk.Button(seuils_bar, text="Appliquer", command=self.refresh_balance_agee).pack(side="left", padx=12)
+        ttk.Label(seuils_bar, text="Préréglages :").pack(side="left", padx=(20, 4))
+        ttk.Button(seuils_bar, text="30/60/90", command=lambda: self._preset_seuils(30, 60, 90)).pack(side="left", padx=2)
+        ttk.Button(seuils_bar, text="15/30/60", command=lambda: self._preset_seuils(15, 30, 60)).pack(side="left", padx=2)
+        ttk.Button(seuils_bar, text="30/60/120", command=lambda: self._preset_seuils(30, 60, 120)).pack(side="left", padx=2)
+
+        cols = ("client", "t0", "t1", "t2", "t3", "total")
+        self.tree_agee = ttk.Treeview(parent, columns=cols, show="headings", height=18)
+        self.tree_agee.heading("client", text="Client")
+        self.tree_agee.column("client", width=260, anchor="w")
+        self.tree_agee.pack(fill="both", expand=True, padx=16, pady=8)
+        self.tree_agee.tag_configure("total", background="#1F4E78", foreground="white", font=("Segoe UI", 9, "bold"))
+        self.tree_agee.bind("<Double-1>", self._on_double_click_agee)
+        self._by_iid_agee = {}
+
+        ttk.Label(parent, text="Double-cliquez sur un client pour voir le détail de ses factures impayées.",
+                  foreground="#595959").pack(anchor="w", padx=16, pady=(0, 12))
+
+    def _preset_seuils(self, s1, s2, s3):
+        self.seuil1_var.set(str(s1))
+        self.seuil2_var.set(str(s2))
+        self.seuil3_var.set(str(s3))
+        self.refresh_balance_agee()
+
+    def _get_seuils(self):
+        try:
+            s1 = int(self.seuil1_var.get())
+            s2 = int(self.seuil2_var.get())
+            s3 = int(self.seuil3_var.get())
+        except ValueError:
+            messagebox.showerror("Erreur", "Les seuils doivent être des nombres entiers (jours).")
+            return None
+        if not (s1 < s2 < s3):
+            messagebox.showerror("Erreur", "Les seuils doivent être croissants (ex. 30 < 60 < 90).")
+            return None
+        return (s1, s2, s3)
+
+    def _on_double_click_agee(self, event=None):
+        sel = self.tree_agee.selection()
+        if not sel:
+            return
+        client = self._by_iid_agee.get(sel[0])
+        if client:
+            BalanceAgeeDetailDialog(self, client)
+
+    def refresh_balance_agee(self):
+        seuils = self._get_seuils()
+        if not seuils:
+            return
+        s1, s2, s3 = seuils
+        headers = ["Client", f"0-{s1} j", f"{s1+1}-{s2} j", f"{s2+1}-{s3} j", f">{s3} j", "Total"]
+        widths = [260, 110, 110, 110, 110, 120]
+        cols = ("client", "t0", "t1", "t2", "t3", "total")
+        for c, h, w in zip(cols, headers, widths):
+            self.tree_agee.heading(c, text=h)
+            self.tree_agee.column(c, width=w, anchor="w" if c == "client" else "e")
+
+        for row in self.tree_agee.get_children():
+            self.tree_agee.delete(row)
+        self._by_iid_agee = {}
+        self._clients_agee = core.compute_balance_agee(self.conn, seuils=seuils)
+        totaux = [0.0, 0.0, 0.0, 0.0]
+        for c in self._clients_agee:
+            iid = self.tree_agee.insert("", "end", values=(
+                c["raison_sociale"], fmt_cfa(c["tranches"][0]), fmt_cfa(c["tranches"][1]),
+                fmt_cfa(c["tranches"][2]), fmt_cfa(c["tranches"][3]), fmt_cfa(c["total"])))
+            self._by_iid_agee[iid] = c
+            for i in range(4):
+                totaux[i] += c["tranches"][i]
+        self.tree_agee.insert("", "end", tags=("total",), values=(
+            "TOTAL", fmt_cfa(totaux[0]), fmt_cfa(totaux[1]), fmt_cfa(totaux[2]), fmt_cfa(totaux[3]),
+            fmt_cfa(sum(totaux))))
 
     def _refresh_client_values(self):
         items = core.list_clients(self.conn)
@@ -4906,6 +5010,39 @@ class RecouvrementTab(ttk.Frame):
                 f"{f['montant']:,.2f}", core.to_display_date(f["date_facture"]),
                 core.to_display_date(f["date_echeance_paiement"]), f["statut_paiement"],
             ))
+        self.refresh_balance_agee()
+
+
+class BalanceAgeeDetailDialog(tk.Toplevel):
+    """Détail des factures impayées d'un client (double-clic depuis la
+    Balance âgée) — liste chaque facture avec son ancienneté en jours."""
+
+    def __init__(self, parent, client):
+        super().__init__(parent)
+        self.title(f"Détail — {client['raison_sociale']}")
+        self.geometry("700x420")
+        self.transient(parent)
+        self.grab_set()
+
+        ttk.Label(self, text=f"Factures impayées — {client['raison_sociale']}",
+                  font=("Segoe UI", 12, "bold")).pack(anchor="w", padx=12, pady=(12, 4))
+        ttk.Label(self, text=f"Total dû : {fmt_cfa(client['total'])}",
+                  font=("Segoe UI", 10, "bold")).pack(anchor="w", padx=12, pady=(0, 8))
+
+        cols = ("piece", "libelle", "date", "age", "montant")
+        tree = ttk.Treeview(self, columns=cols, show="headings", height=14)
+        headers = ["Pièce", "Libellé", "Date facture", "Ancienneté (j)", "Montant"]
+        widths = [90, 240, 100, 110, 120]
+        for c, h, w in zip(cols, headers, widths):
+            tree.heading(c, text=h)
+            tree.column(c, width=w, anchor="w" if c in ("piece", "libelle") else "e")
+        tree.pack(fill="both", expand=True, padx=12, pady=8)
+        for f in sorted(client["factures"], key=lambda x: -x["age_jours"]):
+            tree.insert("", "end", values=(
+                f["piece"], f["libelle"], core.to_display_date(f["date_facture"]), f["age_jours"],
+                fmt_cfa(f["montant"])))
+
+        ttk.Button(self, text="Fermer", command=self.destroy).pack(pady=(0, 12))
 
 
 class FacturesFrsTab(ttk.Frame):
