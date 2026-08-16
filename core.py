@@ -471,7 +471,9 @@ def init_db(conn):
             montant REAL NOT NULL DEFAULT 0,
             date_facture TEXT NOT NULL,
             date_echeance_paiement TEXT,
-            date_paiement_reel TEXT
+            date_paiement_reel TEXT,
+            compte_reglement TEXT,
+            reglement_comptabilise INTEGER NOT NULL DEFAULT 0
         )
     """)
     conn.execute("""
@@ -766,6 +768,11 @@ def _migrate(conn):
     for col in ("date_facture", "date_saisie", "date_paiement_attendu"):
         if bc_cols and col not in bc_cols:
             conn.execute(f"ALTER TABLE ep_bons_commande ADD COLUMN {col} TEXT")
+    fc_cols = [r["name"] for r in conn.execute("PRAGMA table_info(factures_clients)")]
+    if fc_cols and "compte_reglement" not in fc_cols:
+        conn.execute("ALTER TABLE factures_clients ADD COLUMN compte_reglement TEXT")
+    if fc_cols and "reglement_comptabilise" not in fc_cols:
+        conn.execute("ALTER TABLE factures_clients ADD COLUMN reglement_comptabilise INTEGER NOT NULL DEFAULT 0")
 
     # Migre l'ancien mécanisme "stock_initial_<compte>" (settings) vers opening_balances
     default_exercice = str(datetime.today().year)
@@ -2037,6 +2044,8 @@ def compute_ventes_par_client(conn, date_from=None, date_to=None):
 # ---------------------------------------------------------------------------
 def add_facture(conn, client_code, piece, libelle, montant, date_facture,
                  date_echeance_override=None):
+    if not montant or montant <= 0:
+        raise ValueError("Le montant de la facture doit être strictement positif.")
     client = get_client(conn, client_code)
     delai_paiement = client["delai_paiement_jours"] if client else 30
     base = datetime.strptime(date_facture, "%Y-%m-%d")
@@ -2046,6 +2055,41 @@ def add_facture(conn, client_code, piece, libelle, montant, date_facture,
            (client_code, piece, libelle, montant, date_facture, date_echeance_paiement)
            VALUES (?, ?, ?, ?, ?, ?)""",
         (client_code, piece, libelle, montant, date_facture, date_echeance),
+    )
+    conn.commit()
+
+
+def enregistrer_paiement_facture(conn, facture_id, date_paiement_reel, compte_reglement, exercice=None):
+    """Enregistre le règlement d'une facture client (Recouvrement) ET
+    comptabilise l'encaissement : une écriture équilibrée Débit compte
+    banque/caisse choisi / Crédit compte client (411000, même convention que
+    la Facturation), pour le montant de la facture. Ne comptabilise
+    qu'UNE SEULE FOIS par facture (garde-fou `reglement_comptabilise`) —
+    modifier ensuite la date de paiement ne repostera pas une seconde
+    écriture."""
+    facture = conn.execute("SELECT * FROM factures_clients WHERE id = ?", (facture_id,)).fetchone()
+    if not facture:
+        raise ValueError("Facture introuvable.")
+    if not compte_reglement or not account_exists(conn, compte_reglement):
+        raise ValueError(f"Le compte de règlement « {compte_reglement} » n'existe pas.")
+    if account_racine(compte_reglement) != "5":
+        raise ValueError("Le compte de règlement doit être un compte de trésorerie (classe 5 — banque ou caisse).")
+
+    client = get_client(conn, facture["client_code"])
+    tiers_label = client["raison_sociale"] if client else facture["client_code"]
+    piece = facture["piece"] or f"REGL-{facture_id}"
+
+    if not facture["reglement_comptabilise"]:
+        _check_exercice_editable(conn, date_paiement_reel)
+        add_entry(conn, date_paiement_reel, piece, "BQ", compte_reglement, tiers_label,
+                  f"Règlement facture {piece}", facture["montant"], 0)
+        add_entry(conn, date_paiement_reel, piece, "BQ", "411000", tiers_label,
+                  f"Règlement facture {piece}", 0, facture["montant"], client_code=facture["client_code"])
+
+    conn.execute(
+        """UPDATE factures_clients SET date_paiement_reel = ?, compte_reglement = ?, reglement_comptabilise = 1
+           WHERE id = ?""",
+        (date_paiement_reel, compte_reglement, facture_id),
     )
     conn.commit()
 

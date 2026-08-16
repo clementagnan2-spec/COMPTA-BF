@@ -2177,3 +2177,32 @@ Testé : 3 factures sur 2 clients avec des anciennetés différentes (5, 95 et
 40 jours) — chaque montant tombe dans la bonne tranche (0-30/31-60/61-90/
 >90), total général exact (850 000), non-régression vérifiée (Bilan resté
 équilibré, ce module étant sans lien avec la comptabilité).
+
+### Correctifs Recouvrement : montant à 0 + règlement non comptabilisé
+
+**Deux bugs repérés par l'utilisateur sur une vraie capture d'écran** :
+
+1. **Montant affiché à 0.00 pour toutes les factures** : le formulaire
+   « Nouvelle facture » acceptait silencieusement un champ Montant laissé
+   vide, en le remplaçant par 0 au lieu d'avertir l'utilisateur. Corrigé :
+   le montant est désormais obligatoire et doit être strictement positif,
+   aussi bien côté écran (message d'erreur explicite) que côté moteur
+   (`core.add_facture()` refuse un montant ≤ 0).
+2. **Aucune option de règlement, aucune comptabilisation** : « Enregistrer
+   le paiement » se contentait de noter une date, sans jamais demander
+   quel compte banque/caisse avait reçu l'argent, et sans générer la
+   moindre écriture comptable. Corrigé :
+   - Nouveau champ **« Compte banque/caisse »** (recherche filtrée à la
+     classe 5, liste déroulante) à côté de la date de paiement réel.
+   - **`core.enregistrer_paiement_facture()`** (nouveau) : comptabilise
+     réellement le règlement — Débit banque/caisse choisi, Crédit compte
+     client (411000, même convention que la Facturation), pour le montant
+     de la facture. Un garde-fou (`reglement_comptabilise`) empêche de
+     reposter une seconde écriture si la date de paiement est modifiée
+     ensuite.
+
+Testé de bout en bout, en reproduisant exactement le scénario de
+l'utilisateur (facture 1 500 000 F sur « Societe ABC5 », réglée en
+caisse) : montant correctement affiché, écriture comptable générée
+(Débit 571000 / Crédit 411000), Bilan resté équilibré, aucun doublon
+d'écriture en cas de second appel.

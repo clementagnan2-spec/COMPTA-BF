@@ -4815,15 +4815,26 @@ class RecouvrementTab(ttk.Frame):
         ttk.Button(form, text="Créer la facture (échéance auto)", command=self.add_facture).grid(
             row=1, column=4, columnspan=2, sticky="w", padx=12, pady=4)
 
-        update_frame = ttk.LabelFrame(parent, text="Mettre à jour la facture sélectionnée")
+        update_frame = ttk.LabelFrame(parent, text="Enregistrer le règlement de la facture sélectionnée")
         update_frame.pack(fill="x", padx=16, pady=(8, 4))
         ttk.Label(update_frame, text="Date paiement réel (JJ/MM/AAAA) :").grid(row=0, column=0, sticky="w", padx=4, pady=4)
         self.paiement_reel_var = tk.StringVar()
         ttk.Entry(update_frame, textvariable=self.paiement_reel_var, width=14).grid(row=0, column=1, padx=4)
-        ttk.Button(update_frame, text="Enregistrer le paiement", command=self.save_paiement).grid(
-            row=0, column=2, padx=8)
+        ttk.Label(update_frame, text="Compte banque/caisse :").grid(row=0, column=2, sticky="w", padx=(12, 4))
+        self.compte_reglement_var = tk.StringVar()
+        self.compte_reglement_combo = ttk.Combobox(update_frame, textvariable=self.compte_reglement_var, width=26)
+        self.compte_reglement_combo.grid(row=0, column=3, padx=4)
+        self.compte_reglement_combo.bind("<KeyRelease>", self._on_compte_reglement_keyrelease)
+        self.compte_reglement_combo.bind("<Button-1>", lambda e: e.widget.event_generate("<Down>"))
+        self._refresh_compte_reglement_values()
+        ttk.Button(update_frame, text="Enregistrer le paiement (comptabilise)", command=self.save_paiement).grid(
+            row=0, column=4, padx=8)
         ttk.Button(update_frame, text="Supprimer la facture sélectionnée", command=self.delete_facture).grid(
-            row=0, column=3, padx=20)
+            row=1, column=4, padx=8, pady=(4, 0))
+        ttk.Label(update_frame, text=(
+            "Comptabilise automatiquement le règlement (Débit banque/caisse choisi, Crédit compte client "
+            "411000) — une seule fois par facture."
+        ), foreground="#595959").grid(row=1, column=0, columnspan=4, sticky="w", padx=4, pady=(4, 4))
 
         cols = ("id", "client", "piece", "libelle", "montant", "date_facture",
                 "echeance_paiement", "statut_paiement")
@@ -4962,21 +4973,40 @@ class RecouvrementTab(ttk.Frame):
             messagebox.showerror("Client invalide", f"Le client « {code} » n'existe pas. "
                                                       f"Créez-le d'abord dans l'onglet Clients.")
             return
+        if not self.montant_var.get().strip():
+            messagebox.showwarning("Champ manquant", "Le montant est obligatoire.")
+            return
         try:
-            montant = float(self.montant_var.get() or 0)
+            montant = float(self.montant_var.get())
         except ValueError:
             messagebox.showerror("Erreur", "Le montant doit être un nombre.")
+            return
+        if montant <= 0:
+            messagebox.showerror("Erreur", "Le montant doit être strictement positif.")
             return
         date_facture = core.to_iso_date(self.date_facture_var.get().strip())
         if not date_facture:
             messagebox.showwarning("Champ manquant", "La date de facture est obligatoire.")
             return
-        core.add_facture(self.conn, code, self.piece_var.get().strip(), self.libelle_var.get().strip(),
-                          montant, date_facture)
+        try:
+            core.add_facture(self.conn, code, self.piece_var.get().strip(), self.libelle_var.get().strip(),
+                              montant, date_facture)
+        except ValueError as exc:
+            messagebox.showerror("Erreur", str(exc))
+            return
         self.piece_var.set("")
         self.libelle_var.set("")
         self.montant_var.set("")
         self.refresh()
+
+    def _refresh_compte_reglement_values(self):
+        items = [a for a in core.search_accounts(self.conn, "", limit=200) if a["classe"] == "5"]
+        self.compte_reglement_combo["values"] = [f"{a['code']} — {a['label']}" for a in items]
+
+    def _on_compte_reglement_keyrelease(self, event=None):
+        query = self._extract_code(self.compte_reglement_var.get())
+        items = [a for a in core.search_accounts(self.conn, query, limit=50) if a["classe"] == "5"]
+        self.compte_reglement_combo["values"] = [f"{a['code']} — {a['label']}" for a in items]
 
     def save_paiement(self):
         if self.selected_id is None:
@@ -4986,9 +5016,21 @@ class RecouvrementTab(ttk.Frame):
         if not d:
             messagebox.showwarning("Champ manquant", "Saisissez la date de paiement réel.")
             return
-        core.update_facture(self.conn, self.selected_id, date_paiement_reel=d)
+        compte = self._extract_code(self.compte_reglement_var.get())
+        if not compte:
+            messagebox.showwarning("Champ manquant",
+                                    "Choisissez le compte banque ou caisse ayant reçu le règlement.")
+            return
+        try:
+            core.enregistrer_paiement_facture(self.conn, self.selected_id, d, compte)
+        except ValueError as exc:
+            messagebox.showerror("Erreur", str(exc))
+            return
         self.paiement_reel_var.set("")
+        self.compte_reglement_var.set("")
         self.refresh()
+        messagebox.showinfo("Paiement enregistré",
+                             "Le règlement a été comptabilisé (Débit banque/caisse, Crédit client).")
 
     def delete_facture(self):
         if self.selected_id is None:
@@ -5001,6 +5043,7 @@ class RecouvrementTab(ttk.Frame):
 
     def refresh(self):
         self._refresh_client_values()
+        self._refresh_compte_reglement_values()
         for row in self.tree.get_children():
             self.tree.delete(row)
         for f in core.list_factures(self.conn):
