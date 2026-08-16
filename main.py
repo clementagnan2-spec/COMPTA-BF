@@ -23,6 +23,27 @@ def fmt_cfa(v):
     return f"{v:,.0f}".replace(",", " ")
 
 
+def export_etat_gabarit(parent, conn, etat_id, nom_fichier, titre):
+    """Exporte un état financier (Bilan/Résultat/Situation/TFT) dans son
+    gabarit officiel (voir core.generate_etat_xlsx) — commun aux 4 onglets
+    du menu ÉTATS ET RAPPORTS concernés."""
+    path = filedialog.asksaveasfilename(
+        defaultextension=".xlsx", filetypes=[("Classeur Excel", "*.xlsx")],
+        initialfile=nom_fichier, title=f"Exporter {titre} (gabarit officiel)",
+    )
+    if not path:
+        return
+    try:
+        rapport = core.generate_etat_xlsx(conn, etat_id, path)
+    except Exception as exc:
+        messagebox.showerror("Erreur", f"Échec de l'export : {exc}", parent=parent)
+        return
+    msg = f"{titre} exporté dans le gabarit officiel :\n{path}\n\n{rapport['cells_ok']} cellule(s) calculée(s)."
+    if rapport["cells_error"]:
+        msg += f"\n⚠ {len(rapport['cells_error'])} cellule(s) en erreur (affichées « #ERREUR » dans le fichier)."
+    messagebox.showinfo("Export terminé", msg, parent=parent)
+
+
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
@@ -88,9 +109,7 @@ class App(tk.Tk):
         register("recouvrement", RecouvrementTab)
         register("facturation", FacturationTab)
         register("marges", MargesTab)
-        register("achats", AchatsTab)
         register("fournisseurs", FournisseursTab)
-        register("factures_frs", FacturesFrsTab)
         register("contrats", ContratsTab)
         register("expression_besoin", ExpressionBesoinTab)
         register("ep_bon_commande", BonCommandeEPTab)
@@ -149,9 +168,7 @@ class App(tk.Tk):
             ("Produits finis", "stocks"),
         ])
         add_top_menu("ENGAGEMENTS-PROJETS", [
-            ("Achats", "achats"),
             ("Fournisseurs", "fournisseurs"),
-            ("Factures frs", "factures_frs"),
             ("Contrats", "contrats"),
             ("Expression de besoin", "expression_besoin"),
             ("Bon de commande", "ep_bon_commande"),
@@ -214,6 +231,29 @@ class App(tk.Tk):
     def _new_exercice(self):
         current = core.get_current_exercice(self.conn)
         suggestion = str(int(current) + 1)
+
+        if not core.is_exercice_cloture(self.conn, current):
+            bilan = core.compute_bilan(self.conn, exercice=current)
+            if abs(bilan["ecart"]) >= 1:
+                messagebox.showwarning(
+                    "Bilan déséquilibré",
+                    f"L'exercice {current} n'est pas équilibré (écart de {bilan['ecart']:,.2f}) — "
+                    f"corrigez-le avant de le clôturer (voir l'onglet Bilan pour le diagnostic). "
+                    f"Un nouvel exercice sera créé, mais SANS solde d'ouverture reporté pour l'instant.",
+                )
+            elif messagebox.askyesno(
+                "Clôturer l'exercice en cours ?",
+                f"L'exercice {current} n'est pas encore clôturé : ses soldes de clôture ne seraient donc "
+                f"pas reportés comme soldes d'ouverture du nouvel exercice — c'est le cas le plus courant "
+                f"d'un Bilan qui semble « vide » au démarrage d'une nouvelle année.\n\n"
+                f"Clôturer {current} maintenant et reporter ses soldes sur le nouvel exercice ?"
+            ):
+                try:
+                    suggestion = core.close_exercice(self.conn, current)
+                except ValueError as exc:
+                    messagebox.showerror("Erreur", str(exc))
+                    return
+
         new_ex = simpledialog.askstring("Nouvel exercice", "Année de l'exercice (AAAA) :",
                                          initialvalue=suggestion, parent=self)
         if not new_ex:
@@ -1409,6 +1449,10 @@ class CompteResultatTab(ttk.Frame):
             "le TFT (compute_liasse_resultat) — toujours cohérent avec la Balance et le Bilan."
         ), foreground="#595959").pack(anchor="w", padx=8)
         ttk.Button(self, text="Actualiser", command=self.refresh).pack(pady=8)
+        ttk.Button(self, text="Exporter (gabarit officiel .xlsx)",
+                   command=lambda: export_etat_gabarit(
+                       self, self.conn, "resultat", "Compte_de_Resultat.xlsx", "le Compte de résultat")
+                   ).pack(pady=(0, 8))
         self.refresh()
 
     def _row(self, tag, label, val):
@@ -2647,6 +2691,10 @@ class TftIndirectTab(ttk.Frame):
         self.ecart_var = tk.StringVar()
         ttk.Label(self, textvariable=self.ecart_var, font=("Segoe UI", 10, "bold")).pack(anchor="w", padx=8)
         ttk.Button(self, text="Actualiser", command=self.refresh).pack(pady=8)
+        ttk.Button(self, text="Exporter (gabarit officiel .xlsx)",
+                   command=lambda: export_etat_gabarit(
+                       self, self.conn, "flux", "Flux_de_Tresorerie.xlsx", "le TFT")
+                   ).pack(pady=(0, 8))
         self.refresh()
 
     def _row(self, tag, label, val):
@@ -2822,6 +2870,10 @@ class SituationFinanciereTab(ttk.Frame):
         self.ecart_var = tk.StringVar()
         ttk.Label(self, textvariable=self.ecart_var, font=("Segoe UI", 10, "bold")).pack(anchor="w", padx=8)
         ttk.Button(self, text="Actualiser", command=self.refresh).pack(pady=8)
+        ttk.Button(self, text="Exporter (gabarit officiel .xlsx)",
+                   command=lambda: export_etat_gabarit(
+                       self, self.conn, "situation", "Situation_Financiere.xlsx", "la Situation financière")
+                   ).pack(pady=(0, 8))
         self.refresh()
 
     def _row(self, tag, label, val, pct=False):

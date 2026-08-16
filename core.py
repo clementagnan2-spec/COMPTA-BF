@@ -3220,146 +3220,351 @@ def compute_bilan_detaille(conn, exercice=None):
 
 
 # ---------------------------------------------------------------------------
-# Export du Bilan dans le GABARIT EXCEL EXACT du rapport financier de
-# référence de l'utilisateur (templates/bilan_template.xls, format
-# SpreadsheetML — un fichier XML valide malgré l'extension .xls). Plutôt que
-# de reconstruire péniblement les 283 cellules une par une, un petit
-# interpréteur générique évalue chaque formule (CtaCptSolde, CtaCptSoldeDébit,
-# CtaCptSoldeCrédit, et leurs variantes N-1 CtaCptSoldeNm1/...Nm1) directement
-# à partir de la Balance — garantissant que TOUTE cellule du gabarit reçoit
-# la bonne valeur, y compris les cas particuliers (plages "50*","56*",
-# TOTAL II sur "4*","59*"...), sans recopier une logique métier séparée.
+# Génération des états financiers (Bilan, Compte de Résultat, Situation
+# Financière, TFT) à partir des GABARITS EXCEL EXACTS du projet de référence
+# de l'utilisateur (templates/modele_*.xlsx + bilan_template.xls) — moteur
+# d'évaluation multi-passes des formules CtaCptSolde.../[Rxxx.EtLoc], porté
+# tel quel du projet de référence (« bilan-auto ») fourni par l'utilisateur,
+# adapté pour lire les soldes directement depuis CETTE application (Balance
+# SQLite) au lieu d'exiger l'import de deux fichiers de balance externes.
 # ---------------------------------------------------------------------------
 BILAN_TEMPLATE_PATH = os.path.join(_resource_dir(), "templates", "bilan_template.xls")
 
-
-def _prefix_to_range(prefix):
-    """'201*' -> (201000, 201999) ; '6032*' -> (603200, 603299) ; '707'
-    (sans étoile) -> (707000, 707999) — un compte SYSCOHADA a 6 chiffres."""
-    p = prefix.rstrip("*")
-    lo = int(p.ljust(6, "0"))
-    hi = int(p.ljust(6, "9"))
-    return lo, hi
-
-
-def _cta_cpt_solde(balance, args, sign=None):
-    """Réplique CtaCptSolde()/CtaCptSoldeDébit()/CtaCptSoldeCrédit() du
-    gabarit : somme des soldes de clôture des comptes dont le code est dans
-    la plage couverte par `args` (1 racine/préfixe, ou 2 = une plage de
-    préfixes), filtrés par signe (sign='pos' -> Débit uniquement, valeur
-    positive renvoyée ; sign='neg' -> Crédit uniquement, valeur positive
-    renvoyée par convention du gabarit ; sign=None -> solde naturel, signé)."""
-    if len(args) == 1:
-        lo, hi = _prefix_to_range(args[0])
-    elif len(args) >= 2:
-        lo, _ = _prefix_to_range(args[0])
-        _, hi = _prefix_to_range(args[1])
-    else:
-        return 0.0
-    total = 0.0
-    for b in balance:
-        code_int = int(b["code"])
-        if not (lo <= code_int <= hi):
-            continue
-        v = b["solde_cloture"]
-        if sign == "pos":
-            if v > 0:
-                total += v
-        elif sign == "neg":
-            if v < 0:
-                total += -v
-        else:
-            total += v
-    return total
+ETATS_TEMPLATES = {
+    "bilan": {"path": os.path.join(_resource_dir(), "templates", "modele_bilan.xlsx"),
+              "sheet_hint": "BILAN", "output_name": "Bilan.xlsx"},
+    "resultat": {"path": os.path.join(_resource_dir(), "templates", "modele_resultat.xlsx"),
+                 "sheet_hint": "Feuil1", "output_name": "Compte_de_Resultat.xlsx"},
+    "situation": {"path": os.path.join(_resource_dir(), "templates", "modele_situation.xlsx"),
+                  "sheet_hint": "Feuil1", "output_name": "Situation_Financiere.xlsx"},
+    "flux": {"path": os.path.join(_resource_dir(), "templates", "modele_flux.xlsx"),
+             "sheet_hint": "Feuil1", "output_name": "Flux_de_Tresorerie.xlsx"},
+}
 
 
-_CTA_FUNC_RE = re.compile(r"CtaCptSolde(Débit|Crédit)?(Nm1)?\(([^)]*)\)")
-_NAMED_REF_RE = re.compile(r"\[(\w+)\.EtLoc\]")
-_NAMED_DEF_RE = re.compile(r"^\[(\w+)\.EtLoc\]=(.*)$")
+def _racine_range(prefixes):
+    clean = [p.rstrip("*") for p in prefixes]
+    if len(clean) == 1:
+        return clean[0], clean[0]
+    return clean[0], clean[1]
 
 
-def _eval_bilan_formula(formula, balance_n, balance_n1, named_refs):
-    """Évalue une formule du gabarit (voir _CTA_FUNC_RE/_NAMED_REF_RE) et
-    retourne (valeur, nom_défini_ou_None). `named_refs` est mis à jour au
-    fil de l'eau : les cellules sont évaluées dans l'ordre du document, donc
-    toute référence [Rxxx.EtLoc] a déjà été résolue par une cellule
-    précédente au moment où elle est utilisée."""
-    s = formula.strip()
-    if s.startswith("="):
-        s = s[1:]
-    defined_name = None
-    m = _NAMED_DEF_RE.match(s)
-    if m:
-        defined_name = m.group(1)
-        s = m.group(2)
-
-    def repl_ref(m2):
-        return f"({named_refs.get(m2.group(1), 0.0)})"
-    s = _NAMED_REF_RE.sub(repl_ref, s)
-
-    def repl_func(m2):
-        debit_credit, nm1, args_str = m2.group(1), m2.group(2), m2.group(3)
-        args = re.findall(r'"([^"]*)"', args_str)
-        if not args and args_str.strip():
-            args = [args_str.strip()]
-        sign = "pos" if debit_credit == "Débit" else ("neg" if debit_credit == "Crédit" else None)
-        balance = balance_n1 if nm1 else balance_n
-        return f"({_cta_cpt_solde(balance, args, sign=sign)})"
-    s = _CTA_FUNC_RE.sub(repl_func, s)
-
-    s = s.strip()
-    if not s:
-        return 0.0, defined_name
+def _compte_dans_plage(compte, debut, fin):
+    if debut == fin:
+        return compte.startswith(debut)
+    L = max(len(debut), len(fin))
+    borne_min = int(debut.ljust(L, "0"))
+    borne_max = int(fin.ljust(L, "9"))
+    prefix_compte = compte[:L].ljust(L, "0")
     try:
-        value = eval(s, {"__builtins__": {}}, {})
+        val = int(prefix_compte)
+    except ValueError:
+        return False
+    return borne_min <= val <= borne_max
+
+
+def _comptes_matching(soldes, prefixes):
+    debut, fin = _racine_range(prefixes)
+    for compte in soldes:
+        if _compte_dans_plage(compte, debut, fin):
+            yield compte
+
+
+def cta_cpt_solde_debit(soldes, *prefixes):
+    return sum(soldes[c] for c in _comptes_matching(soldes, prefixes) if soldes[c] > 0)
+
+
+def cta_cpt_solde_credit(soldes, *prefixes):
+    return sum(-soldes[c] for c in _comptes_matching(soldes, prefixes) if soldes[c] < 0)
+
+
+def cta_cpt_solde(soldes, *prefixes):
+    return sum(soldes[c] for c in _comptes_matching(soldes, prefixes))
+
+
+_FUNC_TOKENS = [
+    ("CtaCptSoldeDébitNm1", "__F_DEBIT_NM1__"), ("CtaCptSoldeDebitNm1", "__F_DEBIT_NM1__"),
+    ("CtaCptSoldeCréditNm1", "__F_CREDIT_NM1__"), ("CtaCptSoldeCreditNm1", "__F_CREDIT_NM1__"),
+    ("CtaCptSoldeNm1", "__F_SOLDE_NM1__"),
+    ("CtaCptSoldeDébit", "__F_DEBIT__"), ("CtaCptSoldeDebit", "__F_DEBIT__"),
+    ("CtaCptSoldeCrédit", "__F_CREDIT__"), ("CtaCptSoldeCredit", "__F_CREDIT__"),
+    ("CtaCptSolde", "__F_SOLDE__"),
+]
+_RUBRIQUE_REF_RE = re.compile(r"\[([A-Za-z0-9_]+)\.EtLoc\]")
+_RUBRIQUE_ASSIGN_RE = re.compile(r"^\[([A-Za-z0-9_]+)\.EtLoc\]=(.*)$")
+
+
+class FormulaError(Exception):
+    pass
+
+
+class RubriqueNotReady(Exception):
+    """Levée quand une formule référence une rubrique [Rxxx.EtLoc] pas
+    encore calculée : on réessaiera lors d'une passe ultérieure (les
+    formules d'un gabarit ne sont pas forcément dans l'ordre de dépendance —
+    ex. un total en haut de page qui additionne des rubriques définies plus
+    bas)."""
+    pass
+
+
+def is_formula(value):
+    if not isinstance(value, str):
+        return False
+    v = value.strip()
+    if not v.startswith("="):
+        return False
+    return ("CtaCptSolde" in v) or bool(_RUBRIQUE_REF_RE.search(v))
+
+
+def _prepare_expr(formula):
+    expr = formula.strip()
+    if expr.startswith("="):
+        expr = expr[1:]
+    rubrique_id = None
+    m = _RUBRIQUE_ASSIGN_RE.match(expr)
+    if m:
+        rubrique_id = m.group(1)
+        expr = m.group(2)
+    expr = _RUBRIQUE_REF_RE.sub(lambda mo: "__RUB__(%r)" % mo.group(1), expr)
+    for name, token in _FUNC_TOKENS:
+        expr = expr.replace(name, token)
+    if "CtaCptSolde" in expr:
+        raise FormulaError("Fonction non reconnue : %s" % formula)
+    leftover = re.sub(r"__F_[A-Z0-9_]+__|__RUB__\([^)]*\)", "", expr)
+    if re.search(r"[A-Za-zÀ-ÿ]", leftover):
+        raise FormulaError("Fonction ou référence non reconnue : %s" % formula)
+    return rubrique_id, expr
+
+
+def _make_namespace(soldes_n, soldes_n1, rubrique_values, defined_ids=None, missing_used=None):
+    def RUB(rubrique_id):
+        if rubrique_id in rubrique_values:
+            return rubrique_values[rubrique_id]
+        if defined_ids is not None and rubrique_id not in defined_ids:
+            if missing_used is not None:
+                missing_used.add(rubrique_id)
+            return 0
+        raise RubriqueNotReady(rubrique_id)
+
+    return {
+        "__F_DEBIT__": lambda *p: cta_cpt_solde_debit(soldes_n, *p),
+        "__F_CREDIT__": lambda *p: cta_cpt_solde_credit(soldes_n, *p),
+        "__F_SOLDE__": lambda *p: cta_cpt_solde(soldes_n, *p),
+        "__F_DEBIT_NM1__": lambda *p: cta_cpt_solde_debit(soldes_n1, *p),
+        "__F_CREDIT_NM1__": lambda *p: cta_cpt_solde_credit(soldes_n1, *p),
+        "__F_SOLDE_NM1__": lambda *p: cta_cpt_solde(soldes_n1, *p),
+        "__RUB__": RUB,
+    }
+
+
+def evaluate_formula(formula, soldes_n, soldes_n1, rubrique_values=None, defined_ids=None, missing_used=None):
+    rubrique_values = rubrique_values if rubrique_values is not None else {}
+    rubrique_id, py_expr = _prepare_expr(formula)
+    namespace = _make_namespace(soldes_n, soldes_n1, rubrique_values, defined_ids, missing_used)
+    try:
+        value = eval(py_expr, {"__builtins__": {}}, namespace)
+    except RubriqueNotReady:
+        raise
+    except Exception as e:
+        raise FormulaError("Erreur d'évaluation (%s) : %s" % (formula, e))
+    return value, rubrique_id
+
+
+def evaluate_sheet_formulas(ws, soldes_n, soldes_n1):
+    """Évalue toutes les cellules-formules d'une feuille en plusieurs passes
+    (résout les dépendances entre cellules liées par des rubriques
+    [xxx.EtLoc], quel que soit leur ordre dans la feuille). Renvoie
+    (results, errors, warnings)."""
+    pending = []
+    for row in ws.iter_rows():
+        for cell in row:
+            if is_formula(cell.value):
+                pending.append((cell, cell.value))
+
+    defined_ids = set()
+    for _cell, formula in pending:
+        s = formula.strip()
+        m = _RUBRIQUE_ASSIGN_RE.match(s[1:] if s.startswith("=") else s)
+        if m:
+            defined_ids.add(m.group(1))
+
+    rubrique_values, results, errors, warnings = {}, {}, [], []
+    missing_used = set()
+    max_passes = len(pending) + 2
+    for _ in range(max_passes):
+        if not pending:
+            break
+        still_pending, progress = [], False
+        for cell, formula in pending:
+            try:
+                value, rubrique_id = evaluate_formula(formula, soldes_n, soldes_n1, rubrique_values,
+                                                        defined_ids, missing_used)
+            except RubriqueNotReady:
+                still_pending.append((cell, formula))
+                continue
+            except FormulaError as e:
+                errors.append((cell.coordinate, formula, str(e)))
+                progress = True
+                continue
+            results[cell.coordinate] = value
+            if rubrique_id:
+                rubrique_values[rubrique_id] = value
+            if missing_used:
+                for rid in missing_used:
+                    warnings.append((cell.coordinate, formula,
+                                      "Rubrique [%s.EtLoc] jamais définie : traitée comme 0" % rid))
+                missing_used.clear()
+            progress = True
+        pending = still_pending
+        if not progress:
+            break
+    for cell, formula in pending:
+        errors.append((cell.coordinate, formula, "Rubrique référencée jamais calculée (dépendance manquante)"))
+    return results, errors, warnings
+
+
+_SS_NS = "urn:schemas-microsoft-com:office:spreadsheet"
+
+
+def _is_spreadsheetml(path):
+    try:
+        with open(path, "rb") as f:
+            head = f.read(300)
+        head_txt = head.decode("utf-8", errors="ignore")
+        return "<?xml" in head_txt and ("mso-application" in head_txt or "Workbook" in head_txt)
     except Exception:
-        value = 0.0
-    return float(value), defined_name
+        return False
+
+
+def _spreadsheetml_to_workbook(path):
+    """Convertit un vieux fichier XML SpreadsheetML (Excel 2003, souvent
+    nommé .xls) en classeur openpyxl équivalent (comme le gabarit de Bilan
+    fourni par l'utilisateur — voir templates/bilan_template.xls)."""
+    import openpyxl as _openpyxl
+    tree_xml = __import__("xml.etree.ElementTree", fromlist=["ElementTree"]).parse(path)
+    root = tree_xml.getroot()
+    wb_out = _openpyxl.Workbook()
+    wb_out.remove(wb_out.active)
+
+    def tag(name):
+        return "{%s}%s" % (_SS_NS, name)
+
+    for ws_el in root.findall(tag("Worksheet")):
+        sheet_name = ws_el.get(tag("Name")) or "Sheet"
+        ws_out = wb_out.create_sheet(title=sheet_name[:31])
+        table = ws_el.find(tag("Table"))
+        if table is None:
+            continue
+        row_idx = 0
+        for row_el in table.findall(tag("Row")):
+            idx_attr = row_el.get(tag("Index"))
+            row_idx = int(idx_attr) if idx_attr else row_idx + 1
+            col_idx = 0
+            for cell_el in row_el.findall(tag("Cell")):
+                idx_attr = cell_el.get(tag("Index"))
+                col_idx = int(idx_attr) if idx_attr else col_idx + 1
+                data_el = cell_el.find(tag("Data"))
+                if data_el is not None:
+                    val = data_el.text
+                    dtype = data_el.get(tag("Type"), "String")
+                    if val is not None and dtype == "Number":
+                        try:
+                            fval = float(val)
+                            val = int(fval) if fval.is_integer() else fval
+                        except ValueError:
+                            pass
+                    if val is not None:
+                        ws_out.cell(row=row_idx, column=col_idx, value=val)
+                span = cell_el.get(tag("MergeAcross"))
+                if span:
+                    col_idx += int(span)
+    return wb_out
+
+
+def open_template_workbook(template_path):
+    import openpyxl as _openpyxl
+    if _is_spreadsheetml(template_path):
+        return _spreadsheetml_to_workbook(template_path)
+    return _openpyxl.load_workbook(template_path, data_only=False)
+
+
+def _guess_etat_sheet(wb, preferred):
+    if preferred in wb.sheetnames:
+        return preferred
+    best_name, best_count = None, -1
+    for name in wb.sheetnames:
+        count = sum(1 for row in wb[name].iter_rows() for cell in row if is_formula(cell.value))
+        if count > best_count:
+            best_name, best_count = name, count
+    if best_count <= 0:
+        raise ValueError("Aucune feuille du modèle ne contient de formules CtaCptSolde... — vérifiez le fichier.")
+    return best_name
+
+
+def _soldes_dict(conn, exercice):
+    """{code_compte: solde_cloture} pour un exercice — alimente le moteur
+    de formules CtaCptSolde... directement depuis la Balance de cette
+    application (au lieu d'exiger l'import d'un fichier de balance externe,
+    comme le fait le projet de référence)."""
+    try:
+        balance = compute_balance(conn, only_with_movement=False, exercice=exercice)
+    except Exception:
+        return {}
+    soldes = {}
+    for b in balance:
+        soldes[b["code"]] = soldes.get(b["code"], 0.0) + b["solde_cloture"]
+    return soldes
+
+
+def generate_etat_xlsx(conn, etat_id, output_path, exercice=None):
+    """Génère UN état financier (Bilan / Compte de Résultat / Situation
+    Financière / TFT) à partir de son gabarit officiel
+    (voir ETATS_TEMPLATES) et de la Balance de CETTE application (exercice
+    demandé pour N, exercice-1 pour N-1) — même moteur de formules que les
+    4 gabarits partagent. Retourne un dict {cells_ok, cells_error,
+    cells_warning} pour affichage d'un éventuel diagnostic."""
+    info = ETATS_TEMPLATES.get(etat_id)
+    if not info:
+        raise ValueError(f"État inconnu : {etat_id}")
+    exercice = exercice or get_current_exercice(conn)
+    exercice_n1 = str(int(exercice) - 1)
+    soldes_n = _soldes_dict(conn, exercice)
+    soldes_n1 = _soldes_dict(conn, exercice_n1)
+
+    wb = open_template_workbook(info["path"])
+    actual_sheet = _guess_etat_sheet(wb, preferred=info["sheet_hint"])
+    ws = wb[actual_sheet]
+
+    results, errors, warnings = evaluate_sheet_formulas(ws, soldes_n, soldes_n1)
+    for coord, value in results.items():
+        ws[coord] = value
+    for coord, formula, msg in errors:
+        ws[coord] = "#ERREUR"
+
+    wb.save(output_path)
+    return {"cells_ok": len(results), "cells_error": errors, "cells_warning": warnings}
 
 
 def export_bilan_gabarit_xlsx(conn, path, exercice=None):
-    """Exporte le Bilan dans le GABARIT EXACT du rapport financier de
-    référence de l'utilisateur (mêmes libellés, mêmes cellules, même mise en
-    forme/couleurs/bordures — le fichier est recopié tel quel, seules les
-    valeurs changent). Le gabarit stocke chaque formule (CtaCptSolde...)
-    comme simple TEXTE dans la cellule (pas une formule Excel vivante) :
-    on repère ce texte par une substitution directe (regex sur le XML brut,
-    sans reconstruire tout le document — pour ne prendre aucun risque avec
-    les espaces de noms XML/le format SpreadsheetML), on l'évalue avec le
-    même interpréteur générique que celui utilisé pour vérifier ces
-    formules, et on remplace le texte par la valeur numérique calculée."""
-    exercice = exercice or get_current_exercice(conn)
-    exercice_n1 = str(int(exercice) - 1)
-    balance_n = compute_balance(conn, only_with_movement=False, exercice=exercice)
-    try:
-        balance_n1 = compute_balance(conn, only_with_movement=False, exercice=exercice_n1)
-    except Exception:
-        balance_n1 = []
+    """Exporte le Bilan dans le gabarit officiel (templates/modele_bilan.xlsx,
+    ou à défaut l'ancien gabarit SpreadsheetML templates/bilan_template.xls
+    si le premier est absent) — voir generate_etat_xlsx()."""
+    if os.path.exists(ETATS_TEMPLATES["bilan"]["path"]):
+        generate_etat_xlsx(conn, "bilan", path, exercice=exercice)
+    else:
+        # Repli sur l'ancien gabarit SpreadsheetML si le nouveau modèle .xlsx
+        # n'est pas disponible (ex. build antérieure).
+        exercice = exercice or get_current_exercice(conn)
+        exercice_n1 = str(int(exercice) - 1)
+        soldes_n = _soldes_dict(conn, exercice)
+        soldes_n1 = _soldes_dict(conn, exercice_n1)
+        wb = open_template_workbook(BILAN_TEMPLATE_PATH)
+        ws = wb[_guess_etat_sheet(wb, "BILAN")]
+        results, errors, warnings = evaluate_sheet_formulas(ws, soldes_n, soldes_n1)
+        for coord, value in results.items():
+            ws[coord] = value
+        wb.save(path)
 
-    with open(BILAN_TEMPLATE_PATH, encoding="utf-8") as f:
-        content = f.read()
-
-    named_refs = {}
-    pattern = re.compile(r'<Data ss:Type="String"[^>]*>(=[^<]*)</Data>')
-
-    def repl(m):
-        raw = m.group(1)
-        unescaped = (raw.replace("&quot;", '"').replace("&amp;", "&")
-                     .replace("&lt;", "<").replace("&gt;", ">").replace("&apos;", "'"))
-        value, defined_name = _eval_bilan_formula(unescaped, balance_n, balance_n1, named_refs)
-        if defined_name:
-            named_refs[defined_name] = value
-        return f'<Data ss:Type="Number">{value:.4f}</Data>'
-
-    new_content = pattern.sub(repl, content)
-    new_content = re.sub(
-        r'(<Data ss:Type="String">)Edition du : [^<]*(</Data>)',
-        rf"\g<1>Edition du : 01/01/{exercice} au 31/12/{exercice}   (comparatif exercice {exercice_n1})\g<2>",
-        new_content, count=1,
-    )
-
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(new_content)
     return path
 
 

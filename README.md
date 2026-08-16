@@ -2047,3 +2047,46 @@ aucune formule non évaluée, la valeur Brut N-1 du Bâtiment (5 000 000)
 est correcte, et TOTAL GENERAL Actif = TOTAL GENERAL Passif selon les
 propres formules du gabarit (calcul indépendant de compute_bilan(),
 donc une vérification croisée supplémentaire de la cohérence globale).
+
+### Adoption du moteur "bilan-auto" — 4 états financiers dans leurs gabarits officiels
+
+**Fourni par l'utilisateur** : un projet Python complet (« bilan-auto »)
+avec un moteur d'évaluation de formules bien plus abouti que celui bricolé
+la session précédente (résolution multi-passes des dépendances entre
+rubriques, quel que soit leur ordre dans la feuille), et 4 vrais gabarits
+`.xlsx` (Bilan, Compte de Résultat, Situation Financière, TFT).
+
+**Réalisé** :
+- Le moteur de formules du projet de référence (`cta_cpt_solde*`,
+  `evaluate_sheet_formulas`, résolution des rubriques `[Rxxx.EtLoc]` en
+  plusieurs passes) a été **porté tel quel** dans `core.py`, adapté pour
+  lire les soldes directement depuis la Balance de CETTE application
+  (`compute_balance()`) au lieu d'exiger l'import de deux fichiers de
+  balance externes comme le fait le projet fourni.
+- Les 4 gabarits (`modele_bilan.xlsx`, `modele_resultat.xlsx`,
+  `modele_situation.xlsx`, `modele_flux.xlsx`) sont embarqués dans
+  `templates/` et intégrés au build `.exe`.
+- **`core.generate_etat_xlsx(conn, etat_id, output_path, exercice=None)`**
+  (nouveau) : génère n'importe lequel des 4 états dans son gabarit
+  officiel, en calculant le solde N depuis l'exercice demandé et N-1
+  depuis l'exercice précédent.
+- **Bouton « Exporter (gabarit officiel .xlsx) »** ajouté aux onglets
+  Compte de résultat, TFT et Situation financière (le Bilan l'avait déjà,
+  désormais routé sur ce même moteur plus robuste).
+- **`+ Nouvel exercice` clôture maintenant l'exercice en cours** avant de
+  créer le suivant (avec confirmation) — corrige un vrai manque : le
+  bouton ne faisait auparavant que basculer l'affichage sur une nouvelle
+  année, sans jamais reporter les soldes de clôture, ce qui faisait
+  apparaître un Bilan vide au démarrage d'un nouvel exercice tant que
+  l'utilisateur ne pensait pas à aller cliquer sur « Clôturer » dans un
+  autre onglet.
+- **Sous-menus « Achats » et « Factures frs » supprimés** du menu
+  ENGAGEMENTS-PROJETS (remplacés par le circuit Expression de besoin →
+  Bon de commande → Bordereau de livraison → Règlements).
+
+Testé de bout en bout : clôture automatique 2025→2026 avec report des
+soldes, les 4 états générés sans erreur (Bilan 132/132, Compte de Résultat
+41/41, TFT 33/33 ; Situation Financière 34/35 — la seule cellule en échec
+utilise une fonction `Ratio(...)` que le projet de référence lui-même ne
+gère pas non plus, comportement identique à l'original), Bilan resté
+équilibré après report.
