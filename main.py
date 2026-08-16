@@ -5737,20 +5737,20 @@ class ExpressionBesoinTab(ttk.Frame):
 
 
 class BonCommandeEPDialog(tk.Toplevel):
-    """Détail d'un Bon de commande du circuit interne (double-clic depuis la
-    liste) — aucun lien avec la comptabilité (à ne pas confondre avec le
-    « Enregistrer BON DE COMMANDE » de Factures frs, qui lui génère des
-    écritures une fois validé). La validation ici fait basculer ce document
-    en Bordereau de livraison."""
+    """Détail d'un Bon de commande (double-clic depuis la liste). La
+    validation COMPTABILISE DIRECTEMENT l'achat (chaque ligne doit avoir un
+    compte de charge choisi) et fait basculer le document en Bordereau de
+    livraison — voir core.valider_ep_bon_commande()."""
 
     def __init__(self, parent, conn, bon_id, on_saved):
         super().__init__(parent)
         self.conn = conn
         self.bon_id = bon_id
         self.on_saved = on_saved
+        self.selected_ligne_id = None
         self.title("Bon de commande")
-        self.geometry("950x600")
-        self.minsize(750, 450)
+        self.geometry("1080x680")
+        self.minsize(850, 500)
         self.transient(parent)
         self.grab_set()
 
@@ -5761,68 +5761,107 @@ class BonCommandeEPDialog(tk.Toplevel):
         header.pack(fill="x", padx=10, pady=8)
         ttk.Label(header, text="N° :").grid(row=0, column=0, sticky="w", padx=4, pady=4)
         self.numero_var = tk.StringVar(value=bon["numero"])
-        ttk.Entry(header, textvariable=self.numero_var, width=16).grid(row=0, column=1, padx=4)
+        ttk.Entry(header, textvariable=self.numero_var, width=14).grid(row=0, column=1, padx=4)
         ttk.Label(header, text="Date (JJ/MM/AAAA) :").grid(row=0, column=2, sticky="w", padx=(12, 4))
         self.date_var = tk.StringVar(value=core.to_display_date(bon["date_commande"]))
-        ttk.Entry(header, textvariable=self.date_var, width=14).grid(row=0, column=3, padx=4)
+        ttk.Entry(header, textvariable=self.date_var, width=12).grid(row=0, column=3, padx=4)
         ttk.Label(header, text="Fournisseur :").grid(row=0, column=4, sticky="w", padx=(12, 4))
         self.fournisseur_var = tk.StringVar(value=bon["fournisseur_code"] or "")
-        self.fournisseur_combo = ttk.Combobox(header, textvariable=self.fournisseur_var, width=26)
+        self.fournisseur_combo = ttk.Combobox(header, textvariable=self.fournisseur_var, width=24)
         self.fournisseur_combo.grid(row=0, column=5, padx=4)
         self.fournisseur_combo.bind("<KeyRelease>", self._on_fournisseur_keyrelease)
-        self.fournisseur_combo.bind("<Button-1>", lambda e: e.widget.event_generate("<Down>"))
+        self.fournisseur_combo.bind("<Button-1>", self._open_dropdown)
         self._refresh_fournisseur_values()
 
-        ttk.Label(header, text="Date de facture (JJ/MM/AAAA) :").grid(row=1, column=0, sticky="w", padx=4, pady=(6, 0))
+        ttk.Label(header, text="Date de facture :").grid(row=1, column=0, sticky="w", padx=4, pady=(6, 0))
         self.date_facture_var = tk.StringVar(value=core.to_display_date(bon.get("date_facture") or ""))
-        ttk.Entry(header, textvariable=self.date_facture_var, width=14).grid(row=1, column=1, padx=4, pady=(6, 0), sticky="w")
-        ttk.Label(header, text="Date de saisie (JJ/MM/AAAA) :").grid(row=1, column=2, sticky="w", padx=(12, 4), pady=(6, 0))
+        ttk.Entry(header, textvariable=self.date_facture_var, width=12).grid(row=1, column=1, padx=4, pady=(6, 0), sticky="w")
+        ttk.Label(header, text="Date de saisie :").grid(row=1, column=2, sticky="w", padx=(12, 4), pady=(6, 0))
         self.date_saisie_var = tk.StringVar(value=core.to_display_date(bon.get("date_saisie") or ""))
-        ttk.Entry(header, textvariable=self.date_saisie_var, width=14).grid(row=1, column=3, padx=4, pady=(6, 0), sticky="w")
-        ttk.Label(header, text="Paiement attendu (JJ/MM/AAAA) :").grid(row=1, column=4, sticky="w", padx=(12, 4), pady=(6, 0))
+        ttk.Entry(header, textvariable=self.date_saisie_var, width=12).grid(row=1, column=3, padx=4, pady=(6, 0), sticky="w")
+        ttk.Label(header, text="Paiement attendu :").grid(row=1, column=4, sticky="w", padx=(12, 4), pady=(6, 0))
         self.date_paiement_var = tk.StringVar(value=core.to_display_date(bon.get("date_paiement_attendu") or ""))
-        ttk.Entry(header, textvariable=self.date_paiement_var, width=14).grid(row=1, column=5, padx=4, pady=(6, 0), sticky="w")
+        ttk.Entry(header, textvariable=self.date_paiement_var, width=12).grid(row=1, column=5, padx=4, pady=(6, 0), sticky="w")
+
+        ttk.Label(header, text="Retenue % :").grid(row=2, column=0, sticky="w", padx=4, pady=(6, 0))
+        self.retenue_taux_var = tk.StringVar(value=str(bon.get("retenue_taux") or 0))
+        ttk.Entry(header, textvariable=self.retenue_taux_var, width=8).grid(row=2, column=1, padx=4, pady=(6, 0), sticky="w")
+        ttk.Label(header, text="Compte retenue :").grid(row=2, column=2, sticky="w", padx=(12, 4), pady=(6, 0))
+        self.retenue_compte_var = tk.StringVar(value=bon.get("retenue_compte") or "447800")
+        self.retenue_compte_combo = ttk.Combobox(header, textvariable=self.retenue_compte_var, width=18)
+        self.retenue_compte_combo.grid(row=2, column=3, padx=4, pady=(6, 0), sticky="w")
+        self.retenue_compte_combo.bind("<KeyRelease>", self._on_retenue_compte_keyrelease)
+        self.retenue_compte_combo.bind("<Button-1>", self._open_dropdown)
+        self._refresh_retenue_compte_values()
+        ttk.Label(header, text="Préréglage :").grid(row=2, column=4, sticky="w", padx=(12, 4), pady=(6, 0))
+        self.retenue_preset_var = tk.StringVar()
+        self.retenue_preset_combo = ttk.Combobox(header, textvariable=self.retenue_preset_var, width=20, state="readonly")
+        self.retenue_preset_combo.grid(row=2, column=5, padx=4, pady=(6, 0))
+        self.retenue_preset_combo.bind("<<ComboboxSelected>>", self._on_retenue_preset_selected)
+        self.retenue_preset_combo.bind("<Button-1>", self._open_dropdown)
+        self._refresh_retenue_presets()
 
         origine = "" if not bon["expression_id"] else f"Issu de l'expression de besoin n° {bon['expression_id']}"
         self.statut_var = tk.StringVar(
-            value=f"Statut : {'VALIDÉ (bordereau créé)' if self.validee else 'Brouillon'}   {origine}")
+            value=f"Statut : {'VALIDÉ (comptabilisé + bordereau créé)' if self.validee else 'Brouillon'}   {origine}")
         ttk.Label(header, textvariable=self.statut_var, font=("Segoe UI", 10, "bold")).grid(
-            row=2, column=0, columnspan=4, sticky="w", padx=4, pady=(4, 0))
+            row=3, column=0, columnspan=4, sticky="w", padx=4, pady=(4, 0))
         self.retard_var = tk.StringVar()
         self.retard_label = ttk.Label(header, textvariable=self.retard_var, font=("Segoe UI", 10, "bold"))
-        self.retard_label.grid(row=2, column=4, columnspan=2, sticky="w", padx=4, pady=(4, 0))
+        self.retard_label.grid(row=3, column=4, columnspan=2, sticky="w", padx=4, pady=(4, 0))
         self._refresh_retard()
 
-        lignes_frame = ttk.LabelFrame(self, text="Lignes commandées")
+        lignes_frame = ttk.LabelFrame(self, text=(
+            "Lignes — un compte de charge est OBLIGATOIRE sur chaque ligne pour pouvoir valider"))
         lignes_frame.pack(fill="both", expand=True, padx=10, pady=6)
         form = ttk.Frame(lignes_frame)
         form.pack(fill="x", padx=6, pady=4)
-        ttk.Label(form, text="Libellé :").grid(row=0, column=0, sticky="w")
-        self.ligne_libelle_var = tk.StringVar()
-        ttk.Entry(form, textvariable=self.ligne_libelle_var, width=28).grid(row=0, column=1, padx=4)
-        ttk.Label(form, text="Quantité :").grid(row=0, column=2, sticky="w", padx=(12, 0))
-        self.ligne_qte_var = tk.StringVar(value="1")
-        ttk.Entry(form, textvariable=self.ligne_qte_var, width=10).grid(row=0, column=3, padx=4)
-        ttk.Label(form, text="Prix unitaire :").grid(row=0, column=4, sticky="w", padx=(12, 0))
-        self.ligne_prix_var = tk.StringVar()
-        ttk.Entry(form, textvariable=self.ligne_prix_var, width=12).grid(row=0, column=5, padx=4)
-        ttk.Label(form, text="Unité :").grid(row=0, column=6, sticky="w", padx=(12, 0))
-        self.ligne_unite_var = tk.StringVar()
-        ttk.Entry(form, textvariable=self.ligne_unite_var, width=8).grid(row=0, column=7, padx=4)
-        self.add_ligne_btn = ttk.Button(form, text="Ajouter la ligne", command=self.add_ligne)
-        self.add_ligne_btn.grid(row=0, column=8, padx=12)
+        ttk.Label(form, text="Compte de charge :").grid(row=0, column=0, sticky="w")
+        self.ligne_compte_var = tk.StringVar()
+        self.ligne_compte_combo = ttk.Combobox(form, textvariable=self.ligne_compte_var, width=26)
+        self.ligne_compte_combo.grid(row=0, column=1, padx=4)
+        self.ligne_compte_combo.bind("<KeyRelease>", self._on_ligne_compte_keyrelease)
+        self.ligne_compte_combo.bind("<Button-1>", self._open_dropdown)
+        self._refresh_ligne_compte_values()
+        ttk.Label(form, text="Code analytique :").grid(row=0, column=2, sticky="w", padx=(12, 0))
+        self.ligne_analytic_var = tk.StringVar()
+        self.ligne_analytic_combo = ttk.Combobox(form, textvariable=self.ligne_analytic_var, width=18)
+        self.ligne_analytic_combo.grid(row=0, column=3, padx=4)
+        self.ligne_analytic_combo.bind("<Button-1>", self._open_dropdown)
+        self._refresh_ligne_analytic_values()
 
-        cols = ("id", "libelle", "quantite", "prix", "montant", "unite")
-        self.tree = ttk.Treeview(lignes_frame, columns=cols, show="headings", height=12)
-        headers = ["ID", "Libellé", "Quantité", "Prix unit.", "Montant estimé", "Unité"]
-        widths = [40, 320, 90, 100, 130, 80]
+        ttk.Label(form, text="Libellé :").grid(row=1, column=0, sticky="w", pady=(4, 0))
+        self.ligne_libelle_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.ligne_libelle_var, width=26).grid(row=1, column=1, padx=4, pady=(4, 0))
+        ttk.Label(form, text="Quantité :").grid(row=1, column=2, sticky="w", padx=(12, 0), pady=(4, 0))
+        self.ligne_qte_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.ligne_qte_var, width=8).grid(row=1, column=3, padx=4, pady=(4, 0), sticky="w")
+        ttk.Label(form, text="Prix unitaire :").grid(row=1, column=4, sticky="w", padx=(12, 0), pady=(4, 0))
+        self.ligne_prix_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.ligne_prix_var, width=10).grid(row=1, column=5, padx=4, pady=(4, 0), sticky="w")
+        ttk.Label(form, text="Unité :").grid(row=1, column=6, sticky="w", padx=(12, 0), pady=(4, 0))
+        self.ligne_unite_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.ligne_unite_var, width=8).grid(row=1, column=7, padx=4, pady=(4, 0))
+
+        btn_row = ttk.Frame(lignes_frame)
+        btn_row.pack(fill="x", padx=6)
+        self.update_ligne_btn = ttk.Button(btn_row, text="Mettre à jour la ligne sélectionnée",
+                                            command=self.update_ligne)
+        self.update_ligne_btn.pack(side="left")
+        self.add_ligne_btn = ttk.Button(btn_row, text="Ajouter une nouvelle ligne", command=self.add_ligne)
+        self.add_ligne_btn.pack(side="left", padx=8)
+        self.delete_ligne_btn = ttk.Button(btn_row, text="Supprimer la ligne sélectionnée", command=self.delete_ligne)
+        self.delete_ligne_btn.pack(side="left", padx=8)
+
+        cols = ("id", "compte", "libelle", "quantite", "prix", "montant", "unite", "analytique")
+        self.tree = ttk.Treeview(lignes_frame, columns=cols, show="headings", height=10)
+        headers = ["ID", "Compte", "Libellé", "Qté", "Prix unit.", "Montant estimé", "Unité", "Analytique"]
+        widths = [40, 90, 220, 70, 90, 110, 70, 130]
         for c, h, w in zip(cols, headers, widths):
             self.tree.heading(c, text=h)
             self.tree.column(c, width=w, anchor="w")
         self.tree.pack(fill="both", expand=True, padx=6, pady=6)
-        self.delete_ligne_btn = ttk.Button(lignes_frame, text="Supprimer la ligne sélectionnée",
-                                            command=self.delete_ligne)
-        self.delete_ligne_btn.pack(anchor="w", padx=6, pady=(0, 6))
+        self.tree.bind("<<TreeviewSelect>>", self._on_select_ligne)
         self.total_var = tk.StringVar()
         ttk.Label(lignes_frame, textvariable=self.total_var, font=("Segoe UI", 10, "bold")).pack(
             anchor="w", padx=6, pady=(0, 6))
@@ -5831,12 +5870,17 @@ class BonCommandeEPDialog(tk.Toplevel):
         btns.pack(fill="x", padx=10, pady=10)
         self.save_btn = ttk.Button(btns, text="Enregistrer", command=self.save)
         self.save_btn.pack(side="left", padx=4)
-        self.valider_btn = ttk.Button(btns, text="Valider → crée le Bordereau de livraison", command=self.valider)
+        self.valider_btn = ttk.Button(btns, text="Valider (comptabilise + crée le Bordereau)", command=self.valider)
         self.valider_btn.pack(side="left", padx=4)
         ttk.Button(btns, text="Fermer", command=self.destroy).pack(side="left", padx=4)
 
         self.refresh_lignes()
         self._apply_lock()
+
+    @staticmethod
+    def _open_dropdown(event=None):
+        if event is not None:
+            event.widget.event_generate("<Down>")
 
     def _refresh_fournisseur_values(self):
         items = core.list_fournisseurs(self.conn)
@@ -5847,6 +5891,40 @@ class BonCommandeEPDialog(tk.Toplevel):
         items = core.list_fournisseurs(self.conn, query)
         self.fournisseur_combo["values"] = [f"{f['code']} — {f['raison_sociale']}" for f in items]
 
+    def _refresh_retenue_compte_values(self):
+        items = [a for a in core.search_accounts(self.conn, "44", limit=100) if core.account_racine(a["code"]) == "44"]
+        self.retenue_compte_combo["values"] = [f"{a['code']} — {a['label']}" for a in items]
+
+    def _on_retenue_compte_keyrelease(self, event=None):
+        query = self._extract_code(self.retenue_compte_var.get())
+        items = [a for a in core.search_accounts(self.conn, query, limit=100) if core.account_racine(a["code"]) == "44"]
+        self.retenue_compte_combo["values"] = [f"{a['code']} — {a['label']}" for a in items]
+
+    def _refresh_retenue_presets(self):
+        presets = core.list_taux_retenue(self.conn)
+        self.retenue_preset_combo["values"] = [f"{p['label']} ({p['montant']:g}%)" for p in presets]
+        self._retenue_presets = presets
+
+    def _on_retenue_preset_selected(self, event=None):
+        idx = self.retenue_preset_combo.current()
+        if idx is not None and 0 <= idx < len(getattr(self, "_retenue_presets", [])):
+            preset = self._retenue_presets[idx]
+            self.retenue_taux_var.set(str(preset["montant"]))
+            if preset.get("compte"):
+                self.retenue_compte_var.set(preset["compte"])
+
+    def _refresh_ligne_compte_values(self):
+        items = [a for a in core.search_accounts(self.conn, "", limit=100) if a["classe"] == "6"]
+        self.ligne_compte_combo["values"] = [f"{a['code']} — {a['label']}" for a in items]
+
+    def _on_ligne_compte_keyrelease(self, event=None):
+        query = self._extract_code(self.ligne_compte_var.get())
+        items = [a for a in core.search_accounts(self.conn, query, limit=50) if a["classe"] == "6"]
+        self.ligne_compte_combo["values"] = [f"{a['code']} — {a['label']}" for a in items]
+
+    def _refresh_ligne_analytic_values(self):
+        self.ligne_analytic_combo["values"] = [f"{c['code']} — {c['label']}" for c in core.list_analytic_codes(self.conn)]
+
     @staticmethod
     def _extract_code(raw):
         raw = (raw or "").strip()
@@ -5854,22 +5932,39 @@ class BonCommandeEPDialog(tk.Toplevel):
 
     def _apply_lock(self):
         state = "disabled" if self.validee else "normal"
-        self.add_ligne_btn.configure(state=state)
-        self.delete_ligne_btn.configure(state=state)
-        self.save_btn.configure(state=state)
-        self.valider_btn.configure(state=state)
+        for w in (self.update_ligne_btn, self.add_ligne_btn, self.delete_ligne_btn, self.save_btn, self.valider_btn):
+            w.configure(state=state)
+
+    def _on_select_ligne(self, event=None):
+        sel = self.tree.selection()
+        if not sel:
+            return
+        v = self.tree.item(sel[0], "values")
+        self.selected_ligne_id = v[0]
+        self.ligne_compte_var.set(v[1])
+        self.ligne_libelle_var.set(v[2])
+        self.ligne_qte_var.set(v[3])
+        self.ligne_prix_var.set(v[4])
+        self.ligne_unite_var.set(v[6])
+        self.ligne_analytic_var.set(v[7])
+
+    def _clear_ligne_form(self):
+        self.selected_ligne_id = None
+        self.ligne_compte_var.set(""); self.ligne_libelle_var.set("")
+        self.ligne_qte_var.set(""); self.ligne_prix_var.set("")
+        self.ligne_unite_var.set(""); self.ligne_analytic_var.set("")
 
     def refresh_lignes(self):
         for row in self.tree.get_children():
             self.tree.delete(row)
         total = 0.0
         for l in core.list_lignes_ep_bon_commande(self.conn, self.bon_id):
-            montant = l["quantite"] * l["prix_unitaire"]
-            total += montant
+            total += l["montant_ht"]
             self.tree.insert("", "end", values=(
-                l["id"], l["libelle"], f"{l['quantite']:g}", f"{l['prix_unitaire']:,.2f}",
-                f"{montant:,.2f}", l["unite"] or ""))
-        self.total_var.set(f"Montant total estimé (indicatif, non comptabilisé) : {total:,.2f}")
+                l["id"], l["compte_charge"] or "⚠ à choisir", l["libelle"], f"{l['quantite']:g}",
+                f"{l['prix_unitaire']:,.2f}", f"{l['montant_ht']:,.2f}", l["unite"] or "",
+                l["analytic_code"] or ""))
+        self.total_var.set(f"Total HT : {total:,.2f}")
 
     def add_ligne(self):
         libelle = self.ligne_libelle_var.get().strip()
@@ -5882,25 +5977,45 @@ class BonCommandeEPDialog(tk.Toplevel):
         except ValueError:
             messagebox.showerror("Erreur", "Quantité et Prix unitaire doivent être des nombres.", parent=self)
             return
+        compte = self._extract_code(self.ligne_compte_var.get()) or None
+        analytic = self._extract_code(self.ligne_analytic_var.get()) or None
         core.add_ligne_ep_bon_commande(self.conn, self.bon_id, libelle, qte, prix_unitaire=prix,
-                                        unite=self.ligne_unite_var.get().strip() or None)
-        self.ligne_libelle_var.set("")
-        self.ligne_qte_var.set("1")
-        self.ligne_prix_var.set("")
-        self.ligne_unite_var.set("")
+                                        unite=self.ligne_unite_var.get().strip() or None,
+                                        compte_charge=compte, analytic_code=analytic)
+        self._clear_ligne_form()
+        self.refresh_lignes()
+
+    def update_ligne(self):
+        if not self.selected_ligne_id:
+            messagebox.showinfo("Info", "Sélectionnez d'abord une ligne dans le tableau.", parent=self)
+            return
+        libelle = self.ligne_libelle_var.get().strip()
+        if not libelle:
+            messagebox.showwarning("Champ manquant", "Le libellé est obligatoire.", parent=self)
+            return
+        try:
+            qte = float(self.ligne_qte_var.get() or 0)
+            prix = float(self.ligne_prix_var.get() or 0)
+        except ValueError:
+            messagebox.showerror("Erreur", "Quantité et Prix unitaire doivent être des nombres.", parent=self)
+            return
+        compte = self._extract_code(self.ligne_compte_var.get()) or None
+        analytic = self._extract_code(self.ligne_analytic_var.get()) or None
+        core.update_ligne_ep_bon_commande(
+            self.conn, self.selected_ligne_id, libelle=libelle, quantite=qte, prix_unitaire=prix,
+            unite=self.ligne_unite_var.get().strip() or None, compte_charge=compte, analytic_code=analytic)
+        self._clear_ligne_form()
         self.refresh_lignes()
 
     def delete_ligne(self):
-        sel = self.tree.selection()
-        if not sel:
+        if not self.selected_ligne_id:
             messagebox.showinfo("Info", "Sélectionnez d'abord une ligne.", parent=self)
             return
-        ligne_id = self.tree.item(sel[0], "values")[0]
-        core.delete_ligne_ep_bon_commande(self.conn, ligne_id)
+        core.delete_ligne_ep_bon_commande(self.conn, self.selected_ligne_id)
+        self._clear_ligne_form()
         self.refresh_lignes()
 
     def _refresh_retard(self):
-        bon = core.get_ep_bon_commande(self.conn, self.bon_id)
         bons = core.list_ep_bons_commande(self.conn)
         match = next((b for b in bons if b["id"] == self.bon_id), None)
         if not match or not match.get("statut_paiement"):
@@ -5911,6 +6026,11 @@ class BonCommandeEPDialog(tk.Toplevel):
 
     def save(self):
         date_str = core.to_iso_date(self.date_var.get().strip())
+        try:
+            retenue_taux = float(self.retenue_taux_var.get() or 0)
+        except ValueError:
+            messagebox.showerror("Erreur", "Le taux de retenue doit être un nombre.", parent=self)
+            return
         core.update_ep_bon_commande(
             self.conn, self.bon_id,
             numero=self.numero_var.get().strip(), date_commande=date_str,
@@ -5918,6 +6038,7 @@ class BonCommandeEPDialog(tk.Toplevel):
             date_facture=core.to_iso_date(self.date_facture_var.get().strip()) or None,
             date_saisie=core.to_iso_date(self.date_saisie_var.get().strip()) or None,
             date_paiement_attendu=core.to_iso_date(self.date_paiement_var.get().strip()) or None,
+            retenue_taux=retenue_taux, retenue_compte=self._extract_code(self.retenue_compte_var.get()) or "447800",
         )
         self._refresh_retard()
         messagebox.showinfo("Enregistré", "Bon de commande enregistré.", parent=self)
@@ -5926,12 +6047,10 @@ class BonCommandeEPDialog(tk.Toplevel):
     def valider(self):
         if not messagebox.askyesno(
             "Valider ce bon de commande",
-            "Ce bon de commande va être verrouillé. Un Bordereau de livraison ET un Règlement en "
-            "brouillon vont être créés automatiquement avec les mêmes lignes (menus ENGAGEMENTS-PROJETS "
-            "> Bordereau de livraison et > Règlements).\n\n"
-            "Aucune écriture comptable n'est générée à cette étape — c'est dans l'écran Règlements, "
-            "après avoir choisi un compte de charge par ligne, que la comptabilisation se fera.\n\n"
-            "Continuer ?",
+            "Ce bon de commande va être verrouillé et COMPTABILISÉ DIRECTEMENT (débit des comptes de "
+            "charge choisis, crédit fournisseur, retenue fiscale éventuelle, entrée de stock automatique "
+            "si applicable) — l'écriture sera envoyée en Saisie. Un Bordereau de livraison sera aussi "
+            "créé pour le suivi de la réception.\n\nContinuer ?",
             parent=self,
         ):
             return
@@ -5943,7 +6062,8 @@ class BonCommandeEPDialog(tk.Toplevel):
             return
         messagebox.showinfo(
             "Validé",
-            "Bon de commande validé. Le Bordereau de livraison et le Règlement (brouillon) ont été créés.",
+            "Bon de commande validé et comptabilisé — écriture envoyée en Saisie. Le Bordereau de "
+            "livraison a été créé.",
             parent=self,
         )
         self.on_saved()

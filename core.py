@@ -572,7 +572,10 @@ def init_db(conn):
             statut TEXT NOT NULL DEFAULT 'brouillon',
             date_facture TEXT,
             date_saisie TEXT,
-            date_paiement_attendu TEXT
+            date_paiement_attendu TEXT,
+            retenue_taux REAL NOT NULL DEFAULT 0,
+            retenue_compte TEXT DEFAULT '447800',
+            piece TEXT
         )
     """)
     conn.execute("""
@@ -582,7 +585,9 @@ def init_db(conn):
             libelle TEXT NOT NULL,
             quantite REAL NOT NULL DEFAULT 0,
             prix_unitaire REAL NOT NULL DEFAULT 0,
-            unite TEXT
+            unite TEXT,
+            compte_charge TEXT,
+            analytic_code TEXT
         )
     """)
     conn.execute("""
@@ -788,6 +793,14 @@ def _migrate(conn):
     for col in ("date_facture", "date_saisie", "date_paiement_attendu"):
         if bc_cols and col not in bc_cols:
             conn.execute(f"ALTER TABLE ep_bons_commande ADD COLUMN {col} TEXT")
+    for col, default in (("retenue_taux", "0"), ("retenue_compte", "'447800'"), ("piece", "NULL")):
+        if bc_cols and col not in bc_cols:
+            conn.execute(f"ALTER TABLE ep_bons_commande ADD COLUMN {col} DEFAULT {default}")
+    bcl_cols = [r["name"] for r in conn.execute("PRAGMA table_info(ep_bon_commande_lignes)")]
+    if bcl_cols and "compte_charge" not in bcl_cols:
+        conn.execute("ALTER TABLE ep_bon_commande_lignes ADD COLUMN compte_charge TEXT")
+    if bcl_cols and "analytic_code" not in bcl_cols:
+        conn.execute("ALTER TABLE ep_bon_commande_lignes ADD COLUMN analytic_code TEXT")
     fc_cols = [r["name"] for r in conn.execute("PRAGMA table_info(factures_clients)")]
     if fc_cols and "compte_reglement" not in fc_cols:
         conn.execute("ALTER TABLE factures_clients ADD COLUMN compte_reglement TEXT")
@@ -6131,12 +6144,23 @@ def list_ep_bons_commande(conn):
     return rows
 
 
-def add_ligne_ep_bon_commande(conn, bon_id, libelle, quantite, prix_unitaire=0, unite=None):
+def add_ligne_ep_bon_commande(conn, bon_id, libelle, quantite, prix_unitaire=0, unite=None,
+                               compte_charge=None, analytic_code=None):
     conn.execute(
-        """INSERT INTO ep_bon_commande_lignes (bon_commande_id, libelle, quantite, prix_unitaire, unite)
-           VALUES (?, ?, ?, ?, ?)""",
-        (bon_id, libelle, quantite or 0, prix_unitaire or 0, unite or None),
+        """INSERT INTO ep_bon_commande_lignes (bon_commande_id, libelle, quantite, prix_unitaire, unite,
+                                                 compte_charge, analytic_code)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (bon_id, libelle, quantite or 0, prix_unitaire or 0, unite or None, compte_charge or None,
+         analytic_code or None),
     )
+    conn.commit()
+
+
+def update_ligne_ep_bon_commande(conn, ligne_id, **fields):
+    if not fields:
+        return
+    cols = ", ".join(f"{k} = ?" for k in fields)
+    conn.execute(f"UPDATE ep_bon_commande_lignes SET {cols} WHERE id = ?", (*fields.values(), ligne_id))
     conn.commit()
 
 
@@ -6149,19 +6173,41 @@ def list_lignes_ep_bon_commande(conn, bon_id):
     rows = conn.execute(
         "SELECT * FROM ep_bon_commande_lignes WHERE bon_commande_id = ? ORDER BY id", (bon_id,)
     ).fetchall()
-    return [dict(r) for r in rows]
+    result = []
+    for r in rows:
+        d = dict(r)
+        d["montant_ht"] = (d["quantite"] or 0) * (d["prix_unitaire"] or 0)
+        type_stock, _stock_compte, _contre_compte = (
+            _match_stock_mapping(d["compte_charge"], ACHAT_STOCK_MAPPING) if d["compte_charge"] else (None, None, None)
+        ) or (None, None, None)
+        d["type_stock"] = type_stock
+        result.append(d)
+    return result
+
+
+def compute_ep_bon_commande_totals(conn, bon_id):
+    bon = get_ep_bon_commande(conn, bon_id)
+    lignes = list_lignes_ep_bon_commande(conn, bon_id)
+    total_ht = sum(l["montant_ht"] for l in lignes)
+    retenue_taux = bon["retenue_taux"] if bon else 0
+    retenue_montant = total_ht * (retenue_taux or 0) / 100
+    net_a_payer = total_ht - retenue_montant
+    return {"total_ht": total_ht, "retenue_taux": retenue_taux, "retenue_montant": retenue_montant,
+            "net_a_payer": net_a_payer}
 
 
 def valider_ep_bon_commande(conn, bon_id):
-    """Fait basculer le Bon de commande en Bordereau de livraison (nouveau
-    document, même numéro, lignes recopiées — quantité livrée initialisée à
-    la quantité commandée, modifiable ensuite) — AUCUNE écriture comptable.
-    Crée EN MÊME TEMPS un Règlement en brouillon (menu ENGAGEMENTS-PROJETS >
-    Règlements, lignes recopiées SANS compte de charge ni code analytique —
-    à choisir dans cet écran avant de comptabiliser) : c'est cet écran, et
-    lui seul, qui génère les écritures comptables une fois complété et
-    validé. Le bon d'origine passe en statut « validee » (verrouillé).
-    Retourne (bordereau_id, reglement_id)."""
+    """Valide le Bon de commande : COMPTABILISE DIRECTEMENT l'achat (Débit
+    comptes de charge choisis par ligne avec code analytique, Crédit
+    fournisseur, retenue fiscale optionnelle, entrée de stock automatique
+    pour les lignes liées à un compte de marchandises/matières premières —
+    voir _comptabiliser_lignes_achat(), même moteur que les Règlements) ET
+    fait basculer le bon en Bordereau de livraison (lignes recopiées,
+    quantité livrée initialisée à la quantité commandée). Un Règlement est
+    également créé pour traçabilité, déjà marqué validé (mêmes écritures,
+    pas de double comptabilisation). Chaque ligne DOIT avoir un compte de
+    charge choisi et un fournisseur doit être renseigné, sous peine de
+    refus explicite. Retourne (bordereau_id, reglement_id)."""
     bon = get_ep_bon_commande(conn, bon_id)
     if not bon:
         raise ValueError("Bon de commande introuvable.")
@@ -6170,17 +6216,33 @@ def valider_ep_bon_commande(conn, bon_id):
     lignes = list_lignes_ep_bon_commande(conn, bon_id)
     if not lignes:
         raise ValueError("Ajoutez au moins une ligne avant de valider.")
+
+    fournisseur = get_fournisseur(conn, bon["fournisseur_code"]) if bon["fournisseur_code"] else None
+    tiers_label = fournisseur["raison_sociale"] if fournisseur else (bon["fournisseur_code"] or "")
+    piece = bon["piece"] or bon["numero"]
+
+    _comptabiliser_lignes_achat(conn, bon["date_commande"], piece, "AC", bon["fournisseur_code"], lignes,
+                                 tiers_label, retenue_taux=bon["retenue_taux"], retenue_compte=bon["retenue_compte"])
+
     bordereau_id = create_bordereau_livraison(conn, bon["numero"], bon["date_commande"], bon_commande_id=bon_id,
                                                entete=bon["entete"], pied_page=bon["pied_page"])
     for l in lignes:
         add_ligne_bordereau_livraison(conn, bordereau_id, l["libelle"], l["quantite"], l["quantite"], unite=l["unite"])
+
     reglement_id = create_reglement(conn, bon["numero"], bon["date_commande"], bon_commande_id=bon_id,
                                      fournisseur_code=bon["fournisseur_code"] or "",
-                                     entete=bon["entete"], pied_page=bon["pied_page"])
+                                     entete=bon["entete"], pied_page=bon["pied_page"],
+                                     retenue_taux=bon["retenue_taux"], retenue_compte=bon["retenue_compte"])
     for l in lignes:
-        add_ligne_reglement(conn, reglement_id, compte_charge=None, libelle=l["libelle"],
-                             quantite=l["quantite"], prix_unitaire=l["prix_unitaire"])
-    update_ep_bon_commande(conn, bon_id, statut="validee")
+        add_ligne_reglement(conn, reglement_id, compte_charge=l["compte_charge"], libelle=l["libelle"],
+                             quantite=l["quantite"], prix_unitaire=l["prix_unitaire"],
+                             analytic_code=l.get("analytic_code"))
+    # Le Règlement sert ici à la traçabilité (même pièce comptable déjà
+    # postée par ce Bon de commande) — marqué validé directement pour ne
+    # pas générer une seconde écriture s'il était validé séparément.
+    update_reglement(conn, reglement_id, statut="validee", piece=piece)
+
+    update_ep_bon_commande(conn, bon_id, statut="validee", piece=piece)
     return bordereau_id, reglement_id
 
 
@@ -6362,13 +6424,58 @@ def compute_reglement_totals(conn, reglement_id):
             "net_a_payer": net_a_payer}
 
 
-def valider_reglement(conn, reglement_id, exercice=None):
-    """Comptabilise le règlement : une écriture équilibrée (Débit comptes de
-    charge choisis par ligne, avec code analytique / Crédit fournisseur +
-    retenue fiscale), plus une entrée de stock automatique pour chaque
+def _comptabiliser_lignes_achat(conn, date_str, piece, journal, fournisseur_code, lignes, tiers_label,
+                                 retenue_taux=0, retenue_compte=None):
+    """Comptabilise un ensemble de lignes d'achat (Débit comptes de charge
+    choisis par ligne, avec code analytique / Crédit fournisseur + retenue
+    fiscale optionnelle), plus une entrée de stock automatique pour chaque
     ligne liée à un compte de marchandises (31) ou de matières premières
-    (32) — même principe que valider_facture_achat(). Chaque ligne DOIT
-    avoir un compte de charge choisi, sous peine de refus explicite.
+    (32) — logique PARTAGÉE entre la validation d'un Règlement
+    (ENGAGEMENTS-PROJETS > Règlements) et la validation directe d'un Bon de
+    commande (ENGAGEMENTS-PROJETS > Bon de commande). Chaque ligne DOIT
+    avoir un compte de charge choisi, sous peine de refus explicite."""
+    sans_compte = [l["libelle"] for l in lignes if not l.get("compte_charge")]
+    if sans_compte:
+        raise ValueError(
+            "Chaque ligne doit avoir un compte de charge choisi avant validation — manquant pour : "
+            + ", ".join(sans_compte)
+        )
+    if not fournisseur_code or not fournisseur_exists(conn, fournisseur_code):
+        raise ValueError(f"Le fournisseur « {fournisseur_code} » n'existe pas ou n'est pas renseigné.")
+
+    total_ht = sum(l["montant_ht"] for l in lignes)
+    retenue_montant = total_ht * (retenue_taux or 0) / 100
+    net_a_payer = total_ht - retenue_montant
+
+    for l in lignes:
+        add_entry(conn, date_str, piece, journal, l["compte_charge"], "", l["libelle"],
+                  l["montant_ht"], 0, analytic_code=l.get("analytic_code") or "",
+                  fournisseur_code=fournisseur_code, quantite=l.get("quantite") or 0)
+
+    add_entry(conn, date_str, piece, journal, "401000", tiers_label, piece, 0, net_a_payer,
+              fournisseur_code=fournisseur_code)
+
+    if retenue_montant:
+        add_entry(conn, date_str, piece, journal, retenue_compte, "",
+                  f"Retenue {retenue_taux:g}% pièce {piece}", 0, retenue_montant)
+
+    for l in lignes:
+        if not l.get("type_stock"):
+            continue
+        _, stock_compte, contre_compte = _match_stock_mapping(l["compte_charge"], ACHAT_STOCK_MAPPING)
+        montant_entree = l["montant_ht"]
+        if montant_entree <= 0:
+            continue
+        add_entry(conn, date_str, piece, journal, stock_compte, "", f"Entrée stock — {l['libelle']}",
+                  montant_entree, 0, quantite=l.get("quantite") or 0)
+        add_entry(conn, date_str, piece, journal, contre_compte, "", f"Entrée stock — {l['libelle']}",
+                  0, montant_entree)
+
+    return {"total_ht": total_ht, "retenue_montant": retenue_montant, "net_a_payer": net_a_payer}
+
+
+def valider_reglement(conn, reglement_id, exercice=None):
+    """Comptabilise le règlement — voir _comptabiliser_lignes_achat().
     Retourne la liste des avertissements."""
     reglement = get_reglement(conn, reglement_id)
     if not reglement:
@@ -6378,44 +6485,14 @@ def valider_reglement(conn, reglement_id, exercice=None):
     lignes = list_lignes_reglement(conn, reglement_id)
     if not lignes:
         raise ValueError("Le règlement ne contient aucune ligne.")
-    sans_compte = [l["libelle"] for l in lignes if not l["compte_charge"]]
-    if sans_compte:
-        raise ValueError(
-            "Chaque ligne doit avoir un compte de charge choisi avant validation — manquant pour : "
-            + ", ".join(sans_compte)
-        )
-    if not reglement["fournisseur_code"] or not fournisseur_exists(conn, reglement["fournisseur_code"]):
-        raise ValueError(f"Le fournisseur « {reglement['fournisseur_code']} » n'existe pas ou n'est pas renseigné.")
 
-    totals = compute_reglement_totals(conn, reglement_id)
     date_str = reglement["date_reglement"]
     piece = reglement["numero"]
-
-    for l in lignes:
-        add_entry(conn, date_str, piece, "AC", l["compte_charge"], "", l["libelle"],
-                  l["montant_ht"], 0, analytic_code=l.get("analytic_code") or "",
-                  fournisseur_code=reglement["fournisseur_code"], quantite=l["quantite"])
-
     fournisseur = get_fournisseur(conn, reglement["fournisseur_code"])
     tiers_label = fournisseur["raison_sociale"] if fournisseur else reglement["fournisseur_code"]
-    add_entry(conn, date_str, piece, "AC", "401000", tiers_label,
-              reglement["numero"], 0, totals["net_a_payer"], fournisseur_code=reglement["fournisseur_code"])
 
-    if totals["retenue_montant"]:
-        add_entry(conn, date_str, piece, "AC", reglement["retenue_compte"], "",
-                  f"Retenue {totals['retenue_taux']:g}% règlement {piece}", 0, totals["retenue_montant"])
-
-    for l in lignes:
-        if not l["type_stock"]:
-            continue
-        _, stock_compte, contre_compte = _match_stock_mapping(l["compte_charge"], ACHAT_STOCK_MAPPING)
-        montant_entree = l["montant_ht"]
-        if montant_entree <= 0:
-            continue
-        add_entry(conn, date_str, piece, "AC", stock_compte, "", f"Entrée stock — {l['libelle']}",
-                  montant_entree, 0, quantite=l["quantite"])
-        add_entry(conn, date_str, piece, "AC", contre_compte, "", f"Entrée stock — {l['libelle']}",
-                  0, montant_entree)
+    _comptabiliser_lignes_achat(conn, date_str, piece, "AC", reglement["fournisseur_code"], lignes, tiers_label,
+                                 retenue_taux=reglement["retenue_taux"], retenue_compte=reglement["retenue_compte"])
 
     update_reglement(conn, reglement_id, statut="validee", piece=piece)
     return []

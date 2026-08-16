@@ -2268,3 +2268,38 @@ Testé de bout en bord avec un scénario couvrant toutes les catégories
 véhicule, facture) : chaque catégorie se vide indépendamment et
 complètement, Bilan resté équilibré (écart = 0) sur une base totalement
 vidée.
+
+### La validation du Bon de commande comptabilise désormais directement
+
+**Demande** : quand on valide un Bon de commande, le logiciel doit aussi
+générer les écritures comptables (auparavant, il fallait un second passage
+dans le sous-menu Règlements pour comptabiliser).
+
+**Réalisé** :
+- **Compte de charge et code analytique ajoutés directement aux lignes du
+  Bon de commande** (colonnes `compte_charge`/`analytic_code` sur
+  `ep_bon_commande_lignes`, migration incluse) — plus besoin d'attendre
+  l'étape Règlements pour les renseigner.
+- **Retenue fiscale ajoutée au Bon de commande** (taux, compte, préréglages
+  ADMIN — même mécanisme que Règlements/Factures frs).
+- **`core.valider_ep_bon_commande()` comptabilise directement** : Débit
+  des comptes de charge choisis (avec code analytique), Crédit fournisseur
+  net de retenue, retenue fiscale si applicable, entrée de stock
+  automatique pour les lignes liées à un compte de marchandises/matières
+  premières — refuse explicitement si un compte de charge manque sur une
+  ligne, ou si le fournisseur n'est pas renseigné. Toujours accompagné de
+  la création du Bordereau de livraison (suivi de réception, inchangé).
+- Un Règlement est **toujours créé pour la traçabilité**, mais déjà marqué
+  validé avec les MÊMES écritures (pas de double comptabilisation) — le
+  mécanisme de correction existant (dévalider/revalider depuis l'écran
+  Règlements) continue de fonctionner normalement pour corriger une
+  erreur après coup.
+- Logique de comptabilisation **factorisée** (`_comptabiliser_lignes_achat`)
+  entre Règlements et Bon de commande — un seul moteur, deux points d'entrée.
+
+Testé de bout en bout : validation directe du Bon de commande génère
+immédiatement l'écriture (charge + fournisseur, Bilan équilibré) sans
+étape supplémentaire ; les deux garde-fous (compte de charge manquant,
+fournisseur manquant) refusent correctement ; le mécanisme de correction
+existant (dévalider/revalider via Règlements) reste pleinement
+fonctionnel après une validation directe.
