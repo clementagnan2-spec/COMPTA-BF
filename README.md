@@ -2236,3 +2236,35 @@ chaque écran de l'application — à traiter séparément si vous le souhaitez.
 Testé : synchronisation sur une base de 39 tables, niveaux d'accès
 exportés/réimportés fidèlement, création d'utilisateur avec mot de passe
 haché et vérification correcte/incorrecte, non-régression du Bilan.
+
+### Correctif : Stock/Immobilisations persistants après suppression des écritures + outil de Réinitialisation
+
+**Bug repéré par l'utilisateur** (avec capture d'écran) : après avoir
+supprimé toutes les écritures comptables et lancé la Synchronisation, le
+Stock et les Immobilisations affichaient toujours des valeurs.
+
+**Cause identifiée** : les Soldes d'ouverture (`opening_balances`) sont
+une table **séparée** des écritures (`entries`) — supprimer les écritures
+ne vide jamais les soldes d'ouverture, et Stock/Immobilisations sont
+calculés à partir des DEUX (`compute_balance()` = solde d'ouverture +
+mouvements des écritures). La Synchronisation, elle, ne touche **jamais**
+aux données (uniquement à la structure des tables) — ce n'était donc pas
+l'outil à utiliser pour ça.
+
+**Réalisé** : nouvel écran **ADMIN > Réinitialisation des données** —
+outil explicite et destructif, avec :
+- **6 catégories indépendantes** à cocher : Écritures comptables, Soldes
+  d'ouverture, Fiches immobilisations, Circuit d'engagements (Expression
+  de besoin/Bon de commande/Bordereau/Règlements), Factures (vente/achat/
+  recouvrement), Transport (véhicules/missions/réparations/pièces).
+- **Portée** : toutes les années, ou un seul exercice (pour écritures et
+  soldes d'ouverture).
+- **Confirmation renforcée** : il faut taper « SUPPRIMER » pour activer
+  le bouton, puis confirmer une seconde fois — action irréversible.
+- Rapport détaillé du nombre de lignes supprimées par catégorie.
+
+Testé de bout en bord avec un scénario couvrant toutes les catégories
+(stock/immo via soldes d'ouverture, fiche immobilisation, engagement,
+véhicule, facture) : chaque catégorie se vide indépendamment et
+complètement, Bilan resté équilibré (écart = 0) sur une base totalement
+vidée.

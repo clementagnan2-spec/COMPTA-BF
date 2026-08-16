@@ -95,6 +95,7 @@ class App(tk.Tk):
         register("synchronisation", SynchronisationTab)
         register("niveaux_acces", NiveauxAccesTab)
         register("utilisateurs", UtilisateursTab)
+        register("reinitialisation", ReinitialisationTab)
         register("plan_budgetaire", PlanBudgetaireTab)
         register("plan_bailleur", PlanBailleurTab)
         register("stocks", StocksTab)
@@ -197,6 +198,7 @@ class App(tk.Tk):
             ("Modèle de bon de commande", "admin_modele_bon_commande"),
             ("Niveaux d'accès", "niveaux_acces"),
             ("Utilisateurs", "utilisateurs"),
+            ("Réinitialisation des données", "reinitialisation"),
         ])
         self.config(menu=menubar)
 
@@ -7292,6 +7294,92 @@ class NiveauxAccesTab(_SimplePlanTab):
 
     def import_fn(self, conn, path):
         return core.import_niveaux_acces_xlsx(conn, path)
+
+
+class ReinitialisationTab(ttk.Frame):
+    """Réinitialisation ciblée des données (menu ADMIN) — outil DESTRUCTIF
+    et explicite. La Synchronisation (menu PARAMÈTRES) ne touche jamais aux
+    données ; c'est ici, et seulement ici, qu'on peut vider des catégories
+    de données choisies. Chaque catégorie est indépendante : supprimer les
+    écritures comptables ne vide PAS automatiquement les soldes d'ouverture
+    (table séparée — d'où le Stock/les Immobilisations qui semblent
+    persister après une suppression des seules écritures)."""
+
+    def __init__(self, parent, conn):
+        super().__init__(parent)
+        self.conn = conn
+        ttk.Label(self, text="RÉINITIALISATION DES DONNÉES", font=("Segoe UI", 14, "bold")).pack(
+            anchor="w", padx=16, pady=(16, 4))
+        ttk.Label(self, text=(
+            "⚠ Action destructive et irréversible. La Synchronisation (menu PARAMÈTRES) ne supprime "
+            "JAMAIS de données — elle ne fait que réparer la structure des tables. Ici, chaque catégorie "
+            "cochée sera VIDÉE définitivement. Les catégories sont indépendantes : par exemple, vider les "
+            "« Écritures comptables » ne vide PAS les « Soldes d'ouverture » (table séparée) — c'est pour "
+            "cela que le Stock et les Immobilisations peuvent sembler ne pas se vider après avoir "
+            "supprimé uniquement les écritures : cochez aussi « Soldes d'ouverture »."
+        ), foreground="#B00020", wraplength=1050).pack(anchor="w", padx=16, pady=(0, 12))
+
+        exercice_bar = ttk.Frame(self)
+        exercice_bar.pack(fill="x", padx=16, pady=4)
+        ttk.Label(exercice_bar, text="Portée :").pack(side="left")
+        self.portee_var = tk.StringVar(value="tout")
+        ttk.Radiobutton(exercice_bar, text="Toutes les années", variable=self.portee_var,
+                        value="tout").pack(side="left", padx=8)
+        ttk.Radiobutton(exercice_bar, text="Exercice courant seulement :", variable=self.portee_var,
+                        value="exercice").pack(side="left", padx=(16, 4))
+        self.exercice_var = tk.StringVar(value=core.get_current_exercice(conn))
+        ttk.Entry(exercice_bar, textvariable=self.exercice_var, width=8).pack(side="left")
+        ttk.Label(exercice_bar, text="(s'applique aux écritures et soldes d'ouverture uniquement)",
+                  foreground="#595959").pack(side="left", padx=8)
+
+        self.vars = {}
+        cats_frame = ttk.LabelFrame(self, text="Catégories à vider")
+        cats_frame.pack(fill="x", padx=16, pady=8)
+        for key, label in core.REINIT_CATEGORIES.items():
+            var = tk.BooleanVar(value=False)
+            self.vars[key] = var
+            ttk.Checkbutton(cats_frame, text=label, variable=var).pack(anchor="w", padx=8, pady=2)
+
+        confirm_frame = ttk.LabelFrame(self, text="Confirmation")
+        confirm_frame.pack(fill="x", padx=16, pady=8)
+        ttk.Label(confirm_frame, text='Tapez SUPPRIMER en majuscules pour activer le bouton :').pack(
+            anchor="w", padx=8, pady=(6, 2))
+        self.confirm_var = tk.StringVar()
+        self.confirm_entry = ttk.Entry(confirm_frame, textvariable=self.confirm_var, width=20)
+        self.confirm_entry.pack(anchor="w", padx=8, pady=(0, 8))
+
+        self.reset_btn = ttk.Button(self, text="Réinitialiser les catégories cochées",
+                                     command=self.reinitialiser, state="disabled")
+        self.reset_btn.pack(anchor="w", padx=16, pady=(0, 8))
+        self.confirm_var.trace_add("write", self._on_confirm_change)
+
+        self.result_var = tk.StringVar()
+        ttk.Label(self, textvariable=self.result_var, font=("Segoe UI", 10)).pack(
+            anchor="w", padx=16, pady=(4, 16))
+
+    def _on_confirm_change(self, *_):
+        self.reset_btn.configure(state="normal" if self.confirm_var.get() == "SUPPRIMER" else "disabled")
+
+    def reinitialiser(self):
+        categories = {k for k, v in self.vars.items() if v.get()}
+        if not categories:
+            messagebox.showwarning("Aucune catégorie", "Cochez au moins une catégorie à vider.")
+            return
+        labels = "\n".join(f"• {core.REINIT_CATEGORIES[k]}" for k in categories)
+        if not messagebox.askyesno(
+            "Confirmation finale",
+            f"Vous allez vider DÉFINITIVEMENT :\n\n{labels}\n\n"
+            f"Cette action est IRRÉVERSIBLE. Continuer ?",
+            icon="warning",
+        ):
+            return
+        exercice = self.exercice_var.get().strip() if self.portee_var.get() == "exercice" else None
+        rapport = core.reinitialiser_donnees(self.conn, categories, exercice=exercice)
+        total = sum(rapport.values())
+        detail = "\n".join(f"• {core.REINIT_CATEGORIES[k]} : {n} ligne(s)" for k, n in rapport.items())
+        self.result_var.set(f"✓ Réinitialisation terminée — {total} ligne(s) supprimée(s) au total.")
+        self.confirm_var.set("")
+        messagebox.showinfo("Réinitialisation terminée", f"{detail}\n\nTotal : {total} ligne(s) supprimée(s).")
 
 
 class UtilisateursTab(ttk.Frame):

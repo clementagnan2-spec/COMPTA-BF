@@ -7000,6 +7000,73 @@ def verify_password(conn, nom_utilisateur, mot_de_passe):
     return d
 
 
+# ---------------------------------------------------------------------------
+# Réinitialisation ciblée des données (menu ADMIN) — la Synchronisation ne
+# touche JAMAIS aux données (uniquement la structure des tables) ; ceci est
+# l'outil explicite et destructif pour vider des catégories de données
+# choisies. Chaque catégorie est indépendante des autres — supprimer les
+# écritures comptables ne vide PAS automatiquement les soldes d'ouverture
+# (table séparée), ni les modules sans lien avec la comptabilité (circuit
+# d'engagements, transport...).
+# ---------------------------------------------------------------------------
+REINIT_CATEGORIES = {
+    "entries": "Écritures comptables (Saisie)",
+    "opening_balances": "Soldes d'ouverture",
+    "immobilisations_fiche": "Fiches immobilisations (fournisseur / prix d'achat)",
+    "engagements": "Circuit d'engagements (Expression de besoin, Bon de commande, "
+                    "Bordereau de livraison, Règlements)",
+    "factures": "Factures (vente, achat, recouvrement client)",
+    "transport": "Transport (véhicules, missions, réparations, pièces de rechange)",
+}
+
+
+def reinitialiser_donnees(conn, categories, exercice=None):
+    """Vide les catégories de données demandées (voir REINIT_CATEGORIES).
+    `exercice=None` (par défaut) supprime TOUTES les années pour les
+    catégories concernées par un exercice (écritures, soldes d'ouverture) ;
+    passer un exercice précis pour ne vider que cette année-là. Retourne un
+    dict {categorie: nb_lignes_supprimees}."""
+    rapport = {}
+    if "entries" in categories:
+        if exercice:
+            cur = conn.execute("DELETE FROM entries WHERE substr(date,1,4) = ?", (str(exercice),))
+        else:
+            cur = conn.execute("DELETE FROM entries")
+        rapport["entries"] = cur.rowcount
+    if "opening_balances" in categories:
+        if exercice:
+            cur = conn.execute("DELETE FROM opening_balances WHERE exercice = ?", (str(exercice),))
+        else:
+            cur = conn.execute("DELETE FROM opening_balances")
+        rapport["opening_balances"] = cur.rowcount
+    if "immobilisations_fiche" in categories:
+        cur = conn.execute("DELETE FROM immobilisations_fiche")
+        rapport["immobilisations_fiche"] = cur.rowcount
+    if "engagements" in categories:
+        n = 0
+        for table in ("expression_besoin_lignes", "expressions_besoin", "ep_bon_commande_lignes",
+                       "ep_bons_commande", "bordereau_livraison_lignes", "bordereaux_livraison",
+                       "reglement_lignes", "reglements"):
+            cur = conn.execute(f"DELETE FROM {table}")
+            n += cur.rowcount
+        rapport["engagements"] = n
+    if "factures" in categories:
+        n = 0
+        for table in ("facture_vente_lignes", "factures_vente", "facture_achat_lignes", "factures_achat",
+                       "factures_clients"):
+            cur = conn.execute(f"DELETE FROM {table}")
+            n += cur.rowcount
+        rapport["factures"] = n
+    if "transport" in categories:
+        n = 0
+        for table in ("reparation_lignes", "reparations", "missions", "vehicules", "pieces_rechange"):
+            cur = conn.execute(f"DELETE FROM {table}")
+            n += cur.rowcount
+        rapport["transport"] = n
+    conn.commit()
+    return rapport
+
+
 if __name__ == "__main__":
     # Petit auto-test en ligne de commande (sans Tkinter).
     conn = get_connection(":memory:" if False else "test_core.db")
