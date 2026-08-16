@@ -92,6 +92,9 @@ class App(tk.Tk):
         register("taux_retenue", TauxRetenueTab)
         register("admin_factures", AdminFacturesTab)
         register("admin_modele_bon_commande", AdminModeleBonCommandeTab)
+        register("synchronisation", SynchronisationTab)
+        register("niveaux_acces", NiveauxAccesTab)
+        register("utilisateurs", UtilisateursTab)
         register("plan_budgetaire", PlanBudgetaireTab)
         register("plan_bailleur", PlanBailleurTab)
         register("stocks", StocksTab)
@@ -185,12 +188,15 @@ class App(tk.Tk):
             ("Plan analytique", "plan_analytique"),
             ("Plan budgétaire", "plan_budgetaire"),
             ("Plan bailleurs de fonds", "plan_bailleur"),
+            ("Synchronisation", "synchronisation"),
         ])
         add_top_menu("ADMIN", [
             ("Taux de TVA", "taux_tva"),
             ("Taux de retenue à la source", "taux_retenue"),
             ("Modification des factures", "admin_factures"),
             ("Modèle de bon de commande", "admin_modele_bon_commande"),
+            ("Niveaux d'accès", "niveaux_acces"),
+            ("Utilisateurs", "utilisateurs"),
         ])
         self.config(menu=menubar)
 
@@ -7225,6 +7231,193 @@ class TauxRetenueTab(_SimplePlanTab):
 
     def import_fn(self, conn, path):
         return core.import_taux_retenue_xlsx(conn, path)
+
+
+class SynchronisationTab(ttk.Frame):
+    """Synchronisation de la base (menu PARAMÈTRES) — revérifie/répare la
+    structure de toutes les tables (utile après une mise à jour du
+    logiciel). Ne touche jamais aux données existantes."""
+
+    def __init__(self, parent, conn):
+        super().__init__(parent)
+        self.conn = conn
+        ttk.Label(self, text="SYNCHRONISATION", font=("Segoe UI", 14, "bold")).pack(
+            anchor="w", padx=16, pady=(16, 4))
+        ttk.Label(self, text=(
+            "Revérifie et met à jour la structure de toutes les tables de la base (utile après avoir "
+            "installé une nouvelle version du logiciel) — crée toute table ou colonne manquante, sans "
+            "jamais modifier ou supprimer vos données existantes."
+        ), foreground="#595959", wraplength=1000).pack(anchor="w", padx=16, pady=(0, 12))
+        ttk.Button(self, text="Synchroniser maintenant", command=self.synchroniser).pack(anchor="w", padx=16)
+        self.result_var = tk.StringVar()
+        ttk.Label(self, textvariable=self.result_var, font=("Segoe UI", 10)).pack(
+            anchor="w", padx=16, pady=(12, 0))
+
+    def synchroniser(self):
+        try:
+            rapport = core.synchroniser_base(self.conn)
+        except Exception as exc:
+            messagebox.showerror("Erreur", f"Échec de la synchronisation : {exc}")
+            return
+        ecart = rapport["ecart_bilan"]
+        ecart_txt = (f"écart Actif/Passif : {ecart:,.2f}" if ecart is not None
+                     else "Bilan non calculable (base vide ?)")
+        self.result_var.set(
+            f"✓ Synchronisation terminée — {rapport['nb_tables']} tables vérifiées, "
+            f"exercice courant : {rapport['exercice']}, {ecart_txt}."
+        )
+        messagebox.showinfo("Synchronisation terminée",
+                             f"{rapport['nb_tables']} tables vérifiées et à jour.\nAucune donnée n'a été modifiée.")
+
+
+class NiveauxAccesTab(_SimplePlanTab):
+    """Niveaux d'accès paramétrables (menu ADMIN) — utilisés lors de la
+    création d'un utilisateur."""
+    TITLE = "NIVEAUX D'ACCÈS"
+    CODE_LABEL = "Nom du niveau"
+    SUGGESTIONS_FN = staticmethod(core.ajouter_niveaux_acces_suggeres)
+    SUGGESTIONS_LABEL = "Ajouter les niveaux courants (Administrateur, Comptable...)"
+
+    def list_fn(self, conn):
+        return core.list_niveaux_acces(conn)
+
+    def add_fn(self, conn, code, label):
+        core.add_niveau_acces(conn, code, label)
+
+    def delete_fn(self, conn, code):
+        core.delete_niveau_acces(conn, code)
+
+    def export_fn(self, conn, path):
+        core.export_niveaux_acces_xlsx(conn, path)
+
+    def import_fn(self, conn, path):
+        return core.import_niveaux_acces_xlsx(conn, path)
+
+
+class UtilisateursTab(ttk.Frame):
+    """Comptes utilisateurs et niveau d'accès (menu ADMIN) — pose la base
+    (comptes, mots de passe hachés, niveaux) en vue d'un futur contrôle
+    d'accès par écran/action ; l'application ne demande pas encore de
+    connexion au démarrage."""
+
+    def __init__(self, parent, conn):
+        super().__init__(parent)
+        self.conn = conn
+        self.selected_id = None
+        ttk.Label(self, text="UTILISATEURS", font=("Segoe UI", 14, "bold")).pack(anchor="w", padx=16, pady=(16, 4))
+        ttk.Label(self, text=(
+            "Les niveaux d'accès se paramètrent dans le sous-menu « Niveaux d'accès ». Ce module pose la "
+            "base des comptes (mots de passe hachés) ; l'application ne demande pas encore de connexion "
+            "au démarrage."
+        ), foreground="#595959", wraplength=1000).pack(anchor="w", padx=16, pady=(0, 8))
+
+        form = ttk.LabelFrame(self, text="Utilisateur")
+        form.pack(fill="x", padx=16, pady=4)
+        ttk.Label(form, text="Nom d'utilisateur :").grid(row=0, column=0, sticky="w", padx=4, pady=4)
+        self.login_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.login_var, width=18).grid(row=0, column=1, padx=4)
+        ttk.Label(form, text="Nom complet :").grid(row=0, column=2, sticky="w", padx=(12, 4))
+        self.nom_complet_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.nom_complet_var, width=24).grid(row=0, column=3, padx=4)
+        ttk.Label(form, text="Niveau d'accès :").grid(row=0, column=4, sticky="w", padx=(12, 4))
+        self.niveau_var = tk.StringVar()
+        self.niveau_combo = ttk.Combobox(form, textvariable=self.niveau_var, width=18, state="readonly")
+        self.niveau_combo.grid(row=0, column=5, padx=4)
+        self._refresh_niveaux()
+        ttk.Label(form, text="Mot de passe :").grid(row=1, column=0, sticky="w", padx=4, pady=(4, 0))
+        self.password_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.password_var, width=18, show="•").grid(
+            row=1, column=1, padx=4, pady=(4, 0))
+        self.actif_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(form, text="Actif", variable=self.actif_var).grid(
+            row=1, column=2, sticky="w", padx=(12, 4), pady=(4, 0))
+        ttk.Label(form, text="(laisser le mot de passe vide pour ne pas le changer, lors d'une mise à jour)",
+                  foreground="#595959").grid(row=1, column=3, columnspan=3, sticky="w", padx=(12, 4), pady=(4, 0))
+
+        btns = ttk.Frame(self)
+        btns.pack(fill="x", padx=16, pady=6)
+        ttk.Button(btns, text="Créer l'utilisateur", command=self.add).pack(side="left")
+        ttk.Button(btns, text="Mettre à jour la sélection", command=self.update_sel).pack(side="left", padx=8)
+        ttk.Button(btns, text="Supprimer la sélection", command=self.delete_sel).pack(side="left")
+        ttk.Button(btns, text="Effacer le formulaire", command=self.clear_form).pack(side="left", padx=8)
+
+        cols = ("id", "login", "nom_complet", "niveau", "actif", "date_creation")
+        self.tree = ttk.Treeview(self, columns=cols, show="headings", height=16)
+        headers = ["ID", "Utilisateur", "Nom complet", "Niveau d'accès", "Actif", "Créé le"]
+        widths = [40, 140, 220, 160, 60, 100]
+        for c, h, w in zip(cols, headers, widths):
+            self.tree.heading(c, text=h)
+            self.tree.column(c, width=w, anchor="w")
+        self.tree.pack(fill="both", expand=True, padx=16, pady=8)
+        self.tree.bind("<<TreeviewSelect>>", self._on_select)
+        self.refresh()
+
+    def _refresh_niveaux(self):
+        self.niveau_combo["values"] = [n["nom"] for n in core.list_niveaux_acces(self.conn)]
+
+    def _on_select(self, event=None):
+        sel = self.tree.selection()
+        if not sel:
+            return
+        v = self.tree.item(sel[0], "values")
+        self.selected_id = v[0]
+        self.login_var.set(v[1]); self.nom_complet_var.set(v[2]); self.niveau_var.set(v[3])
+        self.actif_var.set(v[4] == "Oui")
+        self.password_var.set("")
+
+    def clear_form(self):
+        self.selected_id = None
+        self.login_var.set(""); self.nom_complet_var.set(""); self.niveau_var.set("")
+        self.password_var.set(""); self.actif_var.set(True)
+
+    def add(self):
+        if not self.login_var.get().strip():
+            messagebox.showwarning("Champ manquant", "Le nom d'utilisateur est obligatoire.")
+            return
+        if not self.password_var.get():
+            messagebox.showwarning("Champ manquant", "Le mot de passe est obligatoire à la création.")
+            return
+        try:
+            core.add_utilisateur(self.conn, self.login_var.get().strip(), self.password_var.get(),
+                                  nom_complet=self.nom_complet_var.get().strip(),
+                                  niveau_acces=self.niveau_var.get() or "Lecture seule",
+                                  actif=self.actif_var.get())
+        except ValueError as exc:
+            messagebox.showerror("Erreur", str(exc))
+            return
+        self.clear_form()
+        self.refresh()
+
+    def update_sel(self):
+        if not self.selected_id:
+            messagebox.showinfo("Info", "Sélectionnez d'abord un utilisateur.")
+            return
+        core.update_utilisateur(
+            self.conn, self.selected_id,
+            nouveau_mot_de_passe=self.password_var.get() or None,
+            nom_utilisateur=self.login_var.get().strip(), nom_complet=self.nom_complet_var.get().strip(),
+            niveau_acces=self.niveau_var.get() or "Lecture seule", actif=1 if self.actif_var.get() else 0,
+        )
+        self.clear_form()
+        self.refresh()
+
+    def delete_sel(self):
+        if not self.selected_id:
+            messagebox.showinfo("Info", "Sélectionnez d'abord un utilisateur.")
+            return
+        if messagebox.askyesno("Confirmer", "Supprimer cet utilisateur ?"):
+            core.delete_utilisateur(self.conn, self.selected_id)
+            self.clear_form()
+            self.refresh()
+
+    def refresh(self):
+        self._refresh_niveaux()
+        for row in self.tree.get_children():
+            self.tree.delete(row)
+        for u in core.list_utilisateurs(self.conn):
+            self.tree.insert("", "end", values=(
+                u["id"], u["nom_utilisateur"], u["nom_complet"] or "", u["niveau_acces"],
+                "Oui" if u["actif"] else "Non", u["date_creation"] or ""))
 
 
 class AdminModeleBonCommandeTab(ttk.Frame):

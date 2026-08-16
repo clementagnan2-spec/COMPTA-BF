@@ -4,9 +4,11 @@ core.py — Moteur comptable (sans interface graphique).
 Toute la logique métier vit ici, indépendamment de Tkinter, pour rester
 testable en ligne de commande. main.py ne fait qu'appeler ces fonctions.
 """
+import hashlib
 import json
 import os
 import re
+import secrets
 import sys
 import sqlite3
 from datetime import date, datetime, timedelta
@@ -713,6 +715,24 @@ def init_db(conn):
         CREATE TABLE IF NOT EXISTS taux_amortissement (
             categorie TEXT PRIMARY KEY,
             taux_pct REAL NOT NULL DEFAULT 0
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS niveaux_acces (
+            nom TEXT PRIMARY KEY,
+            description TEXT
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS utilisateurs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nom_utilisateur TEXT NOT NULL UNIQUE,
+            nom_complet TEXT,
+            mot_de_passe_hash TEXT,
+            sel TEXT,
+            niveau_acces TEXT NOT NULL DEFAULT 'Lecture seule',
+            actif INTEGER NOT NULL DEFAULT 1,
+            date_creation TEXT
         )
     """)
     conn.commit()
@@ -6799,6 +6819,185 @@ def compute_balance_agee(conn, seuils=(30, 60, 90), date_reference=None):
             "tranche": bucket_idx,
         })
     return sorted(par_client.values(), key=lambda c: -c["total"])
+
+
+# ---------------------------------------------------------------------------
+# Synchronisation (menu PARAMÈTRES) — revérifie/répare la structure de
+# toutes les tables de la base (utile après une mise à jour du logiciel qui
+# a ajouté de nouvelles tables/colonnes à une base existante plus ancienne ;
+# ces migrations tournent déjà automatiquement à chaque démarrage via
+# _migrate(), ce bouton les rejoue explicitement à la demande et confirme
+# l'état de la base).
+# ---------------------------------------------------------------------------
+def synchroniser_base(conn):
+    """Rejoue init_db()/_migrate() sur la connexion en cours (crée toute
+    table/colonne manquante, sans jamais toucher aux données existantes) et
+    renvoie un petit rapport (nombre de tables, exercice courant, écart du
+    Bilan) pour confirmer visuellement que tout est à jour."""
+    init_db(conn)
+    tables = [r["name"] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
+    ).fetchall()]
+    exercice = get_current_exercice(conn)
+    try:
+        bilan = compute_bilan(conn, exercice=exercice)
+        ecart = bilan["ecart"]
+    except Exception:
+        ecart = None
+    return {"nb_tables": len(tables), "tables": tables, "exercice": exercice, "ecart_bilan": ecart}
+
+
+# ---------------------------------------------------------------------------
+# Utilisateurs et niveaux d'accès (menu ADMIN) — gestion des comptes et de
+# leur niveau d'accès (paramétrable). L'application ne demande pas encore
+# de connexion au démarrage : cet écran pose la base (comptes, mots de
+# passe, niveaux) en vue d'un futur contrôle d'accès par écran/action.
+# ---------------------------------------------------------------------------
+def list_niveaux_acces(conn):
+    return [dict(r) for r in conn.execute("SELECT * FROM niveaux_acces ORDER BY nom").fetchall()]
+
+
+def add_niveau_acces(conn, nom, description=""):
+    conn.execute("INSERT OR REPLACE INTO niveaux_acces (nom, description) VALUES (?, ?)",
+                 (nom.strip(), description.strip()))
+    conn.commit()
+
+
+def delete_niveau_acces(conn, nom):
+    conn.execute("DELETE FROM niveaux_acces WHERE nom = ?", (nom,))
+    conn.commit()
+
+
+def niveau_acces_exists(conn, nom):
+    return conn.execute("SELECT 1 FROM niveaux_acces WHERE nom = ?", (nom,)).fetchone() is not None
+
+
+NIVEAUX_ACCES_SUGGERES = [
+    ("Administrateur", "Accès complet à tous les menus, y compris ADMIN et PARAMÈTRES."),
+    ("Comptable", "Accès à la Saisie, aux États et rapports, et aux modules métier — pas à ADMIN."),
+    ("Saisie seule", "Peut saisir des écritures et des documents commerciaux, sans accès aux états ni à l'administration."),
+    ("Lecture seule", "Consultation uniquement, aucune saisie ni modification."),
+]
+
+
+def ajouter_niveaux_acces_suggeres(conn):
+    ajoutes = 0
+    for nom, description in NIVEAUX_ACCES_SUGGERES:
+        if not niveau_acces_exists(conn, nom):
+            add_niveau_acces(conn, nom, description)
+            ajoutes += 1
+    return ajoutes
+
+
+def export_niveaux_acces_xlsx(conn, path):
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Niveaux d'accès"
+    header_font = Font(bold=True, color="FFFFFFFF")
+    header_fill = PatternFill("solid", fgColor="1F4E78")
+    for i, label in enumerate(["Nom du niveau", "Description"], start=1):
+        c = ws.cell(row=1, column=i, value=label)
+        c.font = header_font
+        c.fill = header_fill
+    for r, row in enumerate(conn.execute("SELECT nom, description FROM niveaux_acces ORDER BY nom"), start=2):
+        ws.cell(row=r, column=1, value=row["nom"])
+        ws.cell(row=r, column=2, value=row["description"])
+    ws.column_dimensions["A"].width = 20
+    ws.column_dimensions["B"].width = 60
+    wb.save(path)
+    return path
+
+
+def import_niveaux_acces_xlsx(conn, path):
+    import openpyxl
+    wb = openpyxl.load_workbook(path, data_only=True)
+    ws = wb.active
+    rows = []
+    for r in ws.iter_rows(min_row=2):
+        values = [c.value for c in r]
+        if all(v in (None, "") for v in values):
+            continue
+        nom = str(values[0] or "").strip()
+        description = str(values[1] or "").strip() if len(values) > 1 else ""
+        if nom:
+            rows.append((nom, description))
+    if not rows:
+        raise ValueError("Le fichier ne contient aucune ligne valide.")
+    conn.execute("DELETE FROM niveaux_acces")
+    conn.executemany("INSERT INTO niveaux_acces (nom, description) VALUES (?, ?)", rows)
+    conn.commit()
+    return len(rows)
+
+
+def _hash_password(mot_de_passe, sel=None):
+    sel = sel or secrets.token_hex(16)
+    h = hashlib.sha256((sel + mot_de_passe).encode("utf-8")).hexdigest()
+    return h, sel
+
+
+def add_utilisateur(conn, nom_utilisateur, mot_de_passe, nom_complet="", niveau_acces="Lecture seule", actif=True):
+    nom_utilisateur = nom_utilisateur.strip()
+    if not nom_utilisateur:
+        raise ValueError("Le nom d'utilisateur est obligatoire.")
+    if conn.execute("SELECT 1 FROM utilisateurs WHERE nom_utilisateur = ?", (nom_utilisateur,)).fetchone():
+        raise ValueError(f"L'utilisateur « {nom_utilisateur} » existe déjà.")
+    if not mot_de_passe:
+        raise ValueError("Le mot de passe est obligatoire.")
+    h, sel = _hash_password(mot_de_passe)
+    conn.execute(
+        """INSERT INTO utilisateurs (nom_utilisateur, nom_complet, mot_de_passe_hash, sel, niveau_acces, actif,
+                                      date_creation)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (nom_utilisateur, nom_complet.strip(), h, sel, niveau_acces, 1 if actif else 0,
+         date.today().strftime("%Y-%m-%d")),
+    )
+    conn.commit()
+
+
+def update_utilisateur(conn, user_id, nouveau_mot_de_passe=None, **fields):
+    """Met à jour un utilisateur. Passer `nouveau_mot_de_passe` pour changer
+    le mot de passe (recalcule un nouveau sel) ; les autres champs
+    (nom_complet, niveau_acces, actif...) via `fields`."""
+    if nouveau_mot_de_passe:
+        h, sel = _hash_password(nouveau_mot_de_passe)
+        fields["mot_de_passe_hash"] = h
+        fields["sel"] = sel
+    if not fields:
+        return
+    cols = ", ".join(f"{k} = ?" for k in fields)
+    conn.execute(f"UPDATE utilisateurs SET {cols} WHERE id = ?", (*fields.values(), user_id))
+    conn.commit()
+
+
+def delete_utilisateur(conn, user_id):
+    conn.execute("DELETE FROM utilisateurs WHERE id = ?", (user_id,))
+    conn.commit()
+
+
+def list_utilisateurs(conn):
+    return [dict(r) for r in conn.execute(
+        "SELECT id, nom_utilisateur, nom_complet, niveau_acces, actif, date_creation FROM utilisateurs "
+        "ORDER BY nom_utilisateur"
+    ).fetchall()]
+
+
+def verify_password(conn, nom_utilisateur, mot_de_passe):
+    """Vérifie un couple utilisateur/mot de passe — utilisable par un futur
+    écran de connexion. Renvoie l'utilisateur (sans le hash) si valide,
+    None sinon."""
+    row = conn.execute("SELECT * FROM utilisateurs WHERE nom_utilisateur = ? AND actif = 1",
+                        (nom_utilisateur.strip(),)).fetchone()
+    if not row:
+        return None
+    h, _ = _hash_password(mot_de_passe, sel=row["sel"])
+    if h != row["mot_de_passe_hash"]:
+        return None
+    d = dict(row)
+    d.pop("mot_de_passe_hash", None)
+    d.pop("sel", None)
+    return d
 
 
 if __name__ == "__main__":

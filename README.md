@@ -2206,3 +2206,33 @@ l'utilisateur (facture 1 500 000 F sur « Societe ABC5 », réglée en
 caisse) : montant correctement affiché, écriture comptable générée
 (Débit 571000 / Crédit 411000), Bilan resté équilibré, aucun doublon
 d'écriture en cas de second appel.
+
+### Synchronisation (PARAMÈTRES) + Utilisateurs et niveaux d'accès (ADMIN)
+
+**Réalisé** :
+- **PARAMÈTRES > Synchronisation** : bouton qui rejoue explicitement
+  `init_db()`/`_migrate()` sur la base en cours — crée toute table ou
+  colonne manquante (utile après avoir installé une nouvelle version du
+  logiciel sur une base existante plus ancienne), sans jamais toucher aux
+  données existantes. Affiche un rapport (nombre de tables, exercice
+  courant, écart du Bilan) confirmant l'état de la base.
+- **ADMIN > Niveaux d'accès** : liste paramétrable (même mécanisme que les
+  Taux de TVA/retenue — créer/modifier/supprimer, import/export .xlsx,
+  bouton « Ajouter les niveaux courants » pré-remplissant Administrateur/
+  Comptable/Saisie seule/Lecture seule).
+- **ADMIN > Utilisateurs** : comptes utilisateurs (nom d'utilisateur, nom
+  complet, mot de passe **haché** — SHA-256 salé, jamais stocké en clair —
+  niveau d'accès assigné, actif/inactif). `core.verify_password()` posé
+  pour un futur écran de connexion.
+
+**Point de transparence important** : l'application ne demande pas encore
+de connexion au démarrage, et aucun menu/action n'est aujourd'hui
+restreint selon le niveau d'accès — ce chantier pose la **base** (comptes,
+mots de passe sécurisés, niveaux configurables) demandée, mais l'application
+RÉELLE des restrictions (écran de connexion + contrôle par menu/action
+selon le niveau) est un chantier bien plus large, touchant potentiellement
+chaque écran de l'application — à traiter séparément si vous le souhaitez.
+
+Testé : synchronisation sur une base de 39 tables, niveaux d'accès
+exportés/réimportés fidèlement, création d'utilisateur avec mot de passe
+haché et vérification correcte/incorrecte, non-régression du Bilan.
