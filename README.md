@@ -2303,3 +2303,80 @@ immédiatement l'écriture (charge + fournisseur, Bilan équilibré) sans
 fournisseur manquant) refusent correctement ; le mécanisme de correction
 existant (dévalider/revalider via Règlements) reste pleinement
 fonctionnel après une validation directe.
+
+### Correctifs Bon de commande : garde-fou montant nul + correction possible après validation
+
+**Bug repéré par l'utilisateur** (avec capture d'écran) : une ligne avec
+Prix unitaire = 0.00 (la valeur semblait avoir été saisie par erreur dans
+le champ Unité au lieu de Prix unitaire) a pu être validée — l'écriture
+générée avait un montant nul, et **aucune entrée de stock n'a été créée**
+(la logique de comptabilisation ignore volontairement les lignes à montant
+nul, pour ne jamais poser une écriture ou un mouvement de stock à 0).
+
+**Corrigé — deux volets** :
+
+1. **Garde-fou ajouté** : `_comptabiliser_lignes_achat()` (utilisée à la
+   fois par Règlements et par la validation directe du Bon de commande)
+   refuse désormais explicitement toute ligne à montant nul, avec un
+   message pointant vers la cause la plus probable (« prix unitaire
+   probablement resté à 0, ou saisi dans le mauvais champ »).
+2. **Bug plus grave découvert en creusant : aucun moyen de corriger un Bon
+   de commande déjà validé** — une fois « VALIDÉ », l'écran se verrouillait
+   complètement, sans bouton de correction (contrairement aux Règlements,
+   Factures frs, etc.). `core.devalider_ep_bon_commande()` (nouveau) :
+   supprime les écritures comptables générées, repasse le Bon de commande
+   ET le Règlement lié en brouillon ensemble (cohérence des deux
+   documents), sans toucher au Bordereau de livraison déjà créé
+   (indépendant de la comptabilité). Bouton **« Corriger (repasser en
+   brouillon) »** ajouté à l'écran. Le sens inverse (dévalider un Règlement
+   créé par un Bon de commande) repasse maintenant aussi ce Bon de
+   commande en brouillon, pour la même raison de cohérence.
+
+Testé de bout en bout, en reproduisant exactement le scénario de
+l'utilisateur : une ligne à montant nul est désormais refusée à la
+validation ; un Bon de commande validé avec une erreur peut être corrigé
+(écritures retirées, ligne modifiable, revalidation possible) ; une fois
+le prix correctement saisi, l'écriture ET le mouvement de stock (bonne
+quantité, bon coût unitaire) sont générés correctement.
+
+### Menu RAPPORTS FINANCIERS restauré + Paiement bancaire dans Règlements
+
+**Points clarifiés avec l'utilisateur** : les captures montraient un Bon
+de commande "immo" avec **Quantité : 0** (d'où montant=0, donc rien en
+Immobilisations) et l'absence du bouton "Corriger" / de l'ouverture
+automatique des listes déjà livrés précédemment — signe d'une version
+antérieure encore utilisée. Ces deux fonctionnalités sont bien présentes
+dans le code actuel (vérifié). Pour cette réponse, deux vraies demandes
+nouvelles :
+
+1. **Menu « RAPPORTS FINANCIERS »** (nouveau) : réintègre Grand livre,
+   Balance, Bilan, Écritures non équilibrées, Compte de résultat, TFT,
+   Situation financière, Liasse fiscale, Tableaux d'exécution budgétaire,
+   Impôts, Déclarations sociales, Rapprochements bancaires — tous ces
+   écrans et leur moteur de calcul n'avaient jamais été supprimés du code
+   (seule la précédente inscription au menu ÉTATS ET RAPPORTS l'avait
+   été), donc rien à reconstruire, juste réintégré sous ce nouveau nom.
+
+2. **Paiement bancaire dans Règlements** : jusqu'ici, valider un Règlement
+   ne faisait que reconnaître la charge et la dette fournisseur (compte
+   401000) — il manquait l'étape du RÈGLEMENT proprement dit (le paiement
+   réel). Ajouté :
+   - `core.enregistrer_paiement_reglement()` : comptabilise le paiement —
+     Débit fournisseur (401000, soldant sa dette), Crédit compte banque/
+     caisse choisi, pour le montant NET à payer (après retenue). Ne
+     comptabilise qu'une seule fois (garde-fou `paiement_comptabilise`).
+   - `core.devalider_paiement_reglement()` : annule un paiement déjà
+     comptabilisé (mauvais compte, erreur) sans toucher à la charge/dette
+     déjà validée séparément.
+   - Nouvelle section **« Paiement bancaire/caisse »** dans l'écran
+     Règlements : date de paiement, compte banque/caisse (recherche
+     filtrée à la classe 5), boutons Enregistrer/Annuler le paiement —
+     n'apparaît activable qu'une fois la charge déjà validée.
+   - `devalider_reglement()` (correction de la charge) annule aussi
+     automatiquement le paiement s'il en existait un, pour rester cohérent.
+
+Testé de bout en bout : achat d'immobilisation avec quantité correcte →
+apparaît bien dans Immobilisations (valeur brute 500 000) ; paiement
+bancaire du règlement lié comptabilisé (Débit 401000, Crédit banque) ;
+génération du Bilan (RAPPORTS FINANCIERS) toujours sans erreur (132/132
+cellules) ; Bilan resté équilibré à chaque étape.

@@ -623,7 +623,10 @@ def init_db(conn):
             retenue_taux REAL NOT NULL DEFAULT 0,
             retenue_compte TEXT NOT NULL DEFAULT '447800',
             statut TEXT NOT NULL DEFAULT 'brouillon',
-            piece TEXT
+            piece TEXT,
+            date_paiement TEXT,
+            compte_paiement TEXT,
+            paiement_comptabilise INTEGER NOT NULL DEFAULT 0
         )
     """)
     conn.execute("""
@@ -806,6 +809,13 @@ def _migrate(conn):
         conn.execute("ALTER TABLE factures_clients ADD COLUMN compte_reglement TEXT")
     if fc_cols and "reglement_comptabilise" not in fc_cols:
         conn.execute("ALTER TABLE factures_clients ADD COLUMN reglement_comptabilise INTEGER NOT NULL DEFAULT 0")
+    r_cols = [r["name"] for r in conn.execute("PRAGMA table_info(reglements)")]
+    if r_cols and "date_paiement" not in r_cols:
+        conn.execute("ALTER TABLE reglements ADD COLUMN date_paiement TEXT")
+    if r_cols and "compte_paiement" not in r_cols:
+        conn.execute("ALTER TABLE reglements ADD COLUMN compte_paiement TEXT")
+    if r_cols and "paiement_comptabilise" not in r_cols:
+        conn.execute("ALTER TABLE reglements ADD COLUMN paiement_comptabilise INTEGER NOT NULL DEFAULT 0")
 
     # Migre l'ancien mécanisme "stock_initial_<compte>" (settings) vers opening_balances
     default_exercice = str(datetime.today().year)
@@ -6440,6 +6450,13 @@ def _comptabiliser_lignes_achat(conn, date_str, piece, journal, fournisseur_code
             "Chaque ligne doit avoir un compte de charge choisi avant validation — manquant pour : "
             + ", ".join(sans_compte)
         )
+    sans_montant = [l["libelle"] for l in lignes if not l.get("montant_ht")]
+    if sans_montant:
+        raise ValueError(
+            "Chaque ligne doit avoir un montant strictement positif (quantité × prix unitaire) avant "
+            "validation — vérifiez le prix unitaire (probablement resté à 0, ou saisi dans le mauvais "
+            "champ) pour : " + ", ".join(sans_montant)
+        )
     if not fournisseur_code or not fournisseur_exists(conn, fournisseur_code):
         raise ValueError(f"Le fournisseur « {fournisseur_code} » n'existe pas ou n'est pas renseigné.")
 
@@ -6498,6 +6515,64 @@ def valider_reglement(conn, reglement_id, exercice=None):
     return []
 
 
+def enregistrer_paiement_reglement(conn, reglement_id, date_paiement, compte_paiement):
+    """Enregistre le PAIEMENT bancaire/caisse réel d'un Règlement déjà
+    validé (la charge et la dette fournisseur — compte 401000 — ont déjà
+    été comptabilisées par valider_reglement()) : comptabilise
+    l'encaissement Débit fournisseur (401000, soldant sa dette) / Crédit
+    compte banque/caisse choisi, pour le montant NET à payer (après
+    retenue). Ne comptabilise le paiement qu'UNE SEULE FOIS par règlement
+    (garde-fou `paiement_comptabilise`)."""
+    reglement = get_reglement(conn, reglement_id)
+    if not reglement:
+        raise ValueError("Règlement introuvable.")
+    if reglement["statut"] != "validee":
+        raise ValueError("Ce règlement doit d'abord être validé (charge comptabilisée) avant d'enregistrer un paiement.")
+    if not compte_paiement or not account_exists(conn, compte_paiement):
+        raise ValueError(f"Le compte de paiement « {compte_paiement} » n'existe pas.")
+    if account_racine(compte_paiement) != "5":
+        raise ValueError("Le compte de paiement doit être un compte de trésorerie (classe 5 — banque ou caisse).")
+    if reglement["paiement_comptabilise"]:
+        raise ValueError("Le paiement de ce règlement a déjà été comptabilisé.")
+
+    totals = compute_reglement_totals(conn, reglement_id)
+    fournisseur = get_fournisseur(conn, reglement["fournisseur_code"])
+    tiers_label = fournisseur["raison_sociale"] if fournisseur else reglement["fournisseur_code"]
+    piece = reglement["piece"] or reglement["numero"]
+
+    _check_exercice_editable(conn, date_paiement)
+    add_entry(conn, date_paiement, piece, "BQ", "401000", tiers_label, f"Paiement règlement {piece}",
+              totals["net_a_payer"], 0, fournisseur_code=reglement["fournisseur_code"])
+    add_entry(conn, date_paiement, piece, "BQ", compte_paiement, tiers_label, f"Paiement règlement {piece}",
+              0, totals["net_a_payer"])
+
+    update_reglement(conn, reglement_id, date_paiement=date_paiement, compte_paiement=compte_paiement,
+                      paiement_comptabilise=1)
+    return totals["net_a_payer"]
+
+
+def devalider_paiement_reglement(conn, reglement_id):
+    """Annule le paiement bancaire déjà comptabilisé d'un règlement (en cas
+    d'erreur — mauvais compte banque, mauvais montant...) : supprime les
+    écritures du journal 'BQ' pour ce règlement et remet
+    `paiement_comptabilise` à 0, SANS toucher à la charge/dette fournisseur
+    (déjà validée séparément — voir devalider_reglement pour ça)."""
+    reglement = get_reglement(conn, reglement_id)
+    if not reglement:
+        raise ValueError("Règlement introuvable.")
+    if not reglement["paiement_comptabilise"]:
+        raise ValueError("Aucun paiement comptabilisé pour ce règlement — rien à annuler.")
+    piece = reglement["piece"] or reglement["numero"]
+    ids = [r["id"] for r in conn.execute(
+        "SELECT id FROM entries WHERE piece = ? AND journal = 'BQ'", (piece,)
+    ).fetchall()]
+    deleted, errors = delete_entries_bulk(conn, ids)
+    if errors:
+        raise ValueError("Impossible d'annuler ce paiement : " + " ; ".join(errors))
+    update_reglement(conn, reglement_id, date_paiement=None, compte_paiement=None, paiement_comptabilise=0)
+    return deleted
+
+
 def devalider_reglement(conn, reglement_id):
     """Repasse un règlement VALIDÉ en brouillon modifiable, en cas d'erreur
     sur les chiffres constatée après validation : supprime toutes les
@@ -6513,6 +6588,8 @@ def devalider_reglement(conn, reglement_id):
     exercice_reglement = _exercice_of_date(reglement["date_reglement"])
     if is_exercice_cloture(conn, exercice_reglement):
         raise ValueError(f"L'exercice {exercice_reglement} de ce règlement est clôturé : impossible de le corriger.")
+    if reglement["paiement_comptabilise"]:
+        devalider_paiement_reglement(conn, reglement_id)
     ids = [r["id"] for r in conn.execute(
         "SELECT id FROM entries WHERE piece = ? AND journal = 'AC'", (reglement["numero"],)
     ).fetchall()]
@@ -6520,6 +6597,46 @@ def devalider_reglement(conn, reglement_id):
     if errors:
         raise ValueError("Impossible de corriger ce règlement : " + " ; ".join(errors))
     update_reglement(conn, reglement_id, statut="brouillon")
+    # Si ce règlement a été créé/comptabilisé directement par la validation
+    # d'un Bon de commande (bon_commande_id renseigné), repasse aussi CE bon
+    # en brouillon modifiable — sinon il resterait verrouillé « VALIDÉ » sans
+    # plus aucune écriture réelle derrière lui (état incohérent).
+    if reglement["bon_commande_id"]:
+        conn.execute("UPDATE ep_bons_commande SET statut = 'brouillon' WHERE id = ? AND statut = 'validee'",
+                     (reglement["bon_commande_id"],))
+        conn.commit()
+    return deleted
+
+
+def devalider_ep_bon_commande(conn, bon_id):
+    """Repasse un Bon de commande VALIDÉ en brouillon modifiable, en cas
+    d'erreur sur les chiffres constatée après validation (ex. prix unitaire
+    saisi à 0 par erreur) : supprime les écritures comptables générées par
+    sa validation (piece, journal='AC') et repasse en brouillon À LA FOIS
+    ce Bon de commande ET le Règlement lié (mêmes écritures, pour rester
+    cohérent — voir devalider_reglement, qui fait le symétrique en sens
+    inverse). Le Bordereau de livraison déjà créé n'est PAS supprimé (suivi
+    de réception indépendant de la comptabilité). Refuse si l'exercice est
+    clôturé. Retourne le nombre d'écritures supprimées."""
+    bon = get_ep_bon_commande(conn, bon_id)
+    if not bon:
+        raise ValueError("Bon de commande introuvable.")
+    if bon["statut"] != "validee":
+        raise ValueError("Ce bon de commande n'est pas validé — rien à corriger.")
+    piece = bon["piece"] or bon["numero"]
+    exercice_bon = _exercice_of_date(bon["date_commande"])
+    if is_exercice_cloture(conn, exercice_bon):
+        raise ValueError(f"L'exercice {exercice_bon} de ce bon de commande est clôturé : impossible de le corriger.")
+    ids = [r["id"] for r in conn.execute(
+        "SELECT id FROM entries WHERE piece = ? AND journal = 'AC'", (piece,)
+    ).fetchall()]
+    deleted, errors = delete_entries_bulk(conn, ids)
+    if errors:
+        raise ValueError("Impossible de corriger ce bon de commande : " + " ; ".join(errors))
+    update_ep_bon_commande(conn, bon_id, statut="brouillon")
+    conn.execute("UPDATE reglements SET statut = 'brouillon' WHERE bon_commande_id = ? AND statut = 'validee'",
+                 (bon_id,))
+    conn.commit()
     return deleted
 
 

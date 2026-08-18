@@ -100,6 +100,26 @@ class App(tk.Tk):
         register("plan_bailleur", PlanBailleurTab)
         register("stocks", StocksTab)
         register("production", ProductionTab)
+        register("cr", CompteResultatTab)
+        register("tft", TftTab)
+        register("situation_financiere", SituationFinanciereTab)
+        register("grand_livre", GrandLivreTab)
+        register("balance", BalanceTab)
+        register("bilan", BilanTab)
+        register("pieces_non_equilibrees", PiecesNonEquilibreesTab)
+        register("liasse", LiasseFiscaleTab)
+        register("budget_exec", PlaceholderTab,
+                 "Tableaux d'exécution budgétaire",
+                 "Suivi budget prévisionnel vs réalisé, par ligne budgétaire et par projet.")
+        register("impots", ClassePeriodeTab,
+                 "Impôts", "Tous les comptes de la classe 44 (État et collectivités publiques : IS, IMF, "
+                           "TVA due/facturée/récupérable, retenues à la source...), en solde de début de "
+                           "période, mouvements Débit/Crédit et solde de fin de période.", "44")
+        register("declarations_sociales", ClassePeriodeTab,
+                 "Déclarations sociales", "Tous les comptes de la classe 43 (Organismes sociaux — CNSS et "
+                                          "assimilés), en solde de début de période, mouvements Débit/Crédit "
+                                          "et solde de fin de période.", "43")
+        register("rapprochements", RapprochementBancaireTab)
         register("transport", ParcAutoTab)
         register("missions", MissionsTab)
         register("pieces_rechange", PiecesRechangeTab)
@@ -156,6 +176,20 @@ class App(tk.Tk):
             ("Matières premières", "stocks"),
             ("Fabrication", "production"),
             ("Produits finis", "stocks"),
+        ])
+        add_top_menu("RAPPORTS FINANCIERS", [
+            ("Grand livre", "grand_livre"),
+            ("Balance", "balance"),
+            ("Bilan", "bilan"),
+            ("Écritures non équilibrées (diagnostic)", "pieces_non_equilibrees"),
+            ("Compte de résultat", "cr"),
+            ("TFT", "tft"),
+            ("Situation financière", "situation_financiere"),
+            ("Liasse fiscale", "liasse"),
+            ("Tableaux d'exécution budgétaire", "budget_exec"),
+            ("Impôts", "impots"),
+            ("Déclarations sociales", "declarations_sociales"),
+            ("Rapprochements bancaires", "rapprochements"),
         ])
         add_top_menu("ENGAGEMENTS-PROJETS", [
             ("Fournisseurs", "fournisseurs"),
@@ -5872,6 +5906,8 @@ class BonCommandeEPDialog(tk.Toplevel):
         self.save_btn.pack(side="left", padx=4)
         self.valider_btn = ttk.Button(btns, text="Valider (comptabilise + crée le Bordereau)", command=self.valider)
         self.valider_btn.pack(side="left", padx=4)
+        self.corriger_btn = ttk.Button(btns, text="Corriger (repasser en brouillon)", command=self.corriger)
+        self.corriger_btn.pack(side="left", padx=4)
         ttk.Button(btns, text="Fermer", command=self.destroy).pack(side="left", padx=4)
 
         self.refresh_lignes()
@@ -5934,6 +5970,7 @@ class BonCommandeEPDialog(tk.Toplevel):
         state = "disabled" if self.validee else "normal"
         for w in (self.update_ligne_btn, self.add_ligne_btn, self.delete_ligne_btn, self.save_btn, self.valider_btn):
             w.configure(state=state)
+        self.corriger_btn.configure(state="normal" if self.validee else "disabled")
 
     def _on_select_ligne(self, event=None):
         sel = self.tree.selection()
@@ -6068,6 +6105,32 @@ class BonCommandeEPDialog(tk.Toplevel):
         )
         self.on_saved()
         self.destroy()
+
+    def corriger(self):
+        if not messagebox.askyesno(
+            "Corriger ce bon de commande",
+            "Ce bon de commande est déjà validé : ses écritures comptables vont être RETIRÉES de la "
+            "Saisie, et il repassera en brouillon modifiable (le Règlement lié aussi). Le Bordereau de "
+            "livraison déjà créé n'est pas supprimé.\n\n"
+            "Vous pourrez alors corriger les lignes (compte, prix...) puis revalider.\n\nContinuer ?",
+            parent=self,
+        ):
+            return
+        try:
+            core.devalider_ep_bon_commande(self.conn, self.bon_id)
+        except ValueError as exc:
+            messagebox.showerror("Erreur", str(exc), parent=self)
+            return
+        self.validee = False
+        bon = core.get_ep_bon_commande(self.conn, self.bon_id)
+        origine = "" if not bon["expression_id"] else f"Issu de l'expression de besoin n° {bon['expression_id']}"
+        self.statut_var.set(f"Statut : Brouillon   {origine}")
+        self._apply_lock()
+        self.refresh_lignes()
+        messagebox.showinfo("Repassé en brouillon",
+                             "Le bon de commande est de nouveau modifiable. Corrigez les lignes puis "
+                             "cliquez sur « Valider ».", parent=self)
+        self.on_saved()
 
 
 class BonCommandeEPTab(ttk.Frame):
@@ -6372,11 +6435,35 @@ class ReglementDialog(tk.Toplevel):
         self.retenue_preset_combo.bind("<Button-1>", self._open_dropdown)
         self._refresh_retenue_presets()
 
+        paiement_frame = ttk.LabelFrame(header, text="Paiement bancaire/caisse (après validation de la charge)")
+        paiement_frame.grid(row=2, column=0, columnspan=6, sticky="we", padx=4, pady=(8, 0))
+        ttk.Label(paiement_frame, text="Date de paiement :").grid(row=0, column=0, sticky="w", padx=4, pady=4)
+        self.date_paiement_var = tk.StringVar(value=core.to_display_date(reg.get("date_paiement") or "")
+                                               or date.today().strftime("%d/%m/%Y"))
+        ttk.Entry(paiement_frame, textvariable=self.date_paiement_var, width=12).grid(row=0, column=1, padx=4)
+        ttk.Label(paiement_frame, text="Compte banque/caisse :").grid(row=0, column=2, sticky="w", padx=(12, 4))
+        self.compte_paiement_var = tk.StringVar(value=reg.get("compte_paiement") or "")
+        self.compte_paiement_combo = ttk.Combobox(paiement_frame, textvariable=self.compte_paiement_var, width=26)
+        self.compte_paiement_combo.grid(row=0, column=3, padx=4)
+        self.compte_paiement_combo.bind("<KeyRelease>", self._on_compte_paiement_keyrelease)
+        self.compte_paiement_combo.bind("<Button-1>", self._open_dropdown)
+        self._refresh_compte_paiement_values()
+        self.paiement_statut_var = tk.StringVar(
+            value="✓ Paiement déjà comptabilisé" if reg.get("paiement_comptabilise") else "Paiement non encore comptabilisé")
+        ttk.Label(paiement_frame, textvariable=self.paiement_statut_var).grid(
+            row=0, column=4, sticky="w", padx=(12, 4))
+        self.paiement_btn = ttk.Button(paiement_frame, text="Enregistrer le paiement (comptabilise)",
+                                        command=self.enregistrer_paiement)
+        self.paiement_btn.grid(row=1, column=0, columnspan=2, sticky="w", padx=4, pady=(4, 6))
+        self.annuler_paiement_btn = ttk.Button(paiement_frame, text="Annuler le paiement comptabilisé",
+                                                command=self.annuler_paiement)
+        self.annuler_paiement_btn.grid(row=1, column=2, columnspan=2, sticky="w", padx=4, pady=(4, 6))
+
         origine = "" if not reg["bon_commande_id"] else f"Issu du bon de commande n° {reg['bon_commande_id']}"
         self.statut_var = tk.StringVar(
             value=f"Statut : {'VALIDÉ (comptabilisé)' if self.validee else 'Brouillon — à compléter'}   {origine}")
         ttk.Label(header, textvariable=self.statut_var, font=("Segoe UI", 10, "bold")).grid(
-            row=2, column=0, columnspan=6, sticky="w", padx=4, pady=(4, 0))
+            row=3, column=0, columnspan=6, sticky="w", padx=4, pady=(4, 0))
 
         lignes_frame = ttk.LabelFrame(self, text=(
             "Lignes — sélectionnez une ligne pour lui affecter un compte de charge et un code analytique"))
@@ -6501,6 +6588,55 @@ class ReglementDialog(tk.Toplevel):
         for w in (self.update_ligne_btn, self.add_ligne_btn, self.delete_ligne_btn, self.save_btn, self.valider_btn):
             w.configure(state=state)
         self.corriger_btn.configure(state="normal" if self.validee else "disabled")
+        reg = core.get_reglement(self.conn, self.reglement_id)
+        deja_paye = bool(reg["paiement_comptabilise"])
+        self.paiement_btn.configure(state="normal" if (self.validee and not deja_paye) else "disabled")
+        self.annuler_paiement_btn.configure(state="normal" if deja_paye else "disabled")
+
+    def _refresh_compte_paiement_values(self):
+        items = [a for a in core.search_accounts(self.conn, "", limit=200) if a["classe"] == "5"]
+        self.compte_paiement_combo["values"] = [f"{a['code']} — {a['label']}" for a in items]
+
+    def _on_compte_paiement_keyrelease(self, event=None):
+        query = self._extract_code(self.compte_paiement_var.get())
+        items = [a for a in core.search_accounts(self.conn, query, limit=50) if a["classe"] == "5"]
+        self.compte_paiement_combo["values"] = [f"{a['code']} — {a['label']}" for a in items]
+
+    def enregistrer_paiement(self):
+        date_paiement = core.to_iso_date(self.date_paiement_var.get().strip())
+        if not date_paiement:
+            messagebox.showwarning("Champ manquant", "Saisissez la date de paiement.", parent=self)
+            return
+        compte = self._extract_code(self.compte_paiement_var.get())
+        if not compte:
+            messagebox.showwarning("Champ manquant", "Choisissez le compte banque ou caisse.", parent=self)
+            return
+        try:
+            montant = core.enregistrer_paiement_reglement(self.conn, self.reglement_id, date_paiement, compte)
+        except ValueError as exc:
+            messagebox.showerror("Erreur", str(exc), parent=self)
+            return
+        self.paiement_statut_var.set("✓ Paiement déjà comptabilisé")
+        self._apply_lock()
+        messagebox.showinfo("Paiement comptabilisé",
+                             f"Paiement de {montant:,.2f} comptabilisé (Débit fournisseur, Crédit banque/caisse).",
+                             parent=self)
+        self.on_saved()
+
+    def annuler_paiement(self):
+        if not messagebox.askyesno("Annuler ce paiement",
+                                    "Le paiement déjà comptabilisé va être retiré de la Saisie. Continuer ?",
+                                    parent=self):
+            return
+        try:
+            core.devalider_paiement_reglement(self.conn, self.reglement_id)
+        except ValueError as exc:
+            messagebox.showerror("Erreur", str(exc), parent=self)
+            return
+        self.paiement_statut_var.set("Paiement non encore comptabilisé")
+        self._apply_lock()
+        messagebox.showinfo("Paiement annulé", "Le paiement a été retiré de la Saisie.", parent=self)
+        self.on_saved()
 
     def _on_select_ligne(self, event=None):
         sel = self.tree.selection()
