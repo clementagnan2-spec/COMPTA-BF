@@ -5846,11 +5846,12 @@ class BonCommandeEPDialog(tk.Toplevel):
         self._refresh_retard()
 
         lignes_frame = ttk.LabelFrame(self, text=(
-            "Lignes — un compte de charge est OBLIGATOIRE sur chaque ligne pour pouvoir valider"))
+            "Lignes — un compte débiteur (charge ou immobilisation) est OBLIGATOIRE sur chaque ligne "
+            "pour pouvoir valider"))
         lignes_frame.pack(fill="both", expand=True, padx=10, pady=6)
         form = ttk.Frame(lignes_frame)
         form.pack(fill="x", padx=6, pady=4)
-        ttk.Label(form, text="Compte de charge :").grid(row=0, column=0, sticky="w")
+        ttk.Label(form, text="Compte débiteur (charge ou immobilisation) :").grid(row=0, column=0, sticky="w")
         self.ligne_compte_var = tk.StringVar()
         self.ligne_compte_combo = ttk.Combobox(form, textvariable=self.ligne_compte_var, width=26)
         self.ligne_compte_combo.grid(row=0, column=1, padx=4)
@@ -5950,12 +5951,12 @@ class BonCommandeEPDialog(tk.Toplevel):
                 self.retenue_compte_var.set(preset["compte"])
 
     def _refresh_ligne_compte_values(self):
-        items = [a for a in core.search_accounts(self.conn, "", limit=100) if a["classe"] == "6"]
+        items = [a for a in core.search_accounts(self.conn, "", limit=150) if a["classe"] in ("2", "6")]
         self.ligne_compte_combo["values"] = [f"{a['code']} — {a['label']}" for a in items]
 
     def _on_ligne_compte_keyrelease(self, event=None):
         query = self._extract_code(self.ligne_compte_var.get())
-        items = [a for a in core.search_accounts(self.conn, query, limit=50) if a["classe"] == "6"]
+        items = [a for a in core.search_accounts(self.conn, query, limit=50) if a["classe"] in ("2", "6")]
         self.ligne_compte_combo["values"] = [f"{a['code']} — {a['label']}" for a in items]
 
     def _refresh_ligne_analytic_values(self):
@@ -6471,7 +6472,7 @@ class ReglementDialog(tk.Toplevel):
 
         form = ttk.Frame(lignes_frame)
         form.pack(fill="x", padx=6, pady=4)
-        ttk.Label(form, text="Compte de charge :").grid(row=0, column=0, sticky="w")
+        ttk.Label(form, text="Compte débiteur (charge ou immobilisation) :").grid(row=0, column=0, sticky="w")
         self.ligne_compte_var = tk.StringVar()
         self.ligne_compte_combo = ttk.Combobox(form, textvariable=self.ligne_compte_var, width=30)
         self.ligne_compte_combo.grid(row=0, column=1, padx=4)
@@ -6572,12 +6573,12 @@ class ReglementDialog(tk.Toplevel):
                 self.retenue_compte_var.set(preset["compte"])
 
     def _refresh_ligne_compte_values(self):
-        items = [a for a in core.search_accounts(self.conn, "", limit=100) if a["classe"] == "6"]
+        items = [a for a in core.search_accounts(self.conn, "", limit=150) if a["classe"] in ("2", "6")]
         self.ligne_compte_combo["values"] = [f"{a['code']} — {a['label']}" for a in items]
 
     def _on_ligne_compte_keyrelease(self, event=None):
         query = self._extract_code(self.ligne_compte_var.get())
-        items = [a for a in core.search_accounts(self.conn, query, limit=50) if a["classe"] == "6"]
+        items = [a for a in core.search_accounts(self.conn, query, limit=50) if a["classe"] in ("2", "6")]
         self.ligne_compte_combo["values"] = [f"{a['code']} — {a['label']}" for a in items]
 
     def _refresh_ligne_analytic_values(self):

@@ -6447,8 +6447,8 @@ def _comptabiliser_lignes_achat(conn, date_str, piece, journal, fournisseur_code
     sans_compte = [l["libelle"] for l in lignes if not l.get("compte_charge")]
     if sans_compte:
         raise ValueError(
-            "Chaque ligne doit avoir un compte de charge choisi avant validation — manquant pour : "
-            + ", ".join(sans_compte)
+            "Chaque ligne doit avoir un compte débiteur choisi (charge ou immobilisation) avant "
+            "validation — manquant pour : " + ", ".join(sans_compte)
         )
     sans_montant = [l["libelle"] for l in lignes if not l.get("montant_ht")]
     if sans_montant:

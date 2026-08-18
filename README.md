@@ -2380,3 +2380,23 @@ apparaît bien dans Immobilisations (valeur brute 500 000) ; paiement
 bancaire du règlement lié comptabilisé (Débit 401000, Crédit banque) ;
 génération du Bilan (RAPPORTS FINANCIERS) toujours sans erreur (132/132
 cellules) ; Bilan resté équilibré à chaque étape.
+
+### Bon de commande / Règlement — "Compte de charge" renommé "Compte débiteur"
+
+**Demande** : le champ s'appelait "Compte de charge" mais devait aussi
+accepter des comptes d'immobilisation (classe 2), pas seulement des
+charges (classe 6) — un bon de commande peut tout aussi bien servir à
+acheter une charge qu'une immobilisation.
+
+**Réalisé** :
+- Libellé changé en **« Compte débiteur (charge ou immobilisation) »**
+  dans les écrans Bon de commande et Règlements.
+- Liste déroulante élargie : comptes de **classe 2 (immobilisations) ET
+  classe 6 (charges)** proposés (au lieu de la classe 6 seule).
+- Messages d'erreur mis à jour en conséquence (« compte débiteur »).
+
+Testé : un compte de classe 2 (241100, immobilisation) choisi comme
+compte débiteur sur une ligne de Bon de commande — validation réussie,
+l'immobilisation apparaît correctement dans le menu Immobilisations, et
+une ligne de charge classique (classe 6) continue de fonctionner
+normalement. Bilan resté équilibré dans les deux cas.
