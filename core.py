@@ -726,6 +726,58 @@ def init_db(conn):
         )
     """)
     conn.execute("""
+        CREATE TABLE IF NOT EXISTS personnel (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            matricule TEXT,
+            nom TEXT NOT NULL,
+            prenom TEXT,
+            poste TEXT,
+            service TEXT,
+            date_embauche TEXT,
+            telephone TEXT,
+            email TEXT,
+            salaire_base REAL NOT NULL DEFAULT 0,
+            statut TEXT NOT NULL DEFAULT 'actif',
+            notes TEXT
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS grh_time_sheet (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            personnel_id INTEGER NOT NULL,
+            date_pointage TEXT NOT NULL,
+            heures REAL NOT NULL DEFAULT 0,
+            activite TEXT,
+            notes TEXT
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS grh_kpi (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            indicateur TEXT NOT NULL,
+            description TEXT,
+            personnel_id INTEGER,
+            service TEXT,
+            periode TEXT,
+            valeur_cible REAL NOT NULL DEFAULT 0,
+            valeur_realisee REAL NOT NULL DEFAULT 0,
+            unite TEXT,
+            statut TEXT NOT NULL DEFAULT 'en_cours'
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS grh_hs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            personnel_id INTEGER,
+            date_evenement TEXT NOT NULL,
+            type_evenement TEXT NOT NULL DEFAULT 'incident',
+            description TEXT,
+            gravite TEXT,
+            statut TEXT NOT NULL DEFAULT 'ouvert',
+            notes TEXT
+        )
+    """)
+    conn.execute("""
         CREATE TABLE IF NOT EXISTS niveaux_acces (
             nom TEXT PRIMARY KEY,
             description TEXT
@@ -7259,6 +7311,216 @@ def reinitialiser_donnees(conn, categories, exercice=None):
         rapport["transport"] = n
     conn.commit()
     return rapport
+
+
+# ---------------------------------------------------------------------------
+# GRH (Gestion des Ressources Humaines) — Liste du personnel, Time sheet,
+# KPI, Tableau de bord GRH, HS (Hygiène Santé) — suivi opérationnel, sans
+# lien avec la comptabilité (même principe que Transport/le circuit
+# d'engagements).
+# ---------------------------------------------------------------------------
+
+# ---- Liste du personnel ----
+def add_personnel(conn, nom, matricule="", prenom="", poste="", service="", date_embauche="",
+                   telephone="", email="", salaire_base=0, statut="actif", notes=""):
+    if not nom.strip():
+        raise ValueError("Le nom est obligatoire.")
+    cur = conn.execute(
+        """INSERT INTO personnel (matricule, nom, prenom, poste, service, date_embauche, telephone, email,
+                                   salaire_base, statut, notes)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (matricule.strip(), nom.strip(), prenom.strip(), poste.strip(), service.strip(), date_embauche,
+         telephone.strip(), email.strip(), salaire_base or 0, statut, notes.strip()),
+    )
+    conn.commit()
+    return cur.lastrowid
+
+
+def update_personnel(conn, personnel_id, **fields):
+    if not fields:
+        return
+    cols = ", ".join(f"{k} = ?" for k in fields)
+    conn.execute(f"UPDATE personnel SET {cols} WHERE id = ?", (*fields.values(), personnel_id))
+    conn.commit()
+
+
+def delete_personnel(conn, personnel_id):
+    conn.execute("DELETE FROM personnel WHERE id = ?", (personnel_id,))
+    conn.commit()
+
+
+def get_personnel(conn, personnel_id):
+    row = conn.execute("SELECT * FROM personnel WHERE id = ?", (personnel_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def list_personnel(conn, actifs_only=False):
+    q = "SELECT * FROM personnel"
+    if actifs_only:
+        q += " WHERE statut = 'actif'"
+    q += " ORDER BY nom, prenom"
+    return [dict(r) for r in conn.execute(q).fetchall()]
+
+
+# ---- Time sheet ----
+def add_time_sheet(conn, personnel_id, date_pointage, heures, activite="", notes=""):
+    if not get_personnel(conn, personnel_id):
+        raise ValueError("Employé introuvable.")
+    if heures is None or heures <= 0:
+        raise ValueError("Le nombre d'heures doit être strictement positif.")
+    cur = conn.execute(
+        "INSERT INTO grh_time_sheet (personnel_id, date_pointage, heures, activite, notes) VALUES (?, ?, ?, ?, ?)",
+        (personnel_id, date_pointage, heures, activite.strip(), notes.strip()),
+    )
+    conn.commit()
+    return cur.lastrowid
+
+
+def update_time_sheet(conn, ts_id, **fields):
+    if not fields:
+        return
+    cols = ", ".join(f"{k} = ?" for k in fields)
+    conn.execute(f"UPDATE grh_time_sheet SET {cols} WHERE id = ?", (*fields.values(), ts_id))
+    conn.commit()
+
+
+def delete_time_sheet(conn, ts_id):
+    conn.execute("DELETE FROM grh_time_sheet WHERE id = ?", (ts_id,))
+    conn.commit()
+
+
+def list_time_sheet(conn, personnel_id=None, date_from=None, date_to=None):
+    q = """SELECT t.*, (COALESCE(p.prenom,'') || ' ' || p.nom) AS employe
+           FROM grh_time_sheet t JOIN personnel p ON p.id = t.personnel_id WHERE 1=1"""
+    params = []
+    if personnel_id:
+        q += " AND t.personnel_id = ?"
+        params.append(personnel_id)
+    if date_from:
+        q += " AND t.date_pointage >= ?"
+        params.append(date_from)
+    if date_to:
+        q += " AND t.date_pointage <= ?"
+        params.append(date_to)
+    q += " ORDER BY t.date_pointage DESC, t.id DESC"
+    return [dict(r) for r in conn.execute(q, params).fetchall()]
+
+
+# ---- KPI ----
+def add_kpi(conn, indicateur, description="", personnel_id=None, service="", periode="",
+            valeur_cible=0, valeur_realisee=0, unite="", statut="en_cours"):
+    if not indicateur.strip():
+        raise ValueError("Le nom de l'indicateur est obligatoire.")
+    cur = conn.execute(
+        """INSERT INTO grh_kpi (indicateur, description, personnel_id, service, periode, valeur_cible,
+                                 valeur_realisee, unite, statut)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (indicateur.strip(), description.strip(), personnel_id, service.strip(), periode.strip(),
+         valeur_cible or 0, valeur_realisee or 0, unite.strip(), statut),
+    )
+    conn.commit()
+    return cur.lastrowid
+
+
+def update_kpi(conn, kpi_id, **fields):
+    if not fields:
+        return
+    cols = ", ".join(f"{k} = ?" for k in fields)
+    conn.execute(f"UPDATE grh_kpi SET {cols} WHERE id = ?", (*fields.values(), kpi_id))
+    conn.commit()
+
+
+def delete_kpi(conn, kpi_id):
+    conn.execute("DELETE FROM grh_kpi WHERE id = ?", (kpi_id,))
+    conn.commit()
+
+
+def list_kpi(conn):
+    rows = conn.execute(
+        """SELECT k.*, CASE WHEN k.personnel_id IS NOT NULL
+                            THEN (COALESCE(p.prenom,'') || ' ' || p.nom) ELSE '' END AS employe
+           FROM grh_kpi k LEFT JOIN personnel p ON p.id = k.personnel_id
+           ORDER BY k.statut, k.indicateur"""
+    ).fetchall()
+    result = []
+    for r in rows:
+        d = dict(r)
+        d["taux_realisation"] = (d["valeur_realisee"] / d["valeur_cible"] * 100) if d["valeur_cible"] else None
+        result.append(d)
+    return result
+
+
+# ---- HS (Hygiène Santé) ----
+def add_hs(conn, date_evenement, type_evenement="incident", personnel_id=None, description="",
+           gravite="", statut="ouvert", notes=""):
+    cur = conn.execute(
+        """INSERT INTO grh_hs (personnel_id, date_evenement, type_evenement, description, gravite, statut, notes)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (personnel_id, date_evenement, type_evenement, description.strip(), gravite, statut, notes.strip()),
+    )
+    conn.commit()
+    return cur.lastrowid
+
+
+def update_hs(conn, hs_id, **fields):
+    if not fields:
+        return
+    cols = ", ".join(f"{k} = ?" for k in fields)
+    conn.execute(f"UPDATE grh_hs SET {cols} WHERE id = ?", (*fields.values(), hs_id))
+    conn.commit()
+
+
+def delete_hs(conn, hs_id):
+    conn.execute("DELETE FROM grh_hs WHERE id = ?", (hs_id,))
+    conn.commit()
+
+
+def list_hs(conn):
+    rows = conn.execute(
+        """SELECT h.*, CASE WHEN h.personnel_id IS NOT NULL
+                            THEN (COALESCE(p.prenom,'') || ' ' || p.nom) ELSE '' END AS employe
+           FROM grh_hs h LEFT JOIN personnel p ON p.id = h.personnel_id
+           ORDER BY h.date_evenement DESC, h.id DESC"""
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+# ---- Tableau de bord GRH ----
+def compute_tableau_bord_grh(conn):
+    """Synthèse GRH : effectifs, heures pointées (30 derniers jours), KPI
+    (en cours / atteints / non atteints), HS (incidents ouverts, par
+    gravité) — calculée à la volée à partir des tables ci-dessus."""
+    personnel = list_personnel(conn)
+    nb_actifs = sum(1 for p in personnel if p["statut"] == "actif")
+    nb_total = len(personnel)
+
+    date_limite = (date.today() - timedelta(days=30)).strftime("%Y-%m-%d")
+    ts = list_time_sheet(conn, date_from=date_limite)
+    total_heures_30j = sum(t["heures"] for t in ts)
+
+    kpis = list_kpi(conn)
+    nb_kpi_en_cours = sum(1 for k in kpis if k["statut"] == "en_cours")
+    nb_kpi_atteints = sum(1 for k in kpis
+                           if k["taux_realisation"] is not None and k["taux_realisation"] >= 100)
+    nb_kpi_non_atteints = sum(1 for k in kpis
+                               if k["taux_realisation"] is not None and k["taux_realisation"] < 100
+                               and k["statut"] != "en_cours")
+
+    hs = list_hs(conn)
+    nb_hs_ouverts = sum(1 for h in hs if h["statut"] == "ouvert")
+    hs_par_gravite = {}
+    for h in hs:
+        if h["statut"] == "ouvert":
+            g = h["gravite"] or "Non précisée"
+            hs_par_gravite[g] = hs_par_gravite.get(g, 0) + 1
+
+    return {
+        "nb_personnel_actif": nb_actifs, "nb_personnel_total": nb_total,
+        "total_heures_30j": total_heures_30j,
+        "nb_kpi_en_cours": nb_kpi_en_cours, "nb_kpi_atteints": nb_kpi_atteints,
+        "nb_kpi_non_atteints": nb_kpi_non_atteints, "nb_kpi_total": len(kpis),
+        "nb_hs_ouverts": nb_hs_ouverts, "nb_hs_total": len(hs), "hs_par_gravite": hs_par_gravite,
+    }
 
 
 if __name__ == "__main__":

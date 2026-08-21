@@ -2400,3 +2400,32 @@ compte débiteur sur une ligne de Bon de commande — validation réussie,
 l'immobilisation apparaît correctement dans le menu Immobilisations, et
 une ligne de charge classique (classe 6) continue de fonctionner
 normalement. Bilan resté équilibré dans les deux cas.
+
+### Nouveau menu GRH + MAINTENANCE-ÉNERGIE renommé en MAINTENANCE-QUALITÉ
+
+**Réalisé** :
+- **GRH** (nouveau menu), 5 sous-menus, sans lien avec la comptabilité
+  (même principe que Transport) :
+  - **Liste du personnel** : fiche employé (matricule, nom, prénom, poste,
+    service, date d'embauche, contact, statut).
+  - **Time sheet** : pointage des heures par employé et par activité —
+    refuse un nombre d'heures nul ou négatif.
+  - **KPI** : indicateurs de performance (cible/réalisé/unité, par
+    employé et/ou service, taux de réalisation calculé automatiquement,
+    coloré en vert si atteint / rouge si non atteint).
+  - **Tableau de bord GRH** : synthèse en lecture seule (effectif actif,
+    heures pointées sur 30 jours, KPI en cours/atteints/non atteints,
+    incidents HS ouverts par gravité) — calculée à la volée à partir des
+    4 autres sous-menus, aucune donnée dupliquée.
+  - **HS (hygiène santé)** : incidents, visites médicales, formations
+    sécurité, distributions d'EPI — par employé, avec gravité et statut
+    ouvert/clos (mis en évidence en rouge si ouvert).
+- **MAINTENANCE-ÉNERGIE renommé en MAINTENANCE-QUALITÉ** (libellé du menu
+  uniquement — les sous-menus Énergie/Maintenance/Pièces de rechange
+  restent inchangés).
+
+Testé de bout en bout : personnel créé avec pointage, KPI et incidents HS
+liés — le Tableau de bord GRH agrège correctement toutes ces données
+(8h pointées, KPI atteint à 120%, 1 incident grave ouvert). Non-régression
+vérifiée : moteur comptable et module Pièces de rechange partagé
+toujours pleinement fonctionnels.

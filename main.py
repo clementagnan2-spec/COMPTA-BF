@@ -120,6 +120,11 @@ class App(tk.Tk):
                                           "assimilés), en solde de début de période, mouvements Débit/Crédit "
                                           "et solde de fin de période.", "43")
         register("rapprochements", RapprochementBancaireTab)
+        register("grh_personnel", PersonnelTab)
+        register("grh_time_sheet", TimeSheetTab)
+        register("grh_kpi", KpiTab)
+        register("grh_tableau_bord", TableauBordGrhTab)
+        register("grh_hs", HsTab)
         register("transport", ParcAutoTab)
         register("missions", MissionsTab)
         register("pieces_rechange", PiecesRechangeTab)
@@ -199,6 +204,13 @@ class App(tk.Tk):
             ("Bordereau de livraison", "bordereau_livraison"),
             ("Règlements", "reglements"),
         ])
+        add_top_menu("GRH", [
+            ("Liste du personnel", "grh_personnel"),
+            ("Time sheet", "grh_time_sheet"),
+            ("KPI", "grh_kpi"),
+            ("Tableau de bord GRH", "grh_tableau_bord"),
+            ("HS (hygiène santé)", "grh_hs"),
+        ])
         add_top_menu("TRANSPORT", [
             ("Parc auto", "transport"),
             ("Missions", "missions"),
@@ -212,7 +224,7 @@ class App(tk.Tk):
         add_top_menu("RAPPORTS TECHNIQUE", [
             ("Rapports technique", "rapports_technique"),
         ])
-        add_top_menu("MAINTENANCE-ÉNERGIE", [
+        add_top_menu("MAINTENANCE-QUALITÉ", [
             ("Énergie", "energie"),
             ("Maintenance", "maintenance"),
             ("Pièces de rechange", "pieces_rechange"),
@@ -3069,6 +3081,532 @@ class LiasseFiscaleTab(ttk.Frame):
             return
         self.status_var.set(f"Export réussi : {path}")
         messagebox.showinfo("Export terminé", f"Liasse fiscale enregistrée :\n{path}")
+
+
+class PersonnelTab(ttk.Frame):
+    """Liste du personnel (menu GRH) — sans lien avec la comptabilité."""
+
+    def __init__(self, parent, conn):
+        super().__init__(parent)
+        self.conn = conn
+        self.selected_id = None
+        ttk.Label(self, text="LISTE DU PERSONNEL", font=("Segoe UI", 14, "bold")).pack(anchor="w", padx=16, pady=(16, 8))
+
+        form = ttk.LabelFrame(self, text="Employé")
+        form.pack(fill="x", padx=16, pady=4)
+        ttk.Label(form, text="Matricule :").grid(row=0, column=0, sticky="w", padx=4, pady=4)
+        self.matricule_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.matricule_var, width=14).grid(row=0, column=1, padx=4)
+        ttk.Label(form, text="Nom :").grid(row=0, column=2, sticky="w", padx=(12, 4))
+        self.nom_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.nom_var, width=16).grid(row=0, column=3, padx=4)
+        ttk.Label(form, text="Prénom :").grid(row=0, column=4, sticky="w", padx=(12, 4))
+        self.prenom_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.prenom_var, width=16).grid(row=0, column=5, padx=4)
+        ttk.Label(form, text="Poste :").grid(row=1, column=0, sticky="w", padx=4, pady=(4, 0))
+        self.poste_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.poste_var, width=16).grid(row=1, column=1, padx=4, pady=(4, 0))
+        ttk.Label(form, text="Service :").grid(row=1, column=2, sticky="w", padx=(12, 4), pady=(4, 0))
+        self.service_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.service_var, width=16).grid(row=1, column=3, padx=4, pady=(4, 0))
+        ttk.Label(form, text="Date d'embauche :").grid(row=1, column=4, sticky="w", padx=(12, 4), pady=(4, 0))
+        self.date_embauche_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.date_embauche_var, width=12).grid(row=1, column=5, padx=4, pady=(4, 0))
+        ttk.Label(form, text="Téléphone :").grid(row=2, column=0, sticky="w", padx=4, pady=(4, 0))
+        self.telephone_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.telephone_var, width=16).grid(row=2, column=1, padx=4, pady=(4, 0))
+        ttk.Label(form, text="Email :").grid(row=2, column=2, sticky="w", padx=(12, 4), pady=(4, 0))
+        self.email_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.email_var, width=20).grid(row=2, column=3, padx=4, pady=(4, 0))
+        ttk.Label(form, text="Statut :").grid(row=2, column=4, sticky="w", padx=(12, 4), pady=(4, 0))
+        self.statut_var = tk.StringVar(value="actif")
+        ttk.Combobox(form, textvariable=self.statut_var, width=13, state="readonly",
+                     values=["actif", "congé", "suspendu", "parti"]).grid(row=2, column=5, padx=4, pady=(4, 0))
+
+        btns = ttk.Frame(self)
+        btns.pack(fill="x", padx=16, pady=6)
+        ttk.Button(btns, text="Ajouter", command=self.add).pack(side="left")
+        ttk.Button(btns, text="Mettre à jour la sélection", command=self.update_sel).pack(side="left", padx=8)
+        ttk.Button(btns, text="Supprimer la sélection", command=self.delete_sel).pack(side="left")
+        ttk.Button(btns, text="Effacer le formulaire", command=self.clear_form).pack(side="left", padx=8)
+
+        cols = ("id", "matricule", "nom", "prenom", "poste", "service", "statut")
+        self.tree = ttk.Treeview(self, columns=cols, show="headings", height=18)
+        for c, h, w in zip(cols, ["ID", "Matricule", "Nom", "Prénom", "Poste", "Service", "Statut"],
+                           [40, 100, 130, 130, 150, 130, 90]):
+            self.tree.heading(c, text=h)
+            self.tree.column(c, width=w, anchor="w")
+        self.tree.pack(fill="both", expand=True, padx=16, pady=8)
+        self.tree.bind("<<TreeviewSelect>>", self._on_select)
+        self.refresh()
+
+    def _on_select(self, event=None):
+        sel = self.tree.selection()
+        if not sel:
+            return
+        v = self.tree.item(sel[0], "values")
+        self.selected_id = v[0]
+        self.matricule_var.set(v[1]); self.nom_var.set(v[2]); self.prenom_var.set(v[3])
+        self.poste_var.set(v[4]); self.service_var.set(v[5]); self.statut_var.set(v[6])
+        p = core.get_personnel(self.conn, self.selected_id)
+        if p:
+            self.date_embauche_var.set(core.to_display_date(p["date_embauche"] or ""))
+            self.telephone_var.set(p["telephone"] or "")
+            self.email_var.set(p["email"] or "")
+
+    def clear_form(self):
+        self.selected_id = None
+        for var in (self.matricule_var, self.nom_var, self.prenom_var, self.poste_var, self.service_var,
+                    self.date_embauche_var, self.telephone_var, self.email_var):
+            var.set("")
+        self.statut_var.set("actif")
+
+    def add(self):
+        if not self.nom_var.get().strip():
+            messagebox.showwarning("Champ manquant", "Le nom est obligatoire.")
+            return
+        try:
+            core.add_personnel(
+                self.conn, self.nom_var.get(), matricule=self.matricule_var.get(), prenom=self.prenom_var.get(),
+                poste=self.poste_var.get(), service=self.service_var.get(),
+                date_embauche=core.to_iso_date(self.date_embauche_var.get().strip()),
+                telephone=self.telephone_var.get(), email=self.email_var.get(), statut=self.statut_var.get())
+        except ValueError as exc:
+            messagebox.showerror("Erreur", str(exc))
+            return
+        self.clear_form()
+        self.refresh()
+
+    def update_sel(self):
+        if not self.selected_id:
+            messagebox.showinfo("Info", "Sélectionnez d'abord un employé.")
+            return
+        core.update_personnel(
+            self.conn, self.selected_id, matricule=self.matricule_var.get().strip(),
+            nom=self.nom_var.get().strip(), prenom=self.prenom_var.get().strip(),
+            poste=self.poste_var.get().strip(), service=self.service_var.get().strip(),
+            date_embauche=core.to_iso_date(self.date_embauche_var.get().strip()),
+            telephone=self.telephone_var.get().strip(), email=self.email_var.get().strip(),
+            statut=self.statut_var.get())
+        self.clear_form()
+        self.refresh()
+
+    def delete_sel(self):
+        if not self.selected_id:
+            messagebox.showinfo("Info", "Sélectionnez d'abord un employé.")
+            return
+        if messagebox.askyesno("Confirmer", "Supprimer cet employé ?"):
+            core.delete_personnel(self.conn, self.selected_id)
+            self.clear_form()
+            self.refresh()
+
+    def refresh(self):
+        for row in self.tree.get_children():
+            self.tree.delete(row)
+        for p in core.list_personnel(self.conn):
+            self.tree.insert("", "end", values=(
+                p["id"], p["matricule"] or "", p["nom"], p["prenom"] or "", p["poste"] or "",
+                p["service"] or "", p["statut"]))
+
+
+class TimeSheetTab(ttk.Frame):
+    """Time sheet (pointage des heures) — menu GRH, sans lien avec la comptabilité."""
+
+    def __init__(self, parent, conn):
+        super().__init__(parent)
+        self.conn = conn
+        ttk.Label(self, text="TIME SHEET", font=("Segoe UI", 14, "bold")).pack(anchor="w", padx=16, pady=(16, 8))
+
+        form = ttk.LabelFrame(self, text="Nouveau pointage")
+        form.pack(fill="x", padx=16, pady=4)
+        ttk.Label(form, text="Employé :").grid(row=0, column=0, sticky="w", padx=4, pady=4)
+        self.personnel_var = tk.StringVar()
+        self.personnel_combo = ttk.Combobox(form, textvariable=self.personnel_var, width=26, state="readonly")
+        self.personnel_combo.grid(row=0, column=1, padx=4)
+        ttk.Label(form, text="Date (JJ/MM/AAAA) :").grid(row=0, column=2, sticky="w", padx=(12, 4))
+        self.date_var = tk.StringVar(value=date.today().strftime("%d/%m/%Y"))
+        ttk.Entry(form, textvariable=self.date_var, width=12).grid(row=0, column=3, padx=4)
+        ttk.Label(form, text="Heures :").grid(row=0, column=4, sticky="w", padx=(12, 4))
+        self.heures_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.heures_var, width=8).grid(row=0, column=5, padx=4)
+        ttk.Label(form, text="Activité :").grid(row=1, column=0, sticky="w", padx=4, pady=(4, 0))
+        self.activite_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.activite_var, width=40).grid(row=1, column=1, columnspan=3, padx=4, pady=(4, 0), sticky="we")
+        ttk.Button(form, text="Ajouter le pointage", command=self.add).grid(row=1, column=5, padx=4, pady=(4, 0))
+
+        cols = ("id", "employe", "date", "heures", "activite")
+        self.tree = ttk.Treeview(self, columns=cols, show="headings", height=18)
+        for c, h, w in zip(cols, ["ID", "Employé", "Date", "Heures", "Activité"], [40, 180, 100, 80, 350]):
+            self.tree.heading(c, text=h)
+            self.tree.column(c, width=w, anchor="w")
+        self.tree.pack(fill="both", expand=True, padx=16, pady=8)
+        ttk.Button(self, text="Supprimer la ligne sélectionnée", command=self.delete_sel).pack(anchor="w", padx=16, pady=(0, 12))
+        self.refresh()
+
+    def _refresh_personnel_values(self):
+        self.personnel_list = core.list_personnel(self.conn, actifs_only=True)
+        self.personnel_combo["values"] = [f"{p['id']} — {p['prenom'] or ''} {p['nom']}".strip() for p in self.personnel_list]
+
+    def add(self):
+        raw = self.personnel_var.get()
+        if not raw:
+            messagebox.showwarning("Champ manquant", "Choisissez un employé.")
+            return
+        personnel_id = int(raw.split(" — ", 1)[0])
+        date_str = core.to_iso_date(self.date_var.get().strip())
+        if not date_str:
+            messagebox.showwarning("Champ manquant", "La date est obligatoire.")
+            return
+        try:
+            heures = float(self.heures_var.get())
+        except ValueError:
+            messagebox.showerror("Erreur", "Les heures doivent être un nombre.")
+            return
+        try:
+            core.add_time_sheet(self.conn, personnel_id, date_str, heures, activite=self.activite_var.get())
+        except ValueError as exc:
+            messagebox.showerror("Erreur", str(exc))
+            return
+        self.heures_var.set(""); self.activite_var.set("")
+        self.refresh()
+
+    def delete_sel(self):
+        sel = self.tree.selection()
+        if not sel:
+            messagebox.showinfo("Info", "Sélectionnez d'abord une ligne.")
+            return
+        ts_id = self.tree.item(sel[0], "values")[0]
+        core.delete_time_sheet(self.conn, ts_id)
+        self.refresh()
+
+    def refresh(self):
+        self._refresh_personnel_values()
+        for row in self.tree.get_children():
+            self.tree.delete(row)
+        for t in core.list_time_sheet(self.conn):
+            self.tree.insert("", "end", values=(
+                t["id"], t["employe"], core.to_display_date(t["date_pointage"]), f"{t['heures']:g}",
+                t["activite"] or ""))
+
+
+class KpiTab(ttk.Frame):
+    """KPI (indicateurs de performance) — menu GRH, sans lien avec la comptabilité."""
+
+    def __init__(self, parent, conn):
+        super().__init__(parent)
+        self.conn = conn
+        self.selected_id = None
+        ttk.Label(self, text="KPI — INDICATEURS DE PERFORMANCE", font=("Segoe UI", 14, "bold")).pack(
+            anchor="w", padx=16, pady=(16, 8))
+
+        form = ttk.LabelFrame(self, text="Indicateur")
+        form.pack(fill="x", padx=16, pady=4)
+        ttk.Label(form, text="Indicateur :").grid(row=0, column=0, sticky="w", padx=4, pady=4)
+        self.indicateur_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.indicateur_var, width=28).grid(row=0, column=1, padx=4)
+        ttk.Label(form, text="Employé (optionnel) :").grid(row=0, column=2, sticky="w", padx=(12, 4))
+        self.personnel_var = tk.StringVar()
+        self.personnel_combo = ttk.Combobox(form, textvariable=self.personnel_var, width=22, state="readonly")
+        self.personnel_combo.grid(row=0, column=3, padx=4)
+        ttk.Label(form, text="Service :").grid(row=0, column=4, sticky="w", padx=(12, 4))
+        self.service_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.service_var, width=14).grid(row=0, column=5, padx=4)
+        ttk.Label(form, text="Période :").grid(row=1, column=0, sticky="w", padx=4, pady=(4, 0))
+        self.periode_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.periode_var, width=14).grid(row=1, column=1, padx=4, pady=(4, 0), sticky="w")
+        ttk.Label(form, text="Valeur cible :").grid(row=1, column=2, sticky="w", padx=(12, 4), pady=(4, 0))
+        self.cible_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.cible_var, width=10).grid(row=1, column=3, padx=4, pady=(4, 0), sticky="w")
+        ttk.Label(form, text="Valeur réalisée :").grid(row=1, column=4, sticky="w", padx=(12, 4), pady=(4, 0))
+        self.realisee_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.realisee_var, width=10).grid(row=1, column=5, padx=4, pady=(4, 0), sticky="w")
+        ttk.Label(form, text="Unité :").grid(row=2, column=0, sticky="w", padx=4, pady=(4, 0))
+        self.unite_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.unite_var, width=10).grid(row=2, column=1, padx=4, pady=(4, 0), sticky="w")
+        ttk.Label(form, text="Statut :").grid(row=2, column=2, sticky="w", padx=(12, 4), pady=(4, 0))
+        self.statut_var = tk.StringVar(value="en_cours")
+        ttk.Combobox(form, textvariable=self.statut_var, width=13, state="readonly",
+                     values=["en_cours", "atteint", "non_atteint"]).grid(row=2, column=3, padx=4, pady=(4, 0))
+
+        btns = ttk.Frame(self)
+        btns.pack(fill="x", padx=16, pady=6)
+        ttk.Button(btns, text="Ajouter", command=self.add).pack(side="left")
+        ttk.Button(btns, text="Mettre à jour la sélection", command=self.update_sel).pack(side="left", padx=8)
+        ttk.Button(btns, text="Supprimer la sélection", command=self.delete_sel).pack(side="left")
+        ttk.Button(btns, text="Effacer le formulaire", command=self.clear_form).pack(side="left", padx=8)
+
+        cols = ("id", "indicateur", "employe", "service", "periode", "cible", "realisee", "taux", "statut")
+        self.tree = ttk.Treeview(self, columns=cols, show="headings", height=16)
+        headers = ["ID", "Indicateur", "Employé", "Service", "Période", "Cible", "Réalisée", "Taux %", "Statut"]
+        widths = [40, 200, 150, 100, 90, 80, 80, 70, 100]
+        for c, h, w in zip(cols, headers, widths):
+            self.tree.heading(c, text=h)
+            self.tree.column(c, width=w, anchor="w")
+        self.tree.tag_configure("atteint", foreground="#1F7A1F")
+        self.tree.tag_configure("non_atteint", foreground="#B00020")
+        self.tree.pack(fill="both", expand=True, padx=16, pady=8)
+        self.tree.bind("<<TreeviewSelect>>", self._on_select)
+        self.refresh()
+
+    def _refresh_personnel_values(self):
+        self.personnel_list = core.list_personnel(self.conn)
+        self.personnel_combo["values"] = ["(aucun)"] + [f"{p['id']} — {p['prenom'] or ''} {p['nom']}".strip()
+                                                          for p in self.personnel_list]
+
+    def _on_select(self, event=None):
+        sel = self.tree.selection()
+        if not sel:
+            return
+        v = self.tree.item(sel[0], "values")
+        self.selected_id = v[0]
+        self.indicateur_var.set(v[1])
+        self.service_var.set(v[3]); self.periode_var.set(v[4])
+        self.cible_var.set(v[5]); self.realisee_var.set(v[6])
+        self.statut_var.set(v[8])
+        k = next((x for x in core.list_kpi(self.conn) if str(x["id"]) == str(self.selected_id)), None)
+        if k:
+            self.unite_var.set(k["unite"] or "")
+            self.personnel_var.set(f"{k['personnel_id']} — {k['employe']}" if k["personnel_id"] else "(aucun)")
+
+    def clear_form(self):
+        self.selected_id = None
+        for var in (self.indicateur_var, self.service_var, self.periode_var, self.cible_var,
+                    self.realisee_var, self.unite_var, self.personnel_var):
+            var.set("")
+        self.statut_var.set("en_cours")
+
+    def _parse_personnel_id(self):
+        raw = self.personnel_var.get()
+        if not raw or raw == "(aucun)":
+            return None
+        return int(raw.split(" — ", 1)[0])
+
+    def add(self):
+        if not self.indicateur_var.get().strip():
+            messagebox.showwarning("Champ manquant", "Le nom de l'indicateur est obligatoire.")
+            return
+        try:
+            cible = float(self.cible_var.get() or 0)
+            realisee = float(self.realisee_var.get() or 0)
+        except ValueError:
+            messagebox.showerror("Erreur", "Cible et Réalisée doivent être des nombres.")
+            return
+        core.add_kpi(self.conn, self.indicateur_var.get(), personnel_id=self._parse_personnel_id(),
+                     service=self.service_var.get(), periode=self.periode_var.get(), valeur_cible=cible,
+                     valeur_realisee=realisee, unite=self.unite_var.get(), statut=self.statut_var.get())
+        self.clear_form()
+        self.refresh()
+
+    def update_sel(self):
+        if not self.selected_id:
+            messagebox.showinfo("Info", "Sélectionnez d'abord un indicateur.")
+            return
+        try:
+            cible = float(self.cible_var.get() or 0)
+            realisee = float(self.realisee_var.get() or 0)
+        except ValueError:
+            messagebox.showerror("Erreur", "Cible et Réalisée doivent être des nombres.")
+            return
+        core.update_kpi(self.conn, self.selected_id, indicateur=self.indicateur_var.get().strip(),
+                         personnel_id=self._parse_personnel_id(), service=self.service_var.get().strip(),
+                         periode=self.periode_var.get().strip(), valeur_cible=cible, valeur_realisee=realisee,
+                         unite=self.unite_var.get().strip(), statut=self.statut_var.get())
+        self.clear_form()
+        self.refresh()
+
+    def delete_sel(self):
+        if not self.selected_id:
+            messagebox.showinfo("Info", "Sélectionnez d'abord un indicateur.")
+            return
+        if messagebox.askyesno("Confirmer", "Supprimer cet indicateur ?"):
+            core.delete_kpi(self.conn, self.selected_id)
+            self.clear_form()
+            self.refresh()
+
+    def refresh(self):
+        self._refresh_personnel_values()
+        for row in self.tree.get_children():
+            self.tree.delete(row)
+        for k in core.list_kpi(self.conn):
+            taux = f"{k['taux_realisation']:.0f}" if k["taux_realisation"] is not None else ""
+            tag = ()
+            if k["taux_realisation"] is not None:
+                tag = ("atteint",) if k["taux_realisation"] >= 100 else ("non_atteint",)
+            self.tree.insert("", "end", tags=tag, values=(
+                k["id"], k["indicateur"], k["employe"] or "", k["service"] or "", k["periode"] or "",
+                f"{k['valeur_cible']:g}", f"{k['valeur_realisee']:g}", taux, k["statut"]))
+
+
+class TableauBordGrhTab(ttk.Frame):
+    """Tableau de bord GRH — synthèse en lecture seule des autres écrans
+    (Personnel, Time sheet, KPI, HS)."""
+
+    def __init__(self, parent, conn):
+        super().__init__(parent)
+        self.conn = conn
+        ttk.Label(self, text="TABLEAU DE BORD GRH", font=("Segoe UI", 14, "bold")).pack(
+            anchor="w", padx=16, pady=(16, 8))
+        ttk.Button(self, text="Actualiser", command=self.refresh).pack(anchor="w", padx=16)
+        self.cards_frame = ttk.Frame(self)
+        self.cards_frame.pack(fill="x", padx=16, pady=16)
+        self.hs_frame = ttk.LabelFrame(self, text="Incidents HS ouverts, par gravité")
+        self.hs_frame.pack(fill="x", padx=16, pady=8)
+        self.refresh()
+
+    def _card(self, parent, titre, valeur, col, couleur="#1F4E78"):
+        f = ttk.Frame(parent, relief="solid", borderwidth=1)
+        f.grid(row=0, column=col, padx=8, sticky="nsew")
+        parent.columnconfigure(col, weight=1)
+        tk.Label(f, text=titre, font=("Segoe UI", 9), bg="white", fg="#595959").pack(fill="x", padx=12, pady=(10, 0))
+        tk.Label(f, text=str(valeur), font=("Segoe UI", 20, "bold"), bg="white", fg=couleur).pack(
+            fill="x", padx=12, pady=(0, 10))
+
+    def refresh(self):
+        for w in self.cards_frame.winfo_children():
+            w.destroy()
+        for w in self.hs_frame.winfo_children():
+            w.destroy()
+        d = core.compute_tableau_bord_grh(self.conn)
+        self._card(self.cards_frame, "Personnel actif", f"{d['nb_personnel_actif']} / {d['nb_personnel_total']}", 0)
+        self._card(self.cards_frame, "Heures pointées (30j)", f"{d['total_heures_30j']:g} h", 1)
+        self._card(self.cards_frame, "KPI en cours", d["nb_kpi_en_cours"], 2)
+        self._card(self.cards_frame, "KPI atteints", d["nb_kpi_atteints"], 3, couleur="#1F7A1F")
+        self._card(self.cards_frame, "KPI non atteints", d["nb_kpi_non_atteints"], 4, couleur="#B00020")
+        self._card(self.cards_frame, "Incidents HS ouverts", d["nb_hs_ouverts"], 5,
+                   couleur="#B00020" if d["nb_hs_ouverts"] else "#1F7A1F")
+        if not d["hs_par_gravite"]:
+            ttk.Label(self.hs_frame, text="Aucun incident ouvert.", foreground="#1F7A1F").pack(
+                anchor="w", padx=12, pady=8)
+        else:
+            for gravite, nb in d["hs_par_gravite"].items():
+                ttk.Label(self.hs_frame, text=f"• {gravite} : {nb}").pack(anchor="w", padx=12, pady=2)
+
+
+class HsTab(ttk.Frame):
+    """HS (Hygiène Santé) — menu GRH, sans lien avec la comptabilité."""
+
+    def __init__(self, parent, conn):
+        super().__init__(parent)
+        self.conn = conn
+        self.selected_id = None
+        ttk.Label(self, text="HS — HYGIÈNE SANTÉ", font=("Segoe UI", 14, "bold")).pack(
+            anchor="w", padx=16, pady=(16, 8))
+
+        form = ttk.LabelFrame(self, text="Événement")
+        form.pack(fill="x", padx=16, pady=4)
+        ttk.Label(form, text="Date (JJ/MM/AAAA) :").grid(row=0, column=0, sticky="w", padx=4, pady=4)
+        self.date_var = tk.StringVar(value=date.today().strftime("%d/%m/%Y"))
+        ttk.Entry(form, textvariable=self.date_var, width=12).grid(row=0, column=1, padx=4)
+        ttk.Label(form, text="Type :").grid(row=0, column=2, sticky="w", padx=(12, 4))
+        self.type_var = tk.StringVar(value="incident")
+        ttk.Combobox(form, textvariable=self.type_var, width=17, state="readonly",
+                     values=["incident", "visite_medicale", "formation_securite", "distribution_epi"]).grid(
+            row=0, column=3, padx=4)
+        ttk.Label(form, text="Employé (optionnel) :").grid(row=0, column=4, sticky="w", padx=(12, 4))
+        self.personnel_var = tk.StringVar()
+        self.personnel_combo = ttk.Combobox(form, textvariable=self.personnel_var, width=22, state="readonly")
+        self.personnel_combo.grid(row=0, column=5, padx=4)
+        ttk.Label(form, text="Gravité :").grid(row=1, column=0, sticky="w", padx=4, pady=(4, 0))
+        self.gravite_var = tk.StringVar()
+        ttk.Combobox(form, textvariable=self.gravite_var, width=17, state="readonly",
+                     values=["", "Mineure", "Modérée", "Grave"]).grid(row=1, column=1, padx=4, pady=(4, 0))
+        ttk.Label(form, text="Statut :").grid(row=1, column=2, sticky="w", padx=(12, 4), pady=(4, 0))
+        self.statut_var = tk.StringVar(value="ouvert")
+        ttk.Combobox(form, textvariable=self.statut_var, width=13, state="readonly",
+                     values=["ouvert", "clos"]).grid(row=1, column=3, padx=4, pady=(4, 0))
+        ttk.Label(form, text="Description :").grid(row=2, column=0, sticky="w", padx=4, pady=(4, 0))
+        self.description_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.description_var, width=60).grid(
+            row=2, column=1, columnspan=5, padx=4, pady=(4, 0), sticky="we")
+
+        btns = ttk.Frame(self)
+        btns.pack(fill="x", padx=16, pady=6)
+        ttk.Button(btns, text="Ajouter", command=self.add).pack(side="left")
+        ttk.Button(btns, text="Mettre à jour la sélection", command=self.update_sel).pack(side="left", padx=8)
+        ttk.Button(btns, text="Supprimer la sélection", command=self.delete_sel).pack(side="left")
+        ttk.Button(btns, text="Effacer le formulaire", command=self.clear_form).pack(side="left", padx=8)
+
+        cols = ("id", "date", "type", "employe", "gravite", "statut", "description")
+        self.tree = ttk.Treeview(self, columns=cols, show="headings", height=16)
+        headers = ["ID", "Date", "Type", "Employé", "Gravité", "Statut", "Description"]
+        widths = [40, 90, 140, 150, 90, 80, 320]
+        for c, h, w in zip(cols, headers, widths):
+            self.tree.heading(c, text=h)
+            self.tree.column(c, width=w, anchor="w")
+        self.tree.tag_configure("ouvert", foreground="#B00020")
+        self.tree.pack(fill="both", expand=True, padx=16, pady=8)
+        self.tree.bind("<<TreeviewSelect>>", self._on_select)
+        self.refresh()
+
+    def _refresh_personnel_values(self):
+        self.personnel_list = core.list_personnel(self.conn)
+        self.personnel_combo["values"] = ["(aucun)"] + [f"{p['id']} — {p['prenom'] or ''} {p['nom']}".strip()
+                                                          for p in self.personnel_list]
+
+    def _parse_personnel_id(self):
+        raw = self.personnel_var.get()
+        if not raw or raw == "(aucun)":
+            return None
+        return int(raw.split(" — ", 1)[0])
+
+    def _on_select(self, event=None):
+        sel = self.tree.selection()
+        if not sel:
+            return
+        v = self.tree.item(sel[0], "values")
+        self.selected_id = v[0]
+        self.date_var.set(v[1]); self.type_var.set(v[2])
+        self.gravite_var.set(v[4]); self.statut_var.set(v[5]); self.description_var.set(v[6])
+        h = next((x for x in core.list_hs(self.conn) if str(x["id"]) == str(self.selected_id)), None)
+        if h:
+            self.personnel_var.set(f"{h['personnel_id']} — {h['employe']}" if h["personnel_id"] else "(aucun)")
+
+    def clear_form(self):
+        self.selected_id = None
+        self.date_var.set(date.today().strftime("%d/%m/%Y"))
+        self.type_var.set("incident"); self.gravite_var.set(""); self.statut_var.set("ouvert")
+        self.description_var.set(""); self.personnel_var.set("")
+
+    def add(self):
+        date_str = core.to_iso_date(self.date_var.get().strip())
+        if not date_str:
+            messagebox.showwarning("Champ manquant", "La date est obligatoire.")
+            return
+        core.add_hs(self.conn, date_str, type_evenement=self.type_var.get(),
+                    personnel_id=self._parse_personnel_id(), description=self.description_var.get(),
+                    gravite=self.gravite_var.get(), statut=self.statut_var.get())
+        self.clear_form()
+        self.refresh()
+
+    def update_sel(self):
+        if not self.selected_id:
+            messagebox.showinfo("Info", "Sélectionnez d'abord un événement.")
+            return
+        date_str = core.to_iso_date(self.date_var.get().strip())
+        core.update_hs(self.conn, self.selected_id, date_evenement=date_str, type_evenement=self.type_var.get(),
+                       personnel_id=self._parse_personnel_id(), description=self.description_var.get().strip(),
+                       gravite=self.gravite_var.get(), statut=self.statut_var.get())
+        self.clear_form()
+        self.refresh()
+
+    def delete_sel(self):
+        if not self.selected_id:
+            messagebox.showinfo("Info", "Sélectionnez d'abord un événement.")
+            return
+        if messagebox.askyesno("Confirmer", "Supprimer cet événement ?"):
+            core.delete_hs(self.conn, self.selected_id)
+            self.clear_form()
+            self.refresh()
+
+    def refresh(self):
+        self._refresh_personnel_values()
+        for row in self.tree.get_children():
+            self.tree.delete(row)
+        for h in core.list_hs(self.conn):
+            tag = ("ouvert",) if h["statut"] == "ouvert" else ()
+            self.tree.insert("", "end", tags=tag, values=(
+                h["id"], core.to_display_date(h["date_evenement"]), h["type_evenement"], h["employe"] or "",
+                h["gravite"] or "", h["statut"], h["description"] or ""))
 
 
 class ParcAutoTab(ttk.Frame):
