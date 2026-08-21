@@ -1554,38 +1554,12 @@ class CompteResultatTab(ttk.Frame):
 
 
 class BilanTab(ttk.Frame):
-    """Bilan « avec détails », présenté comme le rapport financier de
-    référence de l'utilisateur : ACTIF en Brut / Amortissements / Net à
-    gauche (immobilisations par catégorie, stocks par nature, créances et
-    trésorerie compte par compte), PASSIF en Montant à droite (ressources
-    durables, dettes circulantes et trésorerie compte par compte). Calculé
-    à partir de compute_bilan_detaille(), qui classe CHAQUE compte de la
-    Balance dans une case et une seule : le Bilan est donc toujours
-    équilibré (Actif = Passif), sauf si la somme des soldes d'ouverture de
-    l'exercice n'est pas nulle. Exportable en .xlsx dans la même mise en
-    page."""
-
-    # Couleurs calquées PIXEL PAR PIXEL sur le PDF de référence (« BILAN COMPLET » /
-    # « BILAN AVEC DÉTAILS ») : chaque racine de compte de tiers a SA couleur,
-    # appliquée à l'identique côté Actif (créances) et côté Passif (dettes) —
-    # c'est la même racine, donc la même couleur des deux côtés du Bilan.
-    RACINE_COLORS = {
-        "40": ("#FF6600", "white"),   # orange — Fournisseurs
-        "41": ("#3366FF", "white"),   # bleu — Clients
-        "42": ("#FFFF00", "black"),   # jaune — Personnel
-        "43": ("#FF99CC", "black"),   # rose — Organismes sociaux (CNSS)
-        "44": ("#999999", "white"),   # gris — État (IUTS/TPA/TVA)
-        "45": ("#999999", "white"),   # gris — Organismes internationaux (groupé avec 44 dans le PDF)
-        "46": ("#00FFFF", "black"),   # cyan — Débiteurs/créditeurs divers
-        "47": ("#00FFFF", "black"),   # cyan — HAO (groupé avec 46 dans le PDF)
-        "48": ("#00FFFF", "black"),   # cyan — Comptes de régularisation (assimilé HAO)
-        "49": ("#00FFFF", "black"),   # cyan — Dépréciations/provisions sur tiers (assimilé HAO)
-    }
-    STOCK_COLOR = ("#99CCFF", "black")      # bleu clair — Stocks (classe 3)
-    TRESO_COLOR = ("#00FF00", "black")      # vert — Trésorerie (classe 5), Actif et Passif
-    SOUS_TOTAL_ACTIF_COLOR = ("#99CCFF", "black")   # bleu clair — sous-totaux côté Actif (TOTAL I/II du PDF)
-    SOUS_TOTAL_PASSIF_COLOR = ("#FFCC00", "black")  # or/jaune — sous-totaux côté Passif (TOTAL I/II du PDF)
-    GRAND_TOTAL_COLOR = ("#FFCC00", "black")        # or/jaune — TOTAL GENERAL du PDF (les deux côtés)
+    """Bilan « plat » — lit DIRECTEMENT le gabarit officiel de l'utilisateur
+    ligne par ligne (voir core.compute_bilan_plat()) et affiche exactement
+    les mêmes valeurs que l'export .xlsx officiel, y compris la colonne
+    N-1 — sans aucune catégorisation ou regroupement propre à
+    l'application, sans scroll horizontal (colonnes dimensionnées pour
+    tenir sans défilement)."""
 
     def __init__(self, parent, conn):
         super().__init__(parent)
@@ -1593,219 +1567,92 @@ class BilanTab(ttk.Frame):
 
         ttk.Label(self, text="BILAN", font=("Segoe UI", 14, "bold")).pack(anchor="w", padx=8, pady=(8, 0))
         ttk.Label(self, text=(
-            "Calculé compte par compte à partir de la même Balance générale que l'onglet Balance "
-            "(États et rapports) — les deux sont donc toujours cohérents, et l'Actif est toujours "
-            "égal au Passif (sauf soldes d'ouverture ou écritures importées incomplets — voir le "
-            "diagnostic ci-dessous le cas échéant). Couleurs calquées sur le rapport financier de "
-            "référence : chaque racine de compte (40 Fournisseurs, 41 Clients, 42 Personnel...) a la "
-            "même couleur des deux côtés du Bilan."
+            "Lu directement dans le gabarit officiel (mêmes formules CtaCptSolde.../…Nm1 que l'export "
+            ".xlsx) — Actif à gauche (Brut / Amortissements / Net / Net N-1), Passif à droite "
+            "(Exercice N / Exercice N-1)."
         ), foreground="#595959", wraplength=1300, justify="left").pack(anchor="w", padx=8, pady=(0, 4))
 
         btn_bar = ttk.Frame(self)
         btn_bar.pack(fill="x", padx=8, pady=(0, 4))
         ttk.Button(btn_bar, text="Actualiser", command=self.refresh).pack(side="left")
         ttk.Button(btn_bar, text="Exporter (.xlsx)", command=self.export_xlsx).pack(side="left", padx=4)
+        self.ecart_var = tk.StringVar()
+        self.ecart_label = ttk.Label(btn_bar, textvariable=self.ecart_var, font=("Segoe UI", 10, "bold"))
+        self.ecart_label.pack(side="left", padx=16)
 
         columns_frame = ttk.Frame(self)
         columns_frame.pack(fill="both", expand=True, padx=8, pady=(0, 4))
-        columns_frame.columnconfigure(0, weight=3)
-        columns_frame.columnconfigure(1, weight=2)
-
-        ttk.Label(columns_frame, text="ACTIF", font=("Segoe UI", 12, "bold")).grid(row=0, column=0, sticky="w")
-        ttk.Label(columns_frame, text="PASSIF", font=("Segoe UI", 12, "bold")).grid(row=0, column=1, sticky="w")
+        columns_frame.columnconfigure(0, weight=1)
+        columns_frame.columnconfigure(1, weight=1)
 
         actif_cols = ("libelle", "brut", "amort", "net", "net_n1")
-        self.tree_actif = ttk.Treeview(columns_frame, columns=actif_cols, show="headings", height=26)
-        self.tree_actif.heading("libelle", text="Libellé")
-        self.tree_actif.heading("brut", text="Brut")
-        self.tree_actif.heading("amort", text="Amortissements")
-        self.tree_actif.heading("net", text="Net")
-        self.tree_actif.heading("net_n1", text="Net N-1")
-        self.tree_actif.column("libelle", width=340, anchor="w", stretch=True)
-        self.tree_actif.column("brut", width=140, anchor="e", stretch=False)
-        self.tree_actif.column("amort", width=140, anchor="e", stretch=False)
-        self.tree_actif.column("net", width=150, anchor="e", stretch=False)
-        self.tree_actif.column("net_n1", width=150, anchor="e", stretch=False)
+        self.tree_actif = ttk.Treeview(columns_frame, columns=actif_cols, show="headings", height=32)
+        headers_a = ["Libellé (ACTIF)", "Brut", "Amort.", "Net", "Net N-1"]
+        widths_a = [260, 100, 100, 110, 110]
+        for c, h, w in zip(actif_cols, headers_a, widths_a):
+            self.tree_actif.heading(c, text=h)
+            self.tree_actif.column(c, width=w, anchor="w" if c == "libelle" else "e", stretch=(c == "libelle"))
+        self.tree_actif.grid(row=0, column=0, sticky="nsew", padx=(0, 4))
 
         passif_cols = ("libelle", "montant", "montant_n1")
-        self.tree_passif = ttk.Treeview(columns_frame, columns=passif_cols, show="headings", height=26)
-        self.tree_passif.heading("libelle", text="Libellé")
-        self.tree_passif.heading("montant", text="Exercice N")
-        self.tree_passif.heading("montant_n1", text="Exercice N-1")
-        self.tree_passif.column("libelle", width=340, anchor="w", stretch=True)
-        self.tree_passif.column("montant", width=170, anchor="e", stretch=False)
-        self.tree_passif.column("montant_n1", width=170, anchor="e", stretch=False)
+        self.tree_passif = ttk.Treeview(columns_frame, columns=passif_cols, show="headings", height=32)
+        headers_p = ["Libellé (PASSIF)", "Exercice N", "Exercice N-1"]
+        widths_p = [280, 140, 140]
+        for c, h, w in zip(passif_cols, headers_p, widths_p):
+            self.tree_passif.heading(c, text=h)
+            self.tree_passif.column(c, width=w, anchor="w" if c == "libelle" else "e", stretch=(c == "libelle"))
+        self.tree_passif.grid(row=0, column=1, sticky="nsew", padx=(4, 0))
+
+        columns_frame.rowconfigure(0, weight=1)
 
         style = ttk.Style()
         style.configure("Bilan.Treeview", rowheight=22, font=("Segoe UI", 10))
-        for tree in (self.tree_passif, self.tree_actif):
-            tree.configure(style="Bilan.Treeview")
-            # une couleur par racine (40 à 49), + stocks, trésorerie, sous-totaux, total général
-            for racine, (bg, fg) in self.RACINE_COLORS.items():
-                tree.tag_configure(f"racine_{racine}", background=bg, foreground=fg, font=("Segoe UI", 10, "bold"))
-            tree.tag_configure("stock", background=self.STOCK_COLOR[0], foreground=self.STOCK_COLOR[1],
-                                font=("Segoe UI", 10))
-            tree.tag_configure("treso", background=self.TRESO_COLOR[0], foreground=self.TRESO_COLOR[1],
-                                font=("Segoe UI", 10, "bold"))
-            tree.tag_configure("plain_header", font=("Segoe UI", 10, "bold"))
-            tree.tag_configure("plain", font=("Segoe UI", 10))
-        self.tree_actif.tag_configure("soustotal", background=self.SOUS_TOTAL_ACTIF_COLOR[0],
-                                       foreground=self.SOUS_TOTAL_ACTIF_COLOR[1], font=("Segoe UI", 10, "bold"))
-        self.tree_passif.tag_configure("soustotal", background=self.SOUS_TOTAL_PASSIF_COLOR[0],
-                                        foreground=self.SOUS_TOTAL_PASSIF_COLOR[1], font=("Segoe UI", 10, "bold"))
         for tree in (self.tree_actif, self.tree_passif):
-            tree.tag_configure("grandtotal", background=self.GRAND_TOTAL_COLOR[0],
-                                foreground=self.GRAND_TOTAL_COLOR[1], font=("Segoe UI", 11, "bold"))
+            tree.configure(style="Bilan.Treeview")
+            tree.tag_configure("total", background="#FFCC00", foreground="black", font=("Segoe UI", 10, "bold"))
+            tree.tag_configure("soustotal", background="#99CCFF", foreground="black", font=("Segoe UI", 10, "bold"))
 
-        actif_scroll_y = ttk.Scrollbar(columns_frame, orient="vertical", command=self.tree_actif.yview)
-        self.tree_actif.configure(yscrollcommand=actif_scroll_y.set)
-        actif_scroll_x = ttk.Scrollbar(columns_frame, orient="horizontal", command=self.tree_actif.xview)
-        self.tree_actif.configure(xscrollcommand=actif_scroll_x.set)
-        passif_scroll_y = ttk.Scrollbar(columns_frame, orient="vertical", command=self.tree_passif.yview)
-        self.tree_passif.configure(yscrollcommand=passif_scroll_y.set)
-        passif_scroll_x = ttk.Scrollbar(columns_frame, orient="horizontal", command=self.tree_passif.xview)
-        self.tree_passif.configure(xscrollcommand=passif_scroll_x.set)
-
-        self.tree_actif.grid(row=1, column=0, sticky="nsew", padx=(0, 2))
-        actif_scroll_y.grid(row=1, column=0, sticky="nse", padx=(0, 2))
-        actif_scroll_x.grid(row=2, column=0, sticky="ew", padx=(0, 2))
-        self.tree_passif.grid(row=1, column=1, sticky="nsew", padx=(4, 2))
-        passif_scroll_y.grid(row=1, column=1, sticky="nse")
-        passif_scroll_x.grid(row=2, column=1, sticky="ew")
-        columns_frame.rowconfigure(1, weight=1)
-
-        self.ecart_var = tk.StringVar()
-        self.ecart_label = ttk.Label(self, textvariable=self.ecart_var, font=("Segoe UI", 10, "bold"),
-                                      wraplength=1300, justify="left")
-        self.ecart_label.pack(anchor="w", padx=8, pady=(4, 2))
-        self.diag_link = ttk.Button(self, text="Voir le détail des pièces non équilibrées →",
-                                     command=self._open_diagnostic)
         self.refresh()
 
-    def _open_diagnostic(self):
-        app = self.winfo_toplevel()
-        if hasattr(app, "show"):
-            app.show("pieces_non_equilibrees")
-
-    def _tag_for(self, item, side):
-        """Détermine le tag de couleur d'une ligne/groupe de créance/dette/
-        stock à partir de sa clé (racine ou préfixe) — même racine = même
-        couleur des deux côtés du Bilan, comme dans le PDF."""
-        key = item.get("key")
-        if key and key in self.RACINE_COLORS:
-            return f"racine_{key}"
-        if key and key in ("31", "32", "33", "34", "35", "36", "37", "38", "39"):
-            return "stock"
-        return "plain"
-
-    def _add_actif_section(self, titre, lignes, total_label, total_val, total_val_n1=0.0, detail=False, tag=None):
-        """lignes : liste de catégories d'immobilisation {label, brut,
-        brut_n1, amort, amort_n1, net, net_n1} si detail=True, sinon des
-        GROUPES {key, label, sous_total, sous_total_n1, comptes:[...]} —
-        `tag` fixe une couleur unique pour toute la section, sinon la
-        couleur est déterminée groupe par groupe via _tag_for."""
-        if not lignes and not total_val:
-            return
-        self.tree_actif.insert("", "end", tags=("plain_header",), values=(titre, "", "", "", ""))
-        for l in lignes:
-            row_tag = tag or self._tag_for(l, "actif")
-            if detail:
-                self.tree_actif.insert("", "end", tags=(row_tag,), values=(
-                    f"   {l['label']}", fmt_cfa(l["brut"]) if l["brut"] else "",
-                    fmt_cfa(l["amort"]) if l["amort"] else "", fmt_cfa(l["net"]), fmt_cfa(l.get("net_n1", 0))))
-            else:
-                montant = l.get("sous_total", l.get("montant", 0))
-                montant_n1 = l.get("sous_total_n1", l.get("montant_n1", 0))
-                if not montant and not montant_n1:
-                    continue
-                self.tree_actif.insert("", "end", tags=(row_tag,), values=(
-                    f"   {l['label']}", "", "", fmt_cfa(montant), fmt_cfa(montant_n1)))
-        self.tree_actif.insert("", "end", tags=("soustotal",), values=(
-            f"  {total_label}", "", "", fmt_cfa(total_val), fmt_cfa(total_val_n1)))
-        self.tree_actif.insert("", "end", values=("", "", "", "", ""))
-
-    def _add_passif_section(self, titre, lignes, total_label, total_val, total_val_n1=0.0, tag=None):
-        if not lignes and not total_val:
-            return
-        self.tree_passif.insert("", "end", tags=("plain_header",), values=(titre, "", ""))
-        for l in lignes:
-            montant = l.get("sous_total", l.get("montant", 0))
-            montant_n1 = l.get("sous_total_n1", l.get("montant_n1", 0))
-            if not montant and not montant_n1:
-                continue
-            row_tag = tag or self._tag_for(l, "passif")
-            self.tree_passif.insert("", "end", tags=(row_tag,), values=(
-                f"   {l['label']}", fmt_cfa(montant), fmt_cfa(montant_n1)))
-        self.tree_passif.insert("", "end", tags=("soustotal",), values=(
-            f"  {total_label}", fmt_cfa(total_val), fmt_cfa(total_val_n1)))
-        self.tree_passif.insert("", "end", values=("", "", ""))
-
     def refresh(self):
-        for tree in (self.tree_passif, self.tree_actif):
+        for tree in (self.tree_actif, self.tree_passif):
             for row in tree.get_children():
                 tree.delete(row)
 
-        d = core.compute_bilan_detaille(self.conn)
-        a = d["actif"]
-        p = d["passif"]
+        d = core.compute_bilan_plat(self.conn)
 
-        # ---- ACTIF ---- (immobilisations et capitaux propres restent en blanc,
-        # comme dans le PDF — seuls stocks/créances/dettes/trésorerie sont colorés)
-        self._add_actif_section("IMMOBILISATIONS", a["immobilisations"],
-                                 "Total immobilisations BRUTES", a["total_immo_brut"], a["total_immo_brut_n1"],
-                                 detail=True, tag="plain")
-        self.tree_actif.insert("", "end", tags=("soustotal",), values=(
-            "  Total AMORTISSEMENTS et provisions", "", "", fmt_cfa(a["total_immo_amort"]),
-            fmt_cfa(a["total_immo_amort_n1"])))
-        self.tree_actif.insert("", "end", tags=("soustotal",), values=(
-            "  Total immobilisations NETTES", "", "", fmt_cfa(a["total_immo_net"]), fmt_cfa(a["total_immo_net_n1"])))
-        self.tree_actif.insert("", "end", values=("", "", "", "", ""))
-        self._add_actif_section("STOCKS", a["stocks"], "Total stocks", a["total_stocks"], a["total_stocks_n1"],
-                                 tag="stock")
-        self._add_actif_section("CRÉANCES", a["creances"], "Total créances", a["total_creances"],
-                                 a["total_creances_n1"])
-        self._add_actif_section("TRÉSORERIE ACTIF", a["tresorerie"], "Total trésorerie actif",
-                                 a["total_tresorerie"], a["total_tresorerie_n1"], tag="treso")
-        self.tree_actif.insert("", "end", tags=("grandtotal",), values=(
-            "TOTAL ACTIF", "", "", fmt_cfa(d["total_actif"]), fmt_cfa(d["total_actif_n1"])))
+        def fmt(v):
+            return fmt_cfa(v) if v not in (None, "") else ""
 
-        # ---- PASSIF ----
-        self._add_passif_section("CAPITAUX PROPRES ET RESSOURCES DURABLES", p["capitaux_propres"],
-                                  "Total capitaux propres et ressources durables", p["total_capitaux_propres"],
-                                  p["total_capitaux_propres_n1"], tag="plain")
-        self._add_passif_section("DETTES CIRCULANTES", p["dettes"], "Total dettes circulantes",
-                                  p["total_dettes"], p["total_dettes_n1"])
-        self._add_passif_section("TRÉSORERIE PASSIF", p["tresorerie"], "Total trésorerie passif",
-                                  p["total_tresorerie"], p["total_tresorerie_n1"], tag="treso")
-        self.tree_passif.insert("", "end", tags=("grandtotal",), values=(
-            "TOTAL PASSIF", fmt_cfa(d["total_passif"]), fmt_cfa(d["total_passif_n1"])))
+        for l in d["actif"]:
+            tag = ("total",) if "TOTAL GENERAL" in l["libelle"].upper() else (
+                ("soustotal",) if "TOTAL" in l["libelle"].upper() else ())
+            self.tree_actif.insert("", "end", tags=tag, values=(
+                l["libelle"], fmt(l["brut"]), fmt(l["amort"]), fmt(l["net"]), fmt(l["net_n1"])))
 
-        ecart = d["ecart"]
-        couleur = "#B00020" if abs(ecart) >= 1 else "#1F7A1F"
-        self.ecart_label.configure(foreground=couleur)
-        if abs(ecart) < 1:
-            self.ecart_var.set(f"Écart Actif - Passif (exercice {d['exercice']}) : {fmt_cfa(ecart)}  ✓ équilibré"
-                                f"   —   Comparatif : exercice N-1 = {d['exercice_n1']}"
-                                + ("" if any([a["total_immo_brut_n1"], a["total_stocks_n1"], p["total_dettes_n1"]])
-                                   else " (aucune donnée trouvée pour cet exercice)"))
-            self.diag_link.pack_forget()
-        else:
-            diag = core.compute_ecart_diagnostic(self.conn)
-            parts = [f"Écart Actif - Passif : {fmt_cfa(ecart)} ⚠ — cause(s) détectée(s) dans vos données :"]
-            if abs(diag["ecart_soldes_ouverture"]) >= 1:
-                parts.append(f"• Soldes d'ouverture non nuls : {fmt_cfa(diag['ecart_soldes_ouverture'])} "
-                              f"(devrait être 0 — voir l'onglet « Soldes d'ouverture »)")
-            if abs(diag["ecart_ecritures_periode"]) >= 1:
-                parts.append(f"• Écritures de la période Débit ≠ Crédit : {fmt_cfa(diag['ecart_ecritures_periode'])} "
-                              f"(voir le détail ci-dessous)")
-            self.ecart_var.set("\n".join(parts))
-            self.diag_link.pack(anchor="w", padx=8, pady=(0, 8))
+        for l in d["passif"]:
+            tag = ("total",) if "TOTAL GENERAL" in l["libelle"].upper() else (
+                ("soustotal",) if "TOTAL" in l["libelle"].upper() else ())
+            self.tree_passif.insert("", "end", tags=tag, values=(
+                l["libelle"], fmt(l["montant"]), fmt(l["montant_n1"])))
 
-        # Toujours revenir au début (gauche) des tableaux après un rafraîchissement
-        # — sinon les libellés peuvent apparaître coupés si le scroll horizontal
-        # était resté décalé (ex. après une sélection ou un précédent scroll).
-        self.tree_actif.xview_moveto(0)
-        self.tree_passif.xview_moveto(0)
+        total_general_actif = next((l["net"] for l in d["actif"] if "TOTAL GENERAL" in l["libelle"].upper()), None)
+        total_general_passif = next((l["montant"] for l in d["passif"] if "TOTAL GENERAL" in l["libelle"].upper()), None)
+        if total_general_actif is not None and total_general_passif is not None:
+            ecart = total_general_actif - total_general_passif
+            if abs(ecart) < 1:
+                self.ecart_var.set(f"\u2713 Actif = Passif ({fmt_cfa(total_general_actif)})   \u2014   Exercice "
+                                    f"{d['exercice']} / N-1 = {d['exercice_n1']}")
+                self.ecart_label.configure(foreground="#1F7A1F")
+            else:
+                self.ecart_var.set(f"\u26a0 \u00c9cart Actif - Passif : {fmt_cfa(ecart)}")
+                self.ecart_label.configure(foreground="#B00020")
+        if d["errors"]:
+            messagebox.showwarning(
+                "Formules en erreur",
+                f"{len(d['errors'])} formule(s) du gabarit n'ont pas pu \u00eatre \u00e9valu\u00e9es \u2014 voir le d\u00e9tail "
+                f"dans l'export .xlsx (cellules \u00ab #ERREUR \u00bb)."
+            )
 
     def export_xlsx(self):
         path = filedialog.asksaveasfilename(
@@ -1815,7 +1662,7 @@ class BilanTab(ttk.Frame):
         if not path:
             return
         core.export_bilan_gabarit_xlsx(self.conn, path)
-        messagebox.showinfo("Export terminé", f"Bilan exporté dans le gabarit officiel :\n{path}")
+        messagebox.showinfo("Export termin\u00e9", f"Bilan export\u00e9 dans le gabarit officiel :\n{path}")
 
 
 class PiecesNonEquilibreesTab(ttk.Frame):

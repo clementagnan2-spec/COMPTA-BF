@@ -3758,6 +3758,63 @@ def generate_etat_xlsx(conn, etat_id, output_path, exercice=None):
     return {"cells_ok": len(results), "cells_error": errors, "cells_warning": warnings}
 
 
+def compute_bilan_plat(conn, exercice=None):
+    """Bilan « plat » — relit DIRECTEMENT le gabarit officiel
+    (templates/modele_bilan.xlsx, ou à défaut bilan_template.xls) ligne
+    par ligne, et évalue CHAQUE formule (CtaCptSolde/CtaCptSoldeDébit/
+    CtaCptSoldeCrédit et leurs variantes N-1 …Nm1) avec exactement le même
+    moteur que l'export .xlsx officiel (evaluate_sheet_formulas) — donc
+    strictement les mêmes valeurs, y compris la colonne N-1, sans aucune
+    logique de catégorisation ou de regroupement propre à l'application.
+    Colonnes du gabarit : A=Libellé Actif, B=Brut, C=Amortissements,
+    D=Net, E=Net N-1, F=Libellé Passif, G=Exercice N, H=Exercice N-1.
+    Renvoie {exercice, exercice_n1, actif: [...], passif: [...], errors}."""
+    exercice = exercice or get_current_exercice(conn)
+    exercice_n1 = str(int(exercice) - 1)
+    soldes_n = _soldes_dict(conn, exercice)
+    soldes_n1 = _soldes_dict(conn, exercice_n1)
+
+    info = ETATS_TEMPLATES["bilan"]
+    if os.path.exists(info["path"]):
+        wb = open_template_workbook(info["path"])
+        actual_sheet = _guess_etat_sheet(wb, preferred=info["sheet_hint"])
+    else:
+        wb = open_template_workbook(BILAN_TEMPLATE_PATH)
+        actual_sheet = _guess_etat_sheet(wb, "BILAN")
+    ws = wb[actual_sheet]
+
+    results, errors, warnings = evaluate_sheet_formulas(ws, soldes_n, soldes_n1)
+
+    def cellval(col, row):
+        coord = f"{col}{row}"
+        if coord in results:
+            return results[coord]
+        v = ws[coord].value
+        return v if isinstance(v, (int, float)) else None
+
+    rows_actif, rows_passif = [], []
+    junk = {"ACTIF", "PASSIF", "BILAN SYNTHETIQUE"}
+    for r in range(1, ws.max_row + 1):
+        libelle_a = ws.cell(row=r, column=1).value
+        if (isinstance(libelle_a, str) and libelle_a.strip()
+                and libelle_a.strip() not in junk and not libelle_a.strip().isdigit()
+                and not libelle_a.strip().startswith("Edition du")):
+            rows_actif.append({
+                "libelle": libelle_a.strip(),
+                "brut": cellval("B", r), "amort": cellval("C", r),
+                "net": cellval("D", r), "net_n1": cellval("E", r),
+            })
+        libelle_p = ws.cell(row=r, column=6).value
+        if isinstance(libelle_p, str) and libelle_p.strip() and libelle_p.strip() not in junk:
+            rows_passif.append({
+                "libelle": libelle_p.strip(),
+                "montant": cellval("G", r), "montant_n1": cellval("H", r),
+            })
+
+    return {"exercice": exercice, "exercice_n1": exercice_n1, "actif": rows_actif, "passif": rows_passif,
+            "errors": errors}
+
+
 def export_bilan_gabarit_xlsx(conn, path, exercice=None):
     """Exporte le Bilan dans le gabarit officiel (templates/modele_bilan.xlsx,
     ou à défaut l'ancien gabarit SpreadsheetML templates/bilan_template.xls

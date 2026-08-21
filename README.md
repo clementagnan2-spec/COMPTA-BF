@@ -2492,3 +2492,33 @@ Pour identifier précisément la cause dans votre cas, il faudrait soit
 consulter ce message de diagnostic directement dans l'application (faites
 défiler sous les tableaux), soit me transmettre votre fichier
 `comptabilite.db` pour un diagnostic direct.
+
+### Bilan entièrement refait — lecture directe du gabarit, colonne N-1 réparée, sans scroller
+
+**Cause du bug « aucune donnée en N-1 »** : l'écran Bilan utilisait ma
+propre logique de catégorisation (`compute_bilan_detaille`), séparée de
+celle qui alimente l'export .xlsx officiel — une source de divergence
+inutile. Comme demandé : **ancienne logique supprimée, travail refait à
+zéro** en lisant directement le gabarit.
+
+**Réalisé** :
+- **`core.compute_bilan_plat()`** (nouveau, remplace
+  `compute_bilan_detaille` pour cet écran) : relit le gabarit officiel
+  (`templates/modele_bilan.xlsx`) **ligne par ligne**, colonne par
+  colonne (A=Libellé Actif, B=Brut, C=Amortissements, D=Net, E=Net N-1,
+  F=Libellé Passif, G=Exercice N, H=Exercice N-1), et évalue **chaque
+  formule** avec le même moteur que l'export .xlsx (`evaluate_sheet_formulas`)
+  — donc exactement les mêmes valeurs, y compris la colonne N-1, sans
+  aucune logique de regroupement propre à l'application. Filtre les
+  lignes parasites du gabarit (titre du fichier, en-têtes de colonnes,
+  valeur résiduelle collée).
+- **Écran BilanTab entièrement reconstruit** : affichage plat (Actif à
+  gauche, Passif à droite), colonnes dimensionnées pour tenir sans
+  défilement horizontal (plus de scroller à gérer), écart Actif/Passif
+  affiché en permanence dans la barre d'outils.
+- Export `.xlsx` inchangé (utilisait déjà ce même moteur).
+
+Testé avec un historique réel sur 2 exercices (2025 clôturé → 2026, avec
+une extension de bâtiment) : colonne Net N-1 correctement remplie (4 000 000,
+la valeur de 2025) au lieu d'être vide, TOTAL GENERAL Actif = TOTAL
+GENERAL Passif exactement (6 000 000) en N comme en N-1, écart à 0.
