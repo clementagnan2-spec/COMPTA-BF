@@ -1544,9 +1544,8 @@ class BilanSyscohadaTab(ttk.Frame):
 
     RACINE_COLORS = {
         "40": ("#FF6600", "white"), "41": ("#3366FF", "white"), "42": ("#FFFF00", "black"),
-        "43": ("#FF99CC", "black"), "44": ("#999999", "white"), "45": ("#999999", "white"),
-        "46": ("#00FFFF", "black"), "47": ("#00FFFF", "black"), "48": ("#00FFFF", "black"),
-        "49": ("#00FFFF", "black"),
+        "43": ("#FF99CC", "black"), "44_45": ("#999999", "white"),
+        "46": ("#00FFFF", "black"), "47_49": ("#00FFFF", "black"),
     }
     STOCK_COLOR = "#99CCFF"
     TRESO_COLOR = "#00FF00"
@@ -1567,6 +1566,8 @@ class BilanSyscohadaTab(ttk.Frame):
         btn_bar = ttk.Frame(self)
         btn_bar.pack(fill="x", padx=8, pady=(0, 4))
         ttk.Button(btn_bar, text="Actualiser", command=self.refresh).pack(side="left")
+        ttk.Button(btn_bar, text="Exporter selon le gabarit officiel (formules CtaCptSolde exactes)",
+                   command=self.export_gabarit).pack(side="left", padx=8)
         self.ecart_var = tk.StringVar()
         self.ecart_label = ttk.Label(btn_bar, textvariable=self.ecart_var, font=("Segoe UI", 10, "bold"))
         self.ecart_label.pack(side="left", padx=16)
@@ -1711,6 +1712,31 @@ class BilanSyscohadaTab(ttk.Frame):
 
         self.tree_actif.xview_moveto(0)
         self.tree_passif.xview_moveto(0)
+
+    def export_gabarit(self):
+        path = filedialog.asksaveasfilename(
+            defaultextension=".xls", filetypes=[("Classeur Excel", "*.xls")],
+            initialfile="Bilan_gabarit_officiel.xls",
+            title="Exporter le Bilan selon le gabarit officiel (formules exactes)",
+        )
+        if not path:
+            return
+        try:
+            core.export_bilan_gabarit_xlsx(self.conn, path)
+        except Exception as exc:
+            messagebox.showerror(
+                "Erreur",
+                f"Échec de l'export selon le gabarit officiel :\n\n{exc}\n\n"
+                f"Cet export nécessite le fichier templates/bilan_template.xls dans l'installation. "
+                f"L'écran Bilan SYSCOHADA ci-dessus reste utilisable normalement, il n'en dépend pas.",
+            )
+            return
+        messagebox.showinfo(
+            "Export terminé",
+            f"Bilan exporté avec les formules CtaCptSolde exactes du gabarit officiel (solde de clôture — "
+            f"note : les formules N/N-1 de ce gabarit utilisent le solde de clôture, contrairement à "
+            f"l'écran ci-dessus qui isole les opérations de la période et le solde d'ouverture) :\n{path}",
+        )
 
 
 class PiecesNonEquilibreesTab(ttk.Frame):

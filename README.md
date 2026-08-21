@@ -2677,3 +2677,63 @@ ses 3 paires de colonnes (5,5M / 850K / 6,2M) ; Grand livre cohérent
 immobilisation dormant correctement affiché avec son solde d'ouverture ;
 non-régression vérifiée (Règlements, clôture d'exercice, Situation
 financière).
+
+### Regroupements du Bilan alignés exactement sur le fichier de référence
+
+**Fichier fourni** : `Bilan.xlsx` — les valeurs calculées (pas de formules
+textuelles cette fois) de l'exercice 2024 de l'utilisateur, servant de
+référence de structure/libellés.
+
+**Écart trouvé et corrigé** : le rapport de référence combine certaines
+racines en une seule ligne, alors que mon Bilan les affichait séparément :
+- **Racines 44 et 45** combinées en une ligne « IUTS-TPA-TVA » (au lieu de
+  « État — débiteur/créditeur » et « Organismes internationaux » séparés).
+- **Racines 47, 48, 49** combinées en une ligne « HAO » (au lieu de 3
+  lignes séparées).
+- **Racines 16 et 17** combinées en une ligne « Emprunts bancaires » côté
+  Capitaux propres (au lieu de « Emprunts et dettes financières » et
+  « Dettes de location-acquisition » séparées).
+- **Trésorerie regroupée en Banques (racines 50-56) / Caisse (racines
+  57-59)**, au lieu d'un groupe par racine individuelle (52, 56, 57...).
+
+Nouvelles fonctions `_cle_racine_bilan()` et `_cle_prefixe_treso()`
+appliquant ce regroupement exact avant la fusion N/N-1 déjà en place.
+
+Testé avec un scénario ciblant précisément ces 4 regroupements (comptes
+sur les racines 44, 45, 47, 49, 16, 17, et deux comptes de trésorerie) :
+chaque fusion tombe juste (150 000 = 100 000+50 000 pour 44+45, 1 500 000
+= 1 000 000+500 000 pour 16+17...), écart resté à 0.
+
+### Formules du gabarit officiel réintégrées comme export dédié
+
+**Demande** : appliquer les formules du fichier gabarit (CtaCptSolde...)
+au Bilan.
+
+**Réalisé** : le moteur d'évaluation de ces formules (`cta_cpt_solde*`,
+`evaluate_sheet_formulas`, `compute_bilan_plat`, `export_bilan_gabarit_xlsx`)
+n'avait en réalité jamais été supprimé du code — seul l'ancien écran
+Bilan qui EN DÉPENDAIT (et son fichier de gabarit) l'avaient été. Le
+fichier gabarit a été réintégré (`templates/bilan_template.xls`) et un
+nouveau bouton **« Exporter selon le gabarit officiel (formules CtaCptSolde
+exactes) »** a été ajouté à l'écran Bilan SYSCOHADA existant.
+
+**Point de transparence important** : les formules de ce gabarit (sans
+suffixe `Nm1`) calculent sur le **solde de clôture** (ouverture + cumul
+des opérations) — la convention *avant* le changement demandé
+récemment, qui a fait passer l'écran Bilan SYSCOHADA à une logique
+« opérations de la période seule / solde d'ouverture seul ». Les deux
+coexistent donc désormais intentionnellement :
+- **Écran Bilan SYSCOHADA** (autonome, aucun fichier externe requis) :
+  toujours en logique « période / solde d'ouverture », comme demandé
+  précédemment.
+- **Bouton d'export « gabarit officiel »** : reproduit fidèlement les
+  formules exactes du fichier fourni (logique solde de clôture N / N-1
+  via `...Nm1`), pour produire un document dans le format officiel exact
+  quand nécessaire.
+
+Workflow de build (`.github/workflows/build.yml`) mis à jour pour
+réembarquer ce fichier.
+
+Testé : export selon le gabarit officiel sans aucune erreur de formule ;
+écran Bilan SYSCOHADA (autonome) toujours pleinement fonctionnel en
+parallèle, écarts à 0 sur les deux mécanismes indépendamment.

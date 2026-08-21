@@ -3229,23 +3229,39 @@ IMMO_CATEGORIES = [
 RACINE_LABELS_CREANCES = {
     "40": "Fournisseurs — avances et acomptes versés", "41": "Clients débiteurs",
     "42": "Personnel — débiteurs", "43": "Organismes sociaux (CNSS...) — débiteurs",
-    "44": "État — débiteur", "45": "Organismes internationaux — débiteurs",
-    "46": "Débiteurs divers", "47": "HAO — débiteurs divers",
-    "48": "HAO — autres débiteurs", "49": "Dépréciations et risques provisionnés (créances)",
+    "44_45": "IUTS-TPA-TVA — débiteurs (État, racines 44-45)",
+    "47_49": "HAO — débiteurs divers (racines 47-49)", "46": "Débiteurs divers",
 }
 RACINE_LABELS_DETTES = {
     "40": "Fournisseurs", "41": "Clients créditeurs (avoirs)",
     "42": "Personnel — créditeurs", "43": "Organismes sociaux (CNSS...) — créditeurs",
-    "44": "État — créditeur", "45": "Organismes internationaux — créditeurs",
-    "46": "Créditeurs divers", "47": "HAO — créditeurs divers",
-    "48": "HAO — autres créditeurs", "49": "Dépréciations et risques provisionnés (dettes)",
+    "44_45": "IUTS-TPA-TVA — créditeur (État, racines 44-45)",
+    "47_49": "HAO — créditeurs divers (racines 47-49)", "46": "Créditeurs divers",
 }
 TRESO_LABELS = {
-    "50": "Titres de placement", "51": "Valeurs à encaisser", "52": "Banques",
-    "53": "Établissements financiers et assimilés", "54": "Instruments de trésorerie",
-    "56": "Banques, crédits de trésorerie et d'escompte", "57": "Caisse",
-    "58": "Régies d'avances, accréditifs et virements internes", "59": "Dépréciations et provisions (trésorerie)",
+    "50_56": "Banques créditrices/débitrices (racines 50-56)",
+    "57_59": "Caisse créditrice/débitrice (racines 57-59)",
 }
+
+
+def _cle_racine_bilan(racine):
+    """Regroupement exact du rapport financier de référence de
+    l'utilisateur : racines 44 et 45 combinées en une seule ligne
+    (« IUTS-TPA-TVA »), racines 47 à 49 combinées en une seule ligne
+    (« HAO »)."""
+    if racine in ("44", "45"):
+        return "44_45"
+    if racine in ("47", "48", "49"):
+        return "47_49"
+    return racine
+
+
+def _cle_prefixe_treso(prefixe):
+    """Regroupement Trésorerie exact du rapport de référence : racines 50
+    à 56 combinées (banques), racines 57 à 59 combinées (caisse)."""
+    if prefixe in ("50", "51", "52", "53", "54", "56"):
+        return "50_56"
+    return "57_59"
 
 
 def _grouper_avec_sous_total(lignes_plates, cle, labels):
@@ -3378,41 +3394,50 @@ def _compute_bilan_groupes(conn, exercice, balance=None, resultat_net_override=N
     stocks = [{"key": p, "label": f"Stocks {p} — {stocks_labels.get(p, 'Autres stocks')}",
                "sous_total": v, "comptes": []} for p, v in sorted(stocks_par_prefixe.items()) if v]
 
-    # ---- Créances / Dettes (racines 40-49, compte par compte, groupées par racine) ----
+    # ---- Créances / Dettes (racines 40-49, compte par compte, groupées selon
+    # le rapport de référence : 44+45 combinées, 47-49 combinées) ----
     creances_flat = []
     for racine in [str(r) for r in range(40, 50)]:
         for b in _detail_racine(balance, racine, sign="pos"):
-            creances_flat.append({"label": f"{b['code']} {b['label']}", "montant": b["solde_cloture"], "racine": racine})
+            creances_flat.append({"label": f"{b['code']} {b['label']}", "montant": b["solde_cloture"],
+                                   "racine": _cle_racine_bilan(racine)})
     creances = _grouper_avec_sous_total(creances_flat, "racine", RACINE_LABELS_CREANCES)
 
     dettes_flat = []
     for racine in [str(r) for r in range(40, 50)]:
         for b in _detail_racine(balance, racine, sign="neg"):
-            dettes_flat.append({"label": f"{b['code']} {b['label']}", "montant": -b["solde_cloture"], "racine": racine})
+            dettes_flat.append({"label": f"{b['code']} {b['label']}", "montant": -b["solde_cloture"],
+                                 "racine": _cle_racine_bilan(racine)})
     dettes = _grouper_avec_sous_total(dettes_flat, "racine", RACINE_LABELS_DETTES)
 
-    # ---- Trésorerie (classe 5), groupée par préfixe à 2 chiffres ----
+    # ---- Trésorerie (classe 5), groupée Banques (50-56) / Caisse (57-59)
+    # comme le rapport de référence ----
     treso_lignes, _ = compute_tresorerie_detail(conn, exercice=exercice, balance=balance)
-    treso_actif_flat = [{"label": f"{t['code']} {t['label']}", "montant": t["solde_cloture"], "prefixe": t["code"][:2]}
+    treso_actif_flat = [{"label": f"{t['code']} {t['label']}", "montant": t["solde_cloture"],
+                          "prefixe": _cle_prefixe_treso(t["code"][:2])}
                         for t in treso_lignes if t["solde_cloture"] > 0]
     treso_actif = _grouper_avec_sous_total(treso_actif_flat, "prefixe", TRESO_LABELS)
-    treso_passif_flat = [{"label": f"{t['code']} {t['label']}", "montant": -t["solde_cloture"], "prefixe": t["code"][:2]}
+    treso_passif_flat = [{"label": f"{t['code']} {t['label']}", "montant": -t["solde_cloture"],
+                           "prefixe": _cle_prefixe_treso(t["code"][:2])}
                          for t in treso_lignes if t["solde_cloture"] < 0]
     treso_passif = _grouper_avec_sous_total(treso_passif_flat, "prefixe", TRESO_LABELS)
 
-    # ---- Capitaux propres et ressources durables (classe 1), par préfixe ----
+    # ---- Capitaux propres et ressources durables (classe 1), par préfixe —
+    # emprunts 16+17 combinés en une seule ligne « Emprunts bancaires »,
+    # comme le rapport de référence ----
     capitaux_labels = {
         "10": "Capital", "11": "Réserves", "12": "Report à nouveau",
         "13": "Résultat net (avant affectation)", "14": "Subventions d'investissement",
         "15": "Provisions réglementées et fonds assimilés",
-        "16": "Emprunts et dettes financières diverses", "17": "Dettes de location-acquisition",
+        "16_17": "Emprunts bancaires (racines 16-17)",
         "18": "Comptes de liaison des établissements et sociétés en participation",
         "19": "Provisions financières pour risques et charges",
     }
     capitaux_flat = []
-    for prefixe in sorted(capitaux_labels):
+    for prefixe in ("10", "11", "12", "13", "14", "15", "16", "17", "18", "19"):
+        cle = "16_17" if prefixe in ("16", "17") else prefixe
         for b in _detail_prefix2(balance, "1", prefixe):
-            capitaux_flat.append({"label": f"{b['code']} {b['label']}", "montant": -b["solde_cloture"], "prefixe": prefixe})
+            capitaux_flat.append({"label": f"{b['code']} {b['label']}", "montant": -b["solde_cloture"], "prefixe": cle})
     capitaux_propres = _grouper_avec_sous_total(capitaux_flat, "prefixe", capitaux_labels)
     somme_classee = sum(g["sous_total"] for g in capitaux_propres)
     ressources_durables_total = -_sum_class(balance, "1")
