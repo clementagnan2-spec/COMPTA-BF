@@ -2711,36 +2711,40 @@ def compute_balance(conn, only_with_movement=True, include_zero_opening=True, ex
 
 def compute_balance_detaillee(conn, exercice=None):
     """Balance générale groupée par classe, avec un sous-total par classe et
-    un total général — même structure que la Balance PDF de référence
-    (N° compte, Libellé, Cumul Débit, Cumul Crédit, Solde Débit, Solde
-    Crédit). Calculée à partir de la même compute_balance() que le Bilan,
-    donc garantie cohérente avec lui."""
+    un total général — 6 colonnes : Solde Ouverture Débit/Crédit, Mouvement
+    (cumul) Débit/Crédit de la période, Solde Clôture Débit/Crédit. Calculée
+    à partir de la même compute_balance() que le Bilan, donc garantie
+    cohérente avec lui."""
     balance = sorted(compute_balance(conn, only_with_movement=True, exercice=exercice),
                       key=lambda b: b["code"])
     classes = {}
     for b in balance:
         classes.setdefault(b["classe"], []).append(b)
 
+    cols = ("ouverture_debit", "ouverture_credit", "cumul_debit", "cumul_credit", "solde_debit", "solde_credit")
     result_classes = []
-    grand = {"cumul_debit": 0.0, "cumul_credit": 0.0, "solde_debit": 0.0, "solde_credit": 0.0}
+    grand = {k: 0.0 for k in cols}
     for classe in sorted(classes.keys()):
         lignes = []
-        sous_total = {"cumul_debit": 0.0, "cumul_credit": 0.0, "solde_debit": 0.0, "solde_credit": 0.0}
+        sous_total = {k: 0.0 for k in cols}
         for b in classes[classe]:
+            solde_ouverture = b["solde_ouverture"]
             solde_cloture = b["solde_cloture"]
-            solde_debit = solde_cloture if solde_cloture > 0 else 0.0
-            solde_credit = -solde_cloture if solde_cloture < 0 else 0.0
-            lignes.append({
-                "code": b["code"], "label": b["label"], "solde_ouverture": b["solde_ouverture"],
+            ligne = {
+                "code": b["code"], "label": b["label"],
+                "ouverture_debit": solde_ouverture if solde_ouverture > 0 else 0.0,
+                "ouverture_credit": -solde_ouverture if solde_ouverture < 0 else 0.0,
                 "cumul_debit": b["debit"], "cumul_credit": b["credit"],
-                "solde_debit": solde_debit, "solde_credit": solde_credit,
-            })
-            sous_total["cumul_debit"] += b["debit"]
-            sous_total["cumul_credit"] += b["credit"]
-            sous_total["solde_debit"] += solde_debit
-            sous_total["solde_credit"] += solde_credit
+                "solde_debit": solde_cloture if solde_cloture > 0 else 0.0,
+                "solde_credit": -solde_cloture if solde_cloture < 0 else 0.0,
+                # Conservé pour compatibilité (ancien code affichant un solde d'ouverture signé unique)
+                "solde_ouverture": solde_ouverture,
+            }
+            lignes.append(ligne)
+            for k in cols:
+                sous_total[k] += ligne[k]
         result_classes.append({"classe": classe, "lignes": lignes, "sous_total": sous_total})
-        for k in grand:
+        for k in cols:
             grand[k] += sous_total[k]
 
     return {"classes": result_classes, "grand_total": grand}
@@ -2765,8 +2769,8 @@ def export_balance_xlsx(conn, path, exercice=None):
     grand_font = Font(bold=True, color="FFFFFFFF")
     grand_fill = PatternFill("solid", fgColor="1F4E78")
 
-    headers = ["N° Compte", "Libellé du compte", "Solde Ouverture", "Cumul Débit", "Cumul Crédit",
-               "Solde Débit", "Solde Crédit"]
+    headers = ["N° Compte", "Libellé du compte", "Ouverture Débit", "Ouverture Crédit",
+               "Mouvement Débit", "Mouvement Crédit", "Clôture Débit", "Clôture Crédit"]
     ws.append([f"BALANCE GÉNÉRALE — Exercice {exercice}"])
     ws["A1"].font = Font(bold=True, size=13)
     ws.append([])
@@ -2778,19 +2782,20 @@ def export_balance_xlsx(conn, path, exercice=None):
 
     for c in data["classes"]:
         for l in c["lignes"]:
-            ws.append([l["code"], l["label"], l["solde_ouverture"], l["cumul_debit"], l["cumul_credit"],
+            ws.append([l["code"], l["label"], l["ouverture_debit"] or None, l["ouverture_credit"] or None,
+                       l["cumul_debit"] or None, l["cumul_credit"] or None,
                        l["solde_debit"] or None, l["solde_credit"] or None])
         st = c["sous_total"]
-        ws.append(["", f"TOTAL CLASSE {c['classe']}", "", st["cumul_debit"], st["cumul_credit"],
-                   st["solde_debit"], st["solde_credit"]])
+        ws.append(["", f"TOTAL CLASSE {c['classe']}", st["ouverture_debit"], st["ouverture_credit"],
+                   st["cumul_debit"], st["cumul_credit"], st["solde_debit"], st["solde_credit"]])
         for col in range(1, len(headers) + 1):
             cell = ws.cell(row=ws.max_row, column=col)
             cell.font = total_font
             cell.fill = total_fill
 
     gt = data["grand_total"]
-    ws.append(["", "TOTAL BALANCE", "", gt["cumul_debit"], gt["cumul_credit"],
-               gt["solde_debit"], gt["solde_credit"]])
+    ws.append(["", "TOTAL BALANCE", gt["ouverture_debit"], gt["ouverture_credit"],
+               gt["cumul_debit"], gt["cumul_credit"], gt["solde_debit"], gt["solde_credit"]])
     for col in range(1, len(headers) + 1):
         cell = ws.cell(row=ws.max_row, column=col)
         cell.font = grand_font
@@ -2800,19 +2805,22 @@ def export_balance_xlsx(conn, path, exercice=None):
         for row in range(4, ws.max_row + 1):
             ws.cell(row=row, column=col).number_format = "#,##0.00"
 
-    for i, w in enumerate([14, 40, 16, 16, 16, 16, 16], start=1):
+    for i, w in enumerate([14, 36, 15, 15, 15, 15, 15, 15], start=1):
         ws.column_dimensions[chr(64 + i)].width = w
     ws.freeze_panes = "A4"
     wb.save(path)
     return path
 
 
-def compute_tresorerie_detail(conn, exercice=None):
+def compute_tresorerie_detail(conn, exercice=None, balance=None):
     """Détail de la trésorerie (classe 5) par compte réel — ex. chaque banque
     séparément (521110 WENDKUNI BANK, 521120 CORIS BANK...) — calculé à
-    partir de la même compute_balance() que le Bilan et la Balance."""
-    balance = compute_balance(conn, only_with_movement=True, exercice=exercice)
-    lignes = [b for b in balance if b["classe"] == "5"]
+    partir de la même compute_balance() que le Bilan et la Balance.
+    `balance` : voir compute_bilan() — permet de réutiliser cette fonction
+    avec les mouvements de la période seule ou le solde d'ouverture seul."""
+    if balance is None:
+        balance = compute_balance(conn, only_with_movement=True, exercice=exercice)
+    lignes = [b for b in balance if b["classe"] == "5" and (b["solde_cloture"] or b.get("debit") or b.get("credit"))]
     lignes.sort(key=lambda b: b["code"])
     total = sum(b["solde_cloture"] for b in lignes)
     return lignes, total
@@ -3064,9 +3072,18 @@ def compute_compte_resultat(conn, exercice=None):
 # ---------------------------------------------------------------------------
 # Bilan
 # ---------------------------------------------------------------------------
-def compute_bilan(conn, stock_initial=0.0, exercice=None):
+def compute_bilan(conn, stock_initial=0.0, exercice=None, balance=None, resultat_net_override=None):
     """stock_initial : conservé pour compatibilité, normalement inutile désormais —
     utilisez la table des soldes d'ouverture (onglet « Soldes d'ouverture »).
+
+    `balance`/`resultat_net_override` : permettent de RÉUTILISER cette même
+    logique de classification pour d'autres grandeurs que le solde de
+    clôture habituel — ex. les MOUVEMENTS de la période seule, ou les
+    SOLDES D'OUVERTURE seuls (voir compute_bilan_mouvement_periode() et
+    compute_bilan_solde_ouverture()) — en passant une balance où
+    `solde_cloture` représente la grandeur voulue, et le résultat net
+    déjà calculé dans cette même logique. Sinon (cas normal), calculés ici
+    à partir de la vraie Balance de l'exercice.
 
     IMPORTANT — équilibre garanti : ce calcul classe CHAQUE compte de la
     Balance (classes 1 à 5, plus le résultat net qui absorbe les classes
@@ -3077,7 +3094,8 @@ def compute_bilan(conn, stock_initial=0.0, exercice=None):
     condition que la somme des soldes d'ouverture de l'exercice soit nulle
     (partie double) — sinon l'écart affiché pointe vers l'onglet
     « Soldes d'ouverture »."""
-    balance = compute_balance(conn, only_with_movement=False, exercice=exercice)
+    if balance is None:
+        balance = compute_balance(conn, only_with_movement=False, exercice=exercice)
 
     immo_brutes = sum(b["solde_cloture"] for b in balance if b["classe"] == "2" and int(b["code"]) < 280000)
     amortissements = sum(b["solde_cloture"] for b in balance if b["classe"] == "2" and int(b["code"]) >= 280000)
@@ -3110,7 +3128,8 @@ def compute_bilan(conn, stock_initial=0.0, exercice=None):
     # façon exhaustive (voir compute_resultat_net_complet), qui n'est pas
     # encore posté sur un compte tant que l'exercice n'est pas clôturé.
     ressources_durables = -_sum_class(balance, "1")
-    resultat_net = compute_resultat_net_complet(conn, exercice=exercice)
+    resultat_net = resultat_net_override if resultat_net_override is not None else compute_resultat_net_complet(
+        conn, exercice=exercice)
 
     # Détail indicatif (catégories usuelles) pour l'affichage — une ligne
     # « Autres postes de ressources durables » absorbe tout compte de classe 1
@@ -3248,15 +3267,79 @@ def _grouper_avec_sous_total(lignes_plates, cle, labels):
     return [groupes[k] for k in ordre if abs(groupes[k]["sous_total"]) >= 1 or groupes[k]["comptes"]]
 
 
-def _compute_bilan_groupes(conn, exercice):
+def _balance_mouvement_periode(conn, exercice):
+    """Renvoie compute_balance() avec `solde_cloture` REMPLACÉ par le seul
+    mouvement de la période (Débit - Crédit, hors solde d'ouverture) — pour
+    calculer un Bilan basé exclusivement sur les opérations de la période
+    (voir compute_bilan_mouvement_periode())."""
+    balance = compute_balance(conn, only_with_movement=False, exercice=exercice)
+    result = []
+    for b in balance:
+        b2 = dict(b)
+        b2["solde_cloture"] = b["debit"] - b["credit"]
+        result.append(b2)
+    return result
+
+
+def _balance_solde_ouverture(conn, exercice):
+    """Renvoie compute_balance() avec `solde_cloture` REMPLACÉ par le seul
+    solde d'ouverture (report à nouveau du début de l'exercice) — pour la
+    colonne N-1 du Bilan basé sur les opérations de la période (voir
+    compute_bilan_solde_ouverture())."""
+    balance = compute_balance(conn, only_with_movement=False, exercice=exercice)
+    result = []
+    for b in balance:
+        b2 = dict(b)
+        b2["solde_cloture"] = b["solde_ouverture"]
+        result.append(b2)
+    return result
+
+
+def _resultat_net_mouvement_periode(balance_mouvement):
+    """Résultat net calculé UNIQUEMENT à partir des mouvements de la
+    période (classes 6/7/8, déjà substitués dans `solde_cloture` par
+    _balance_mouvement_periode) — même principe exhaustif que
+    compute_resultat_net_complet(), mais sans solde d'ouverture."""
+    return -_sum_class(balance_mouvement, "7") - _sum_class(balance_mouvement, "6") - _sum_class(balance_mouvement, "8")
+
+
+def compute_bilan_mouvement_periode(conn, exercice=None):
+    """Bilan basé EXCLUSIVEMENT sur les opérations (mouvements Débit/Crédit)
+    de la période — PAS le solde d'ouverture. Réutilise exactement la même
+    logique de classification que compute_bilan() (garantie d'équilibre
+    Actif = Passif identique, car la somme des mouvements Débit - Crédit
+    de TOUTES les classes sur la période est toujours nulle, par la partie
+    double)."""
+    exercice = exercice or get_current_exercice(conn)
+    balance = _balance_mouvement_periode(conn, exercice)
+    resultat_net = _resultat_net_mouvement_periode(balance)
+    return compute_bilan(conn, exercice=exercice, balance=balance, resultat_net_override=resultat_net)
+
+
+def compute_bilan_solde_ouverture(conn, exercice=None):
+    """Bilan basé EXCLUSIVEMENT sur les soldes d'ouverture de l'exercice
+    (report à nouveau du 1er janvier) — utilisé comme colonne « N-1 » du
+    Bilan basé sur les opérations de la période (voir
+    compute_bilan_mouvement_periode()). Même garantie d'équilibre."""
+    exercice = exercice or get_current_exercice(conn)
+    balance = _balance_solde_ouverture(conn, exercice)
+    resultat_net = _resultat_net_mouvement_periode(balance)  # classes 6/7/8 = 0 en ouverture si l'exercice est bien clos
+    return compute_bilan(conn, exercice=exercice, balance=balance, resultat_net_override=resultat_net)
+
+
+def _compute_bilan_groupes(conn, exercice, balance=None, resultat_net_override=None):
     """Calcule les groupes du Bilan détaillé pour UN exercice donné —
     utilisé pour l'exercice courant (avec le détail compte par compte) ET
     pour l'exercice N-1 (uniquement les sous-totaux, pour la comparaison).
+    `balance`/`resultat_net_override` : voir compute_bilan() — permettent
+    de réutiliser cette même logique pour les mouvements de la période
+    seule ou le solde d'ouverture seul (voir compute_bilan_detaille()).
     Retourne un dict de listes de groupes {key, label, sous_total,
     comptes:[...]}, plus les totaux brut/amortissement/net des
     immobilisations et les totaux généraux."""
-    balance = compute_balance(conn, only_with_movement=False, exercice=exercice)
-    bilan = compute_bilan(conn, exercice=exercice)
+    if balance is None:
+        balance = compute_balance(conn, only_with_movement=False, exercice=exercice)
+    bilan = compute_bilan(conn, exercice=exercice, balance=balance, resultat_net_override=resultat_net_override)
 
     # ---- Immobilisations (Brut / Amortissements / Net), par catégorie exacte ----
     total_brut = sum(b["solde_cloture"] for b in balance if b["classe"] == "2" and int(b["code"]) < 280000)
@@ -3309,7 +3392,7 @@ def _compute_bilan_groupes(conn, exercice):
     dettes = _grouper_avec_sous_total(dettes_flat, "racine", RACINE_LABELS_DETTES)
 
     # ---- Trésorerie (classe 5), groupée par préfixe à 2 chiffres ----
-    treso_lignes, _ = compute_tresorerie_detail(conn, exercice=exercice)
+    treso_lignes, _ = compute_tresorerie_detail(conn, exercice=exercice, balance=balance)
     treso_actif_flat = [{"label": f"{t['code']} {t['label']}", "montant": t["solde_cloture"], "prefixe": t["code"][:2]}
                         for t in treso_lignes if t["solde_cloture"] > 0]
     treso_actif = _grouper_avec_sous_total(treso_actif_flat, "prefixe", TRESO_LABELS)
@@ -3354,6 +3437,27 @@ def _compute_bilan_groupes(conn, exercice):
     }
 
 
+def _merge_bilan_lignes(lignes_n, lignes_n1, key_field, value_fields):
+    """Fusion COMPLÈTE (union) de deux listes de lignes/groupes du Bilan par
+    clé — contrairement à un simple rattachement N -> N-1, une ligne
+    présente UNIQUEMENT en N-1 (ex. un compte SANS mouvement cette
+    période, mais avec un solde d'ouverture non nul) est CONSERVÉE, avec
+    des valeurs à 0 côté N — sinon elle disparaîtrait purement et
+    simplement du Bilan alors qu'elle a un solde d'ouverture réel."""
+    par_cle_n = {g[key_field]: g for g in lignes_n}
+    par_cle_n1 = {g[key_field]: g for g in lignes_n1}
+    toutes_cles = list(dict.fromkeys(list(par_cle_n.keys()) + list(par_cle_n1.keys())))
+    result = []
+    for cle in toutes_cles:
+        gn, gn1 = par_cle_n.get(cle), par_cle_n1.get(cle)
+        base = dict(gn) if gn else dict(gn1)
+        for vf in value_fields:
+            base[vf] = gn[vf] if gn else 0.0
+            base[vf + "_n1"] = gn1[vf] if gn1 else 0.0
+        result.append(base)
+    return result
+
+
 def _merge_n1(groupes_n, groupes_n1, key_field="key", montant_field="sous_total"):
     """Attache à chaque groupe/ligne de `groupes_n` le montant N-1 du groupe
     correspondant dans `groupes_n1` (même clé) — 0 si l'exercice N-1 n'a
@@ -3365,46 +3469,43 @@ def _merge_n1(groupes_n, groupes_n1, key_field="key", montant_field="sous_total"
 
 
 def compute_bilan_detaille(conn, exercice=None):
-    """Bilan présenté ligne par ligne (« avec détails »), comme le rapport
-    financier de référence de l'utilisateur : ACTIF en Brut / Amortissements
-    et provisions / Net (immobilisations par catégorie AVEC sous-totaux
-    Brut/Amortissements, stocks par nature, créances compte par compte
-    GROUPÉES PAR RACINE avec un sous-total par racine) ; PASSIF détaillé de
-    la même façon (capitaux propres par racine, dettes groupées par racine,
-    trésorerie créditrice groupée Banques/Caisse). Chaque ligne/groupe
-    affiche aussi le montant de l'EXERCICE N-1 (même groupe, exercice
-    précédent — 0 si l'exercice N-1 n'a pas de données), comme le rapport
-    de référence. S'appuie sur exactement les mêmes totaux que
-    compute_bilan() — donc toujours cohérent et équilibré avec lui, la
-    Balance, le TFT, la Situation financière et la Liasse fiscale."""
+    """Bilan présenté ligne par ligne (« avec détails »), MONTÉ SUR LA BASE
+    DES SEULES OPÉRATIONS DE LA PÉRIODE — pas le solde de clôture habituel
+    (solde d'ouverture + cumul des opérations). La colonne « N-1 » de ce
+    Bilan contient EXCLUSIVEMENT le solde d'ouverture de l'exercice (le
+    report à nouveau du 1er janvier) — PAS un second Bilan calculé sur un
+    exercice antérieur. ACTIF en Brut / Amortissements et provisions / Net
+    (immobilisations par catégorie AVEC sous-totaux Brut/Amortissements,
+    stocks par nature, créances compte par compte GROUPÉES PAR RACINE avec
+    un sous-total par racine) ; PASSIF détaillé de la même façon (capitaux
+    propres par racine, dettes groupées par racine, trésorerie créditrice
+    groupée Banques/Caisse). S'appuie sur exactement les mêmes fonctions de
+    classification que compute_bilan() (via compute_bilan_mouvement_periode()
+    et compute_bilan_solde_ouverture()) — donc toujours équilibré (Actif =
+    Passif) sur CHACune des deux colonnes indépendamment, la partie double
+    garantissant que la somme des mouvements de la période comme celle des
+    soldes d'ouverture est nulle."""
     exercice = exercice or get_current_exercice(conn)
     exercice_n1 = str(int(exercice) - 1)
 
-    n = _compute_bilan_groupes(conn, exercice)
-    try:
-        n1 = _compute_bilan_groupes(conn, exercice_n1)
-    except Exception:
-        n1 = None
+    balance_periode = _balance_mouvement_periode(conn, exercice)
+    resultat_periode = _resultat_net_mouvement_periode(balance_periode)
+    n = _compute_bilan_groupes(conn, exercice, balance=balance_periode, resultat_net_override=resultat_periode)
 
-    def _vide():
-        return {"immobilisations": [], "stocks": [], "creances": [], "tresorerie_actif": [],
-                "capitaux_propres": [], "dettes": [], "tresorerie_passif": [],
-                "total_immo_brut": 0.0, "total_immo_amort": 0.0, "total_immo_net": 0.0,
-                "total_stocks": 0.0, "total_creances": 0.0, "total_tresorerie_actif": 0.0,
-                "total_capitaux_propres": 0.0, "total_dettes": 0.0, "total_tresorerie_passif": 0.0,
-                "total_actif": 0.0, "total_passif": 0.0}
-    if n1 is None:
-        n1 = _vide()
+    balance_ouverture = _balance_solde_ouverture(conn, exercice)
+    resultat_ouverture = _resultat_net_mouvement_periode(balance_ouverture)
+    n1 = _compute_bilan_groupes(conn, exercice, balance=balance_ouverture, resultat_net_override=resultat_ouverture)
 
-    _merge_n1(n["immobilisations"], n1["immobilisations"], montant_field="net")
-    _merge_n1(n["immobilisations"], n1["immobilisations"], montant_field="brut")
-    _merge_n1(n["immobilisations"], n1["immobilisations"], montant_field="amort")
-    _merge_n1(n["stocks"], n1["stocks"])
-    _merge_n1(n["creances"], n1["creances"])
-    _merge_n1(n["tresorerie_actif"], n1["tresorerie_actif"])
-    _merge_n1(n["capitaux_propres"], n1["capitaux_propres"])
-    _merge_n1(n["dettes"], n1["dettes"])
-    _merge_n1(n["tresorerie_passif"], n1["tresorerie_passif"])
+    n["immobilisations"] = _merge_bilan_lignes(n["immobilisations"], n1["immobilisations"], "key",
+                                                ["brut", "amort", "net"])
+    n["immobilisations"].sort(key=lambda l: -max(abs(l["brut"]), abs(l.get("brut_n1", 0))))
+    n["stocks"] = _merge_bilan_lignes(n["stocks"], n1["stocks"], "key", ["sous_total"])
+    n["creances"] = _merge_bilan_lignes(n["creances"], n1["creances"], "key", ["sous_total"])
+    n["tresorerie_actif"] = _merge_bilan_lignes(n["tresorerie_actif"], n1["tresorerie_actif"], "key", ["sous_total"])
+    n["capitaux_propres"] = _merge_bilan_lignes(n["capitaux_propres"], n1["capitaux_propres"], "key", ["sous_total"])
+    n["dettes"] = _merge_bilan_lignes(n["dettes"], n1["dettes"], "key", ["sous_total"])
+    n["tresorerie_passif"] = _merge_bilan_lignes(n["tresorerie_passif"], n1["tresorerie_passif"], "key",
+                                                  ["sous_total"])
 
     return {
         "exercice": exercice, "exercice_n1": exercice_n1,
@@ -3429,6 +3530,7 @@ def compute_bilan_detaille(conn, exercice=None):
         },
         "total_passif": n["total_passif"], "total_passif_n1": n1["total_passif"],
         "ecart": n["total_actif"] - n["total_passif"],
+        "ecart_n1": n1["total_actif"] - n1["total_passif"],
     }
 
 

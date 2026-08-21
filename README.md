@@ -2627,3 +2627,53 @@ fonctionnel.
 Testé avec un historique réel sur 2 exercices (2025 clôturé → 2026) :
 Total Actif = Total Passif exactement en N (4 700 000) comme en N-1
 (4 000 000), Grand livre et Balance non-régressés.
+
+### Bilan monté sur les seules opérations de la période + Balance et Grand Livre à 6 colonnes
+
+**Demande** : le Bilan était monté sur solde d'ouverture + cumul des
+opérations, alors qu'il devait être monté sur les seules opérations de la
+période — la colonne N-1 devant contenir exclusivement le solde
+d'ouverture. La Balance et le Grand livre devaient avoir 6 colonnes (2
+pour le solde d'ouverture, 2 pour les mouvements de la période, 2 pour le
+solde de clôture).
+
+**Réalisé** :
+- **`core.compute_bilan()` refactorée** pour accepter une balance et un
+  résultat net déjà calculés (`balance=`, `resultat_net_override=`) — sans
+  dupliquer sa logique de classification (immobilisations, stocks,
+  créances/dettes par racine, capitaux propres, trésorerie), qui reste
+  strictement la même.
+- **`compute_bilan_mouvement_periode()`** (nouveau) : construit une balance
+  où `solde_cloture` est remplacé par le seul mouvement Débit-Crédit de la
+  période, et calcule le Bilan dessus.
+- **`compute_bilan_solde_ouverture()`** (nouveau) : même principe, mais
+  avec `solde_cloture` remplacé par le seul solde d'ouverture.
+- **`compute_bilan_detaille()` reconstruite** pour utiliser ces deux
+  fonctions : la colonne « N » = mouvements de la période seule, la
+  colonne « N-1 » = solde d'ouverture seul (au lieu de calculer un second
+  Bilan complet sur l'exercice précédent).
+- **Bug trouvé et corrigé en cours de route** : un compte SANS mouvement
+  cette période mais avec un solde d'ouverture réel (ex. un bâtiment
+  immobilisé, jamais retouché dans l'année) disparaissait purement et
+  simplement du Bilan — le rattachement N→N-1 était à sens unique. Corrigé
+  avec une vraie fusion par union (`_merge_bilan_lignes`) : ce compte
+  apparaît maintenant avec 0 en colonne période et son vrai solde en
+  colonne d'ouverture.
+- **Écran Bilan SYSCOHADA** : libellés de colonnes mis à jour (« Brut/
+  Amort./Net (période) » et « Solde d'ouverture »), écart affiché et
+  diagnostiqué indépendamment sur les deux colonnes.
+- **`compute_balance_detaillee()` et l'écran Balance** : 6 colonnes
+  (Ouverture Débit/Crédit, Mouvement Débit/Crédit, Clôture Débit/Crédit),
+  export .xlsx mis à jour en conséquence.
+- **Écran Grand livre** : la ligne de total par compte (et par classe)
+  affiche désormais les 6 colonnes (Ouverture/Mouvement/Clôture,
+  Débit/Crédit), en plus du détail écriture par écriture inchangé.
+
+Testé de bout en bout sur un historique réel à 2 exercices (2025 clôturé
+→ 2026) : Bilan équilibré indépendamment sur la colonne période (700 000)
+et sur la colonne solde d'ouverture (4 500 000) ; Balance équilibrée sur
+ses 3 paires de colonnes (5,5M / 850K / 6,2M) ; Grand livre cohérent
+(banque : ouverture 500 000, mouvement -150 000, final 350 000) ; compte
+immobilisation dormant correctement affiché avec son solde d'ouverture ;
+non-régression vérifiée (Règlements, clôture d'exercice, Situation
+financière).

@@ -1361,11 +1361,12 @@ class BalanceTab(ttk.Frame):
     def __init__(self, parent, conn):
         super().__init__(parent)
         self.conn = conn
-        cols = ("compte", "libelle", "ouverture", "cumul_debit", "cumul_credit", "solde_debit", "solde_credit")
+        cols = ("compte", "libelle", "ouv_debit", "ouv_credit", "cumul_debit", "cumul_credit",
+                "solde_debit", "solde_credit")
         self.tree = ttk.Treeview(self, columns=cols, show="headings")
-        headers = ["N° Compte", "Libellé du compte", "Solde Ouverture", "Cumul Débit", "Cumul Crédit",
-                   "Solde Débit", "Solde Crédit"]
-        widths = [90, 260, 110, 110, 110, 110, 110]
+        headers = ["N° Compte", "Libellé du compte", "Ouverture Débit", "Ouverture Crédit",
+                   "Mouvement Débit", "Mouvement Crédit", "Clôture Débit", "Clôture Crédit"]
+        widths = [90, 220, 100, 100, 100, 100, 100, 100]
         for c, h, w in zip(cols, headers, widths):
             self.tree.heading(c, text=h)
             self.tree.column(c, width=w, anchor="w")
@@ -1394,39 +1395,42 @@ class BalanceTab(ttk.Frame):
         for row in self.tree.get_children():
             self.tree.delete(row)
         data = core.compute_balance_detaillee(self.conn)
+
+        def f(v):
+            return f"{v:,.2f}" if v else ""
+
         for c in data["classes"]:
             for l in c["lignes"]:
                 self.tree.insert("", "end", values=(
-                    l["code"], l["label"], f"{l['solde_ouverture']:,.2f}",
-                    f"{l['cumul_debit']:,.2f}", f"{l['cumul_credit']:,.2f}",
-                    f"{l['solde_debit']:,.2f}" if l["solde_debit"] else "",
-                    f"{l['solde_credit']:,.2f}" if l["solde_credit"] else "",
+                    l["code"], l["label"], f(l["ouverture_debit"]), f(l["ouverture_credit"]),
+                    f(l["cumul_debit"]), f(l["cumul_credit"]), f(l["solde_debit"]), f(l["solde_credit"]),
                 ))
             st = c["sous_total"]
             self.tree.insert("", "end", tags=("classe_total",), values=(
-                "", f"TOTAL CLASSE {c['classe']}", "",
-                f"{st['cumul_debit']:,.2f}", f"{st['cumul_credit']:,.2f}",
-                f"{st['solde_debit']:,.2f}", f"{st['solde_credit']:,.2f}",
+                "", f"TOTAL CLASSE {c['classe']}", f(st["ouverture_debit"]), f(st["ouverture_credit"]),
+                f(st["cumul_debit"]), f(st["cumul_credit"]), f(st["solde_debit"]), f(st["solde_credit"]),
             ))
         gt = data["grand_total"]
         self.tree.insert("", "end", tags=("grand_total",), values=(
-            "", "TOTAL BALANCE", "",
-            f"{gt['cumul_debit']:,.2f}", f"{gt['cumul_credit']:,.2f}",
-            f"{gt['solde_debit']:,.2f}", f"{gt['solde_credit']:,.2f}",
+            "", "TOTAL BALANCE", f(gt["ouverture_debit"]), f(gt["ouverture_credit"]),
+            f(gt["cumul_debit"]), f(gt["cumul_credit"]), f(gt["solde_debit"]), f(gt["solde_credit"]),
         ))
+        ecart_ouv = gt["ouverture_debit"] - gt["ouverture_credit"]
         ecart_cumul = gt["cumul_debit"] - gt["cumul_credit"]
         ecart_solde = gt["solde_debit"] - gt["solde_credit"]
-        if abs(ecart_cumul) < 1 and abs(ecart_solde) < 1:
-            self.ecart_var.set("✓ Balance équilibrée (Cumul Débit = Cumul Crédit, Solde Débit = Solde Crédit).")
+        if abs(ecart_ouv) < 1 and abs(ecart_cumul) < 1 and abs(ecart_solde) < 1:
+            self.ecart_var.set("✓ Balance équilibrée sur les 3 paires de colonnes (Ouverture, Mouvement, Clôture).")
         else:
             msg = "⚠ Balance déséquilibrée — "
             parts = []
-            if abs(ecart_cumul) >= 1:
-                parts.append(f"écart Cumul Débit/Crédit de {ecart_cumul:,.2f} (des écritures de la période "
-                              f"ne sont pas équilibrées — vérifiez un éventuel import massif d'écritures)")
-            if abs(ecart_solde) >= 1:
-                parts.append(f"écart Solde Débit/Crédit de {ecart_solde:,.2f} (soldes d'ouverture "
+            if abs(ecart_ouv) >= 1:
+                parts.append(f"écart Ouverture Débit/Crédit de {ecart_ouv:,.2f} (soldes d'ouverture "
                               f"incomplets — voir l'onglet Soldes d'ouverture)")
+            if abs(ecart_cumul) >= 1:
+                parts.append(f"écart Mouvement Débit/Crédit de {ecart_cumul:,.2f} (des écritures de la "
+                              f"période ne sont pas équilibrées — vérifiez un éventuel import massif)")
+            if abs(ecart_solde) >= 1:
+                parts.append(f"écart Clôture Débit/Crédit de {ecart_solde:,.2f}")
             self.ecart_var.set(msg + " ; ".join(parts))
 
 
@@ -1528,12 +1532,15 @@ class CompteResultatTab(ttk.Frame):
 
 
 class BilanSyscohadaTab(ttk.Frame):
-    """Bilan SYSCOHADA (menu RAPPORT FINANCIERS) — calculé compte par compte
-    depuis la même Balance que l'onglet Balance (voir
-    core.compute_bilan_detaille()) : Actif toujours égal au Passif (sauf
-    soldes d'ouverture incomplets — voir le diagnostic ci-dessous le cas
-    échéant), avec comparatif de l'exercice précédent (N-1). Entièrement
-    autonome — ne dépend d'aucun fichier de gabarit externe."""
+    """Bilan SYSCOHADA (menu RAPPORT FINANCIERS) — MONTÉ SUR LA BASE DES
+    SEULES OPÉRATIONS DE LA PÉRIODE (colonne N) ; la colonne N-1 contient
+    EXCLUSIVEMENT le solde d'ouverture de l'exercice (le report à nouveau
+    du 1er janvier), pas un second Bilan calculé sur un exercice antérieur
+    — voir core.compute_bilan_detaille(). Chaque colonne est équilibrée
+    indépendamment (Actif = Passif en N, Actif = Passif en N-1), la partie
+    double garantissant que la somme des mouvements de la période comme
+    celle des soldes d'ouverture est nulle. Entièrement autonome — ne
+    dépend d'aucun fichier de gabarit externe."""
 
     RACINE_COLORS = {
         "40": ("#FF6600", "white"), "41": ("#3366FF", "white"), "42": ("#FFFF00", "black"),
@@ -1550,9 +1557,11 @@ class BilanSyscohadaTab(ttk.Frame):
 
         ttk.Label(self, text="BILAN SYSCOHADA", font=("Segoe UI", 14, "bold")).pack(anchor="w", padx=8, pady=(8, 0))
         ttk.Label(self, text=(
-            "Calculé compte par compte à partir de la même Balance générale que l'onglet Balance — "
-            "l'Actif est toujours égal au Passif (sauf soldes d'ouverture incomplets, voir le "
-            "diagnostic ci-dessous le cas échéant), avec comparatif de l'exercice précédent (N-1)."
+            "Colonnes « Brut / Amort. / Net » : UNIQUEMENT les opérations (mouvements Débit-Crédit) de la "
+            "période — pas le solde d'ouverture. Colonne « Solde d'ouverture » : UNIQUEMENT le solde de "
+            "début d'exercice (report à nouveau du 1er janvier). Chaque colonne est équilibrée "
+            "indépendamment (Actif = Passif), sauf soldes d'ouverture incomplets — voir le diagnostic "
+            "ci-dessous le cas échéant."
         ), foreground="#595959", wraplength=1300, justify="left").pack(anchor="w", padx=8, pady=(0, 4))
 
         btn_bar = ttk.Frame(self)
@@ -1570,15 +1579,17 @@ class BilanSyscohadaTab(ttk.Frame):
 
         actif_cols = ("libelle", "brut", "amort", "net", "net_n1")
         self.tree_actif = ttk.Treeview(columns_frame, columns=actif_cols, show="headings", height=30)
-        for c, h, w in zip(actif_cols, ["Libellé (ACTIF)", "Brut", "Amort.", "Net", "Net N-1"],
-                           [260, 100, 100, 110, 110]):
+        headers_a = ["Libellé (ACTIF)", "Brut (période)", "Amort. (période)", "Net (période)",
+                     "Solde d'ouverture"]
+        for c, h, w in zip(actif_cols, headers_a, [260, 100, 100, 110, 120]):
             self.tree_actif.heading(c, text=h)
             self.tree_actif.column(c, width=w, anchor="w" if c == "libelle" else "e", stretch=(c == "libelle"))
         self.tree_actif.grid(row=0, column=0, sticky="nsew", padx=(0, 4))
 
         passif_cols = ("libelle", "montant", "montant_n1")
         self.tree_passif = ttk.Treeview(columns_frame, columns=passif_cols, show="headings", height=30)
-        for c, h, w in zip(passif_cols, ["Libellé (PASSIF)", "Exercice N", "Exercice N-1"], [280, 140, 140]):
+        headers_p = ["Libellé (PASSIF)", "Montant (période)", "Solde d'ouverture"]
+        for c, h, w in zip(passif_cols, headers_p, [280, 140, 140]):
             self.tree_passif.heading(c, text=h)
             self.tree_passif.column(c, width=w, anchor="w" if c == "libelle" else "e", stretch=(c == "libelle"))
         self.tree_passif.grid(row=0, column=1, sticky="nsew", padx=(4, 0))
@@ -1673,22 +1684,29 @@ class BilanSyscohadaTab(ttk.Frame):
         self.tree_passif.insert("", "end", tags=("total",), values=(
             "TOTAL PASSIF", fmt_cfa(d["total_passif"]), fmt_cfa(d["total_passif_n1"])))
 
-        ecart = d["ecart"]
-        if abs(ecart) < 1:
-            self.ecart_var.set(f"✓ Actif = Passif ({fmt_cfa(d['total_actif'])})   —   Exercice "
-                                f"{d['exercice']} / N-1 = {d['exercice_n1']}")
+        ecart, ecart_n1 = d["ecart"], d["ecart_n1"]
+        if abs(ecart) < 1 and abs(ecart_n1) < 1:
+            self.ecart_var.set(f"✓ Actif = Passif sur la période ({fmt_cfa(d['total_actif'])}) et sur le solde "
+                                f"d'ouverture ({fmt_cfa(d['total_actif_n1'])})   —   Exercice {d['exercice']}")
             self.ecart_label.configure(foreground="#1F7A1F")
             self.diag_var.set("")
         else:
-            self.ecart_var.set(f"⚠ Écart Actif - Passif : {fmt_cfa(ecart)}")
+            msgs = []
+            if abs(ecart) >= 1:
+                msgs.append(f"période : {fmt_cfa(ecart)}")
+            if abs(ecart_n1) >= 1:
+                msgs.append(f"solde d'ouverture : {fmt_cfa(ecart_n1)}")
+            self.ecart_var.set("⚠ Écart Actif - Passif — " + " ; ".join(msgs))
             self.ecart_label.configure(foreground="#B00020")
             diag = core.compute_ecart_diagnostic(self.conn)
             parts = []
             if abs(diag["ecart_soldes_ouverture"]) >= 1:
                 parts.append(f"• Soldes d'ouverture non nuls : {fmt_cfa(diag['ecart_soldes_ouverture'])} "
-                              f"(voir l'onglet « Soldes d'ouverture »)")
+                              f"(voir l'onglet « Soldes d'ouverture ») — explique l'écart sur la colonne "
+                              f"« Solde d'ouverture »")
             if abs(diag["ecart_ecritures_periode"]) >= 1:
-                parts.append(f"• Écritures de la période Débit ≠ Crédit : {fmt_cfa(diag['ecart_ecritures_periode'])}")
+                parts.append(f"• Écritures de la période Débit ≠ Crédit : {fmt_cfa(diag['ecart_ecritures_periode'])} "
+                              f"— explique l'écart sur les colonnes « période »")
             self.diag_var.set("\n".join(parts))
 
         self.tree_actif.xview_moveto(0)
@@ -1787,10 +1805,12 @@ class GrandLivreTab(ttk.Frame):
         ttk.Label(bar, text="Par défaut, tous les comptes de l'exercice sont affichés.",
                   foreground="#595959").pack(side="left", padx=10)
 
-        cols = ("date", "piece", "journal", "libelle", "debit", "credit", "solde")
+        cols = ("date", "piece", "journal", "libelle", "ouv_debit", "ouv_credit",
+                "mvt_debit", "mvt_credit", "sold_debit", "sold_credit")
         self.tree = ttk.Treeview(self, columns=cols, show="headings")
-        headers = ["Date", "Pièce", "Journal", "Libellé", "Débit", "Crédit", "Solde cumulé"]
-        widths = [85, 70, 55, 260, 100, 100, 120]
+        headers = ["Date", "Pièce", "Journal", "Libellé", "Ouverture Débit", "Ouverture Crédit",
+                   "Mouvement Débit", "Mouvement Crédit", "Clôture Débit", "Clôture Crédit"]
+        widths = [85, 70, 55, 220, 100, 100, 100, 100, 100, 100]
         for c, h, w in zip(cols, headers, widths):
             self.tree.heading(c, text=h)
             self.tree.column(c, width=w, anchor="w")
@@ -1834,32 +1854,41 @@ class GrandLivreTab(ttk.Frame):
         compte_prefix = self._extract_compte_code() or None
         tiers = self.tiers_var.get().strip() or None
         classes = core.compute_grand_livre_complet(self.conn, compte_prefix=compte_prefix, tiers=tiers)
+
+        def f(v):
+            return f"{v:,.2f}" if v else ""
+
         for c in classes:
+            classe_ouv_debit = classe_ouv_credit = classe_sold_debit = classe_sold_credit = 0.0
             for compte in c["comptes"]:
                 self.tree.insert("", "end", tags=("compte_header",), values=(
-                    "", "", "", f"{compte['code']} — {compte['label']}", "", "", "",
+                    "", "", "", f"{compte['code']} — {compte['label']}", "", "", "", "", "", "",
                 ))
-                if compte["solde_ouverture"]:
-                    self.tree.insert("", "end", values=(
-                        "", "", "", "À-nouveaux au 01/01", "", "",
-                        f"{compte['solde_ouverture']:,.2f}",
-                    ))
                 for l in compte["lignes"]:
                     self.tree.insert("", "end", values=(
                         core.to_display_date(l["date"]), l["piece"] or "", l["journal"] or "",
-                        l["libelle"] or "",
-                        f"{l['debit']:,.2f}" if l["debit"] else "",
-                        f"{l['credit']:,.2f}" if l["credit"] else "",
-                        f"{l['solde_cumule']:,.2f}",
+                        l["libelle"] or "", "", "",
+                        f(l["debit"]), f(l["credit"]), "", "",
                     ))
+                ouv = compte["solde_ouverture"]
+                ouv_debit = ouv if ouv > 0 else 0.0
+                ouv_credit = -ouv if ouv < 0 else 0.0
+                sold = compte["solde_final"]
+                sold_debit = sold if sold > 0 else 0.0
+                sold_credit = -sold if sold < 0 else 0.0
                 self.tree.insert("", "end", tags=("compte_total",), values=(
                     "", "", "", f"TOTAL COMPTE {compte['code']} — Solde {compte['sens']}",
-                    f"{compte['total_debit']:,.2f}", f"{compte['total_credit']:,.2f}",
-                    f"{abs(compte['solde_final']):,.2f}",
+                    f(ouv_debit), f(ouv_credit), f(compte["total_debit"]), f(compte["total_credit"]),
+                    f(sold_debit), f(sold_credit),
                 ))
+                classe_ouv_debit += ouv_debit
+                classe_ouv_credit += ouv_credit
+                classe_sold_debit += sold_debit
+                classe_sold_credit += sold_credit
             self.tree.insert("", "end", tags=("classe_total",), values=(
                 "", "", "", f"TOTAL CLASSE {c['classe']}",
-                f"{c['total_debit']:,.2f}", f"{c['total_credit']:,.2f}", "",
+                f(classe_ouv_debit), f(classe_ouv_credit), f(c["total_debit"]), f(c["total_credit"]),
+                f(classe_sold_debit), f(classe_sold_credit),
             ))
 
 
