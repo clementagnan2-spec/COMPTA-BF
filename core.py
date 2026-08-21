@@ -3999,27 +3999,53 @@ def compute_bilan_plat(conn, exercice=None):
 def export_bilan_gabarit_xlsx(conn, path, exercice=None):
     """Exporte le Bilan dans le gabarit officiel (templates/modele_bilan.xlsx,
     ou à défaut l'ancien gabarit SpreadsheetML templates/bilan_template.xls
-    si le premier est absent ou illisible) — voir generate_etat_xlsx()."""
+    si le premier est absent ou illisible) — voir generate_etat_xlsx().
+    Le repli sur l'ancien gabarit se fait par SUBSTITUTION DE TEXTE
+    DIRECTE sur le XML brut (pas de passage par openpyxl) — préserve
+    intégralement la mise en forme d'origine (couleurs, bordures,
+    largeurs de colonnes), contrairement à une conversion openpyxl qui
+    perdrait ces styles."""
     try:
         if not os.path.exists(ETATS_TEMPLATES["bilan"]["path"]):
             raise FileNotFoundError(ETATS_TEMPLATES["bilan"]["path"])
         generate_etat_xlsx(conn, "bilan", path, exercice=exercice)
     except Exception:
-        # Repli sur l'ancien gabarit SpreadsheetML si le nouveau modèle .xlsx
-        # est absent ou illisible (ex. build antérieure) — ne remonte
-        # l'erreur que si les DEUX échouent (voir open_template_workbook).
         exercice = exercice or get_current_exercice(conn)
         exercice_n1 = str(int(exercice) - 1)
         soldes_n = _soldes_dict(conn, exercice)
         soldes_n1 = _soldes_dict(conn, exercice_n1)
-        wb = open_template_workbook(BILAN_TEMPLATE_PATH)
-        ws = wb[_guess_etat_sheet(wb, "BILAN")]
-        results, errors, warnings = evaluate_sheet_formulas(ws, soldes_n, soldes_n1)
-        for coord, value in results.items():
-            ws[coord] = value
-        wb.save(path)
+
+        with open(BILAN_TEMPLATE_PATH, encoding="utf-8") as f:
+            content = f.read()
+
+        named_refs = {}
+        pattern = re.compile(r'<Data ss:Type="String"[^>]*>(=[^<]*)</Data>')
+
+        def repl(m):
+            raw = m.group(1)
+            unescaped = (raw.replace("&quot;", '"').replace("&amp;", "&")
+                         .replace("&lt;", "<").replace("&gt;", ">").replace("&apos;", "'"))
+            value, defined_name = _eval_bilan_formula_legacy(unescaped, soldes_n, soldes_n1, named_refs)
+            if defined_name:
+                named_refs[defined_name] = value
+            return f'<Data ss:Type="Number">{value:.4f}</Data>'
+
+        new_content = pattern.sub(repl, content)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(new_content)
 
     return path
+
+
+def _eval_bilan_formula_legacy(formula, soldes_n, soldes_n1, named_refs):
+    """Évalue une formule du gabarit SpreadsheetML historique (même syntaxe
+    que evaluate_formula, mais avec des références nommées [Rxxx.EtLoc]
+    résolues au fil de l'eau via un dict partagé plutôt que rubrique_values
+    — utilisé uniquement par le repli texte-brut de export_bilan_gabarit_xlsx,
+    pour préserver la mise en forme d'origine)."""
+    value, defined_name = evaluate_formula(formula, soldes_n, soldes_n1, rubrique_values=named_refs,
+                                            defined_ids=None, missing_used=None)
+    return value, defined_name
 
 
 def export_bilan_detaille_xlsx(conn, path, exercice=None):

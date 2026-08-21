@@ -14,6 +14,22 @@ from datetime import date, datetime
 import core
 
 
+def _ouvrir_fichier(path):
+    """Ouvre un fichier avec l'application par défaut du système
+    d'exploitation (Excel pour un .xls/.xlsx, en général) — multiplateforme."""
+    try:
+        if os.name == "nt":
+            os.startfile(path)
+        else:
+            import subprocess
+            import sys
+            opener = "open" if sys.platform == "darwin" else "xdg-open"
+            subprocess.Popen([opener, path])
+        return True
+    except Exception:
+        return False
+
+
 def fmt_cfa(v):
     """Formate un montant façon rapport financier SYSCOHADA (espace comme
     séparateur de milliers, pas de décimales — les francs CFA n'ont pas de
@@ -1567,6 +1583,10 @@ class BilanSyscohadaTab(ttk.Frame):
         btn_bar = ttk.Frame(self)
         btn_bar.pack(fill="x", padx=8, pady=(0, 4))
         ttk.Button(btn_bar, text="Actualiser", command=self.refresh).pack(side="left")
+        ttk.Button(btn_bar, text="Télécharger mon template (vierge, avec formules)",
+                   command=self.telecharger_template).pack(side="left", padx=8)
+        ttk.Button(btn_bar, text="Visionner le Bilan selon mon template",
+                   command=self.visionner_gabarit).pack(side="left", padx=8)
         ttk.Button(btn_bar, text="Exporter selon le gabarit officiel (formules CtaCptSolde exactes)",
                    command=self.export_gabarit).pack(side="left", padx=8)
         self.ecart_var = tk.StringVar()
@@ -1713,6 +1733,53 @@ class BilanSyscohadaTab(ttk.Frame):
 
         self.tree_actif.xview_moveto(0)
         self.tree_passif.xview_moveto(0)
+
+    def telecharger_template(self):
+        """Télécharge le gabarit VIERGE (avec ses formules CtaCptSolde
+        textuelles non évaluées) tel quel — pour que l'utilisateur puisse
+        le consulter, le modifier ou le réutiliser ailleurs."""
+        path = filedialog.asksaveasfilename(
+            defaultextension=".xls", filetypes=[("Classeur Excel", "*.xls")],
+            initialfile="Template_Bilan_avec_formules.xls",
+            title="Télécharger le template du Bilan (avec formules)",
+        )
+        if not path:
+            return
+        try:
+            import shutil
+            shutil.copyfile(core.BILAN_TEMPLATE_PATH, path)
+        except Exception as exc:
+            messagebox.showerror(
+                "Erreur",
+                f"Impossible de récupérer le template :\n\n{exc}\n\n"
+                f"Le fichier templates/bilan_template.xls doit être présent dans l'installation.",
+            )
+            return
+        messagebox.showinfo("Téléchargement terminé", f"Template enregistré :\n{path}")
+
+    def visionner_gabarit(self):
+        """Génère le Bilan avec les formules exactes du gabarit officiel
+        dans un fichier temporaire, puis l'OUVRE directement avec
+        l'application par défaut (Excel) pour un visionnage immédiat —
+        sans boîte de dialogue « Enregistrer sous »."""
+        import tempfile
+        tmp_dir = tempfile.gettempdir()
+        path = os.path.join(tmp_dir, f"Bilan_visionnage_{core.get_current_exercice(self.conn)}.xls")
+        try:
+            core.export_bilan_gabarit_xlsx(self.conn, path)
+        except Exception as exc:
+            messagebox.showerror(
+                "Erreur",
+                f"Impossible de générer le Bilan selon le template :\n\n{exc}\n\n"
+                f"Le fichier templates/bilan_template.xls doit être présent dans l'installation.",
+            )
+            return
+        if not _ouvrir_fichier(path):
+            messagebox.showinfo(
+                "Bilan généré",
+                f"Le Bilan a été généré mais n'a pas pu s'ouvrir automatiquement — ouvrez-le manuellement :"
+                f"\n{path}",
+            )
 
     def export_gabarit(self):
         path = filedialog.asksaveasfilename(

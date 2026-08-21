@@ -2791,3 +2791,37 @@ détail superflu. Écart resté à 0.
 **Prochaine étape** : une fois les comptes non classés visibles à
 l'écran, transmettez-moi leurs codes exacts pour que j'élargisse les
 plages `IMMO_CATEGORIES` en conséquence.
+
+### Bilan — boutons Télécharger le template + Visionner selon le template
+
+**Demande** : deux nouveaux boutons dans le sous-menu Bilan — un pour
+télécharger le template (avec ses formules), un autre pour visionner le
+Bilan selon ce template.
+
+**Réalisé** :
+- **« Télécharger mon template (vierge, avec formules) »** : copie le
+  fichier gabarit brut tel quel (formules CtaCptSolde non évaluées) vers
+  l'emplacement choisi.
+- **« Visionner le Bilan selon mon template »** : génère le Bilan avec les
+  formules exactes évaluées, dans un fichier temporaire, puis **l'ouvre
+  automatiquement** avec l'application par défaut (Excel) — sans boîte de
+  dialogue « Enregistrer sous », pour un visionnage immédiat.
+- Le bouton d'export existant (« Exporter selon le gabarit officiel »)
+  reste disponible séparément, pour choisir où enregistrer le fichier.
+
+**Bug corrigé au passage** : le mécanisme de repli (utilisé quand
+`modele_bilan.xlsx` — le nouveau format .xlsx — est absent, ce qui est le
+cas actuellement) passait par une conversion `openpyxl`, qui **perdait
+toute la mise en forme d'origine** du gabarit (couleurs, bordures) — un
+fichier de 60 Ko ressortait à 6 Ko, complètement dépouillé. Corrigé avec
+une substitution de texte directe sur le XML brut (même mécanisme
+robuste que l'export utilisé précédemment) : la mise en forme est
+désormais intégralement préservée (51 Ko sur 60 Ko d'origine, l'écart
+s'expliquant simplement par des textes de formules plus longs que les
+valeurs numériques qui les remplacent).
+
+Testé : template brut téléchargé identique à l'original (60 137 octets) ;
+Bilan généré pour visionnage avec mise en forme préservée (131 valeurs
+calculées, 0 formule non évaluée, aucun plantage même sur les lignes de
+totaux qui référencent d'autres cellules) ; écran Bilan SYSCOHADA
+autonome toujours pleinement fonctionnel en parallèle.
