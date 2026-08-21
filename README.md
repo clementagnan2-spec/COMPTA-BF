@@ -2737,3 +2737,27 @@ réembarquer ce fichier.
 Testé : export selon le gabarit officiel sans aucune erreur de formule ;
 écran Bilan SYSCOHADA (autonome) toujours pleinement fonctionnel en
 parallèle, écarts à 0 sur les deux mécanismes indépendamment.
+
+### Correction : Bilan N = solde de clôture (ouverture + mouvements), N-1 = solde d'ouverture
+
+**Correction demandée** : la colonne N doit redevenir le solde de clôture
+habituel (solde d'ouverture + cumul des opérations de la période), pas les
+seules opérations de la période comme demandé juste avant.
+
+**Réalisé** : `compute_bilan_detaille()` utilise à nouveau le solde de
+clôture standard pour la colonne N (`_compute_bilan_groupes(conn,
+exercice)` sans forcer les mouvements seuls). **La colonne N-1 n'a pas eu
+besoin d'être modifiée** : le solde d'ouverture d'un exercice correspond
+mathématiquement au solde de clôture de l'exercice précédent (dès lors que
+la clôture d'exercice a été utilisée normalement), donc elle assurait
+déjà une vraie comparaison N-1 valide.
+
+Écran Bilan SYSCOHADA mis à jour en conséquence (libellés de colonnes :
+« Brut/Amort./Net » redevient le solde de clôture, « Net N-1 (ouverture) »
+reste le solde d'ouverture).
+
+Testé : un compte avec solde d'ouverture de 2 000 000 et une vente de
+500 000 dans l'année affiche bien 2 500 000 en colonne N (ouverture +
+mouvement) et 2 000 000 en colonne N-1 (ouverture seule) — écarts à 0 sur
+les deux colonnes. Non-régression vérifiée (export gabarit officiel,
+Situation financière, clôture d'exercice).

@@ -1532,15 +1532,16 @@ class CompteResultatTab(ttk.Frame):
 
 
 class BilanSyscohadaTab(ttk.Frame):
-    """Bilan SYSCOHADA (menu RAPPORT FINANCIERS) — MONTÉ SUR LA BASE DES
-    SEULES OPÉRATIONS DE LA PÉRIODE (colonne N) ; la colonne N-1 contient
-    EXCLUSIVEMENT le solde d'ouverture de l'exercice (le report à nouveau
-    du 1er janvier), pas un second Bilan calculé sur un exercice antérieur
-    — voir core.compute_bilan_detaille(). Chaque colonne est équilibrée
+    """Bilan SYSCOHADA (menu RAPPORT FINANCIERS) — MONTÉ SUR LE SOLDE DE
+    CLÔTURE HABITUEL (colonne N = solde d'ouverture + cumul des opérations
+    de la période) ; la colonne N-1 contient le solde d'ouverture de
+    l'exercice, qui correspond mathématiquement au solde de clôture de
+    l'exercice précédent (une fois la clôture d'exercice effectuée) — voir
+    core.compute_bilan_detaille(). Chaque colonne est équilibrée
     indépendamment (Actif = Passif en N, Actif = Passif en N-1), la partie
-    double garantissant que la somme des mouvements de la période comme
-    celle des soldes d'ouverture est nulle. Entièrement autonome — ne
-    dépend d'aucun fichier de gabarit externe."""
+    double garantissant que la somme des soldes de clôture comme celle des
+    soldes d'ouverture est nulle. Entièrement autonome — ne dépend d'aucun
+    fichier de gabarit externe."""
 
     RACINE_COLORS = {
         "40": ("#FF6600", "white"), "41": ("#3366FF", "white"), "42": ("#FFFF00", "black"),
@@ -1556,11 +1557,11 @@ class BilanSyscohadaTab(ttk.Frame):
 
         ttk.Label(self, text="BILAN SYSCOHADA", font=("Segoe UI", 14, "bold")).pack(anchor="w", padx=8, pady=(8, 0))
         ttk.Label(self, text=(
-            "Colonnes « Brut / Amort. / Net » : UNIQUEMENT les opérations (mouvements Débit-Crédit) de la "
-            "période — pas le solde d'ouverture. Colonne « Solde d'ouverture » : UNIQUEMENT le solde de "
-            "début d'exercice (report à nouveau du 1er janvier). Chaque colonne est équilibrée "
-            "indépendamment (Actif = Passif), sauf soldes d'ouverture incomplets — voir le diagnostic "
-            "ci-dessous le cas échéant."
+            "Colonnes « Brut / Amort. / Net » : solde de clôture habituel (solde d'ouverture + cumul des "
+            "opérations de la période). Colonne « Solde d'ouverture » : uniquement le solde de début "
+            "d'exercice (report à nouveau du 1er janvier), qui correspond au solde de clôture de "
+            "l'exercice précédent. Chaque colonne est équilibrée indépendamment (Actif = Passif), sauf "
+            "soldes d'ouverture incomplets — voir le diagnostic ci-dessous le cas échéant."
         ), foreground="#595959", wraplength=1300, justify="left").pack(anchor="w", padx=8, pady=(0, 4))
 
         btn_bar = ttk.Frame(self)
@@ -1580,16 +1581,15 @@ class BilanSyscohadaTab(ttk.Frame):
 
         actif_cols = ("libelle", "brut", "amort", "net", "net_n1")
         self.tree_actif = ttk.Treeview(columns_frame, columns=actif_cols, show="headings", height=30)
-        headers_a = ["Libellé (ACTIF)", "Brut (période)", "Amort. (période)", "Net (période)",
-                     "Solde d'ouverture"]
-        for c, h, w in zip(actif_cols, headers_a, [260, 100, 100, 110, 120]):
+        headers_a = ["Libellé (ACTIF)", "Brut", "Amort.", "Net", "Net N-1 (ouverture)"]
+        for c, h, w in zip(actif_cols, headers_a, [260, 100, 100, 110, 130]):
             self.tree_actif.heading(c, text=h)
             self.tree_actif.column(c, width=w, anchor="w" if c == "libelle" else "e", stretch=(c == "libelle"))
         self.tree_actif.grid(row=0, column=0, sticky="nsew", padx=(0, 4))
 
         passif_cols = ("libelle", "montant", "montant_n1")
         self.tree_passif = ttk.Treeview(columns_frame, columns=passif_cols, show="headings", height=30)
-        headers_p = ["Libellé (PASSIF)", "Montant (période)", "Solde d'ouverture"]
+        headers_p = ["Libellé (PASSIF)", "Montant", "Montant N-1 (ouverture)"]
         for c, h, w in zip(passif_cols, headers_p, [280, 140, 140]):
             self.tree_passif.heading(c, text=h)
             self.tree_passif.column(c, width=w, anchor="w" if c == "libelle" else "e", stretch=(c == "libelle"))
@@ -1687,27 +1687,25 @@ class BilanSyscohadaTab(ttk.Frame):
 
         ecart, ecart_n1 = d["ecart"], d["ecart_n1"]
         if abs(ecart) < 1 and abs(ecart_n1) < 1:
-            self.ecart_var.set(f"✓ Actif = Passif sur la période ({fmt_cfa(d['total_actif'])}) et sur le solde "
-                                f"d'ouverture ({fmt_cfa(d['total_actif_n1'])})   —   Exercice {d['exercice']}")
+            self.ecart_var.set(f"✓ Actif = Passif ({fmt_cfa(d['total_actif'])})   —   Exercice {d['exercice']} "
+                                f"/ N-1 (ouverture) = {fmt_cfa(d['total_actif_n1'])}")
             self.ecart_label.configure(foreground="#1F7A1F")
             self.diag_var.set("")
         else:
             msgs = []
             if abs(ecart) >= 1:
-                msgs.append(f"période : {fmt_cfa(ecart)}")
+                msgs.append(f"exercice N : {fmt_cfa(ecart)}")
             if abs(ecart_n1) >= 1:
-                msgs.append(f"solde d'ouverture : {fmt_cfa(ecart_n1)}")
+                msgs.append(f"solde d'ouverture (N-1) : {fmt_cfa(ecart_n1)}")
             self.ecart_var.set("⚠ Écart Actif - Passif — " + " ; ".join(msgs))
             self.ecart_label.configure(foreground="#B00020")
             diag = core.compute_ecart_diagnostic(self.conn)
             parts = []
             if abs(diag["ecart_soldes_ouverture"]) >= 1:
                 parts.append(f"• Soldes d'ouverture non nuls : {fmt_cfa(diag['ecart_soldes_ouverture'])} "
-                              f"(voir l'onglet « Soldes d'ouverture ») — explique l'écart sur la colonne "
-                              f"« Solde d'ouverture »")
+                              f"(voir l'onglet « Soldes d'ouverture »)")
             if abs(diag["ecart_ecritures_periode"]) >= 1:
-                parts.append(f"• Écritures de la période Débit ≠ Crédit : {fmt_cfa(diag['ecart_ecritures_periode'])} "
-                              f"— explique l'écart sur les colonnes « période »")
+                parts.append(f"• Écritures de la période Débit ≠ Crédit : {fmt_cfa(diag['ecart_ecritures_periode'])}")
             self.diag_var.set("\n".join(parts))
 
         self.tree_actif.xview_moveto(0)

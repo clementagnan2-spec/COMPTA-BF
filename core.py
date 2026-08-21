@@ -3495,27 +3495,27 @@ def _merge_n1(groupes_n, groupes_n1, key_field="key", montant_field="sous_total"
 
 def compute_bilan_detaille(conn, exercice=None):
     """Bilan présenté ligne par ligne (« avec détails »), MONTÉ SUR LA BASE
-    DES SEULES OPÉRATIONS DE LA PÉRIODE — pas le solde de clôture habituel
-    (solde d'ouverture + cumul des opérations). La colonne « N-1 » de ce
-    Bilan contient EXCLUSIVEMENT le solde d'ouverture de l'exercice (le
-    report à nouveau du 1er janvier) — PAS un second Bilan calculé sur un
-    exercice antérieur. ACTIF en Brut / Amortissements et provisions / Net
+    DU SOLDE DE CLÔTURE HABITUEL (solde d'ouverture + cumul des opérations
+    de la période — voir compute_bilan()). La colonne « N-1 » de ce Bilan
+    contient le solde d'ouverture de l'exercice (le report à nouveau du
+    1er janvier) — qui correspond mathématiquement au solde de clôture de
+    l'exercice précédent dès lors que la clôture d'exercice a été utilisée
+    normalement (voir close_exercice()), donc une vraie comparaison N-1
+    sans avoir à recalculer un second Bilan complet sur un exercice
+    antérieur. ACTIF en Brut / Amortissements et provisions / Net
     (immobilisations par catégorie AVEC sous-totaux Brut/Amortissements,
     stocks par nature, créances compte par compte GROUPÉES PAR RACINE avec
     un sous-total par racine) ; PASSIF détaillé de la même façon (capitaux
     propres par racine, dettes groupées par racine, trésorerie créditrice
     groupée Banques/Caisse). S'appuie sur exactement les mêmes fonctions de
-    classification que compute_bilan() (via compute_bilan_mouvement_periode()
-    et compute_bilan_solde_ouverture()) — donc toujours équilibré (Actif =
-    Passif) sur CHACune des deux colonnes indépendamment, la partie double
-    garantissant que la somme des mouvements de la période comme celle des
-    soldes d'ouverture est nulle."""
+    classification que compute_bilan() — donc toujours équilibré (Actif =
+    Passif) sur CHACUNE des deux colonnes indépendamment, la partie double
+    garantissant que la somme des soldes de clôture comme celle des soldes
+    d'ouverture est nulle."""
     exercice = exercice or get_current_exercice(conn)
     exercice_n1 = str(int(exercice) - 1)
 
-    balance_periode = _balance_mouvement_periode(conn, exercice)
-    resultat_periode = _resultat_net_mouvement_periode(balance_periode)
-    n = _compute_bilan_groupes(conn, exercice, balance=balance_periode, resultat_net_override=resultat_periode)
+    n = _compute_bilan_groupes(conn, exercice)  # solde de clôture standard (ouverture + mouvements)
 
     balance_ouverture = _balance_solde_ouverture(conn, exercice)
     resultat_ouverture = _resultat_net_mouvement_periode(balance_ouverture)
