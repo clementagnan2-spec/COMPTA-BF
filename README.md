@@ -2429,3 +2429,36 @@ liés — le Tableau de bord GRH agrège correctement toutes ces données
 (8h pointées, KPI atteint à 120%, 1 incident grave ouvert). Non-régression
 vérifiée : moteur comptable et module Pièces de rechange partagé
 toujours pleinement fonctionnels.
+
+### Menu TRESORERIE + import Personnel/Time Sheet + confirmation Bilan gabarit
+
+**Bilan** : vérifié — le gabarit exact fourni par l'utilisateur
+(`templates/bilan_template.xls` / `modele_bilan.xlsx`, formules N et N-1)
+était déjà branché et fonctionnel depuis une session précédente (confirmé
+par test direct). Rien à reconstruire.
+
+**Réalisé** :
+- **Menu TRESORERIE** (nouveau), avec 2 onglets :
+  - **Banques (Entrées/Sorties)** : chaque compte de trésorerie (classe 5)
+    aligné horizontalement — Solde début / Entrées / Sorties / Solde fin
+    de la période (exercice courant par défaut), avec une ligne de total.
+  - **Engagements à payer** : liste des Règlements déjà validés (charge
+    comptabilisée) dont le paiement bancaire n'a pas encore été
+    enregistré (menu ENGAGEMENTS-PROJETS > Règlements) — comparés à la
+    trésorerie disponible, avec un message clair (vert/rouge) indiquant
+    si l'entreprise peut faire face à tous ses engagements.
+- **Import Excel pour Liste du personnel et Time sheet** (menu GRH) :
+  boutons **« Télécharger le modèle d'import (.xlsx) »** et
+  **« Importer (.xlsx) »** sur les deux écrans.
+  - Personnel : import par Matricule — une fiche déjà existante est mise
+    à jour (pas de doublon), une nouvelle est créée.
+  - Time sheet : chaque ligne DOIT référencer un matricule déjà présent
+    dans la Liste du personnel — sinon ignorée avec message d'erreur
+    explicite (rapport groupé après import, jamais un plantage total).
+
+Testé de bout en bout : Trésorerie horizontale correcte sur plusieurs
+comptes avec mouvements réels ; engagement de 5 000 000 avec trésorerie
+insuffisante de 3 500 000 → signalé correctement (`peut_faire_face:
+False`) ; modèles téléchargés puis réimportés (création, puis mise à jour
+sans doublon au second import, matricule inconnu proprement signalé) ;
+non-régression du Bilan gabarit vérifiée.

@@ -125,6 +125,7 @@ class App(tk.Tk):
         register("grh_kpi", KpiTab)
         register("grh_tableau_bord", TableauBordGrhTab)
         register("grh_hs", HsTab)
+        register("tresorerie", TresorerieTab)
         register("transport", ParcAutoTab)
         register("missions", MissionsTab)
         register("pieces_rechange", PiecesRechangeTab)
@@ -210,6 +211,9 @@ class App(tk.Tk):
             ("KPI", "grh_kpi"),
             ("Tableau de bord GRH", "grh_tableau_bord"),
             ("HS (hygiène santé)", "grh_hs"),
+        ])
+        add_top_menu("TRESORERIE", [
+            ("Trésorerie", "tresorerie"),
         ])
         add_top_menu("TRANSPORT", [
             ("Parc auto", "transport"),
@@ -3130,6 +3134,12 @@ class PersonnelTab(ttk.Frame):
         ttk.Button(btns, text="Supprimer la sélection", command=self.delete_sel).pack(side="left")
         ttk.Button(btns, text="Effacer le formulaire", command=self.clear_form).pack(side="left", padx=8)
 
+        import_bar = ttk.Frame(self)
+        import_bar.pack(fill="x", padx=16, pady=(0, 6))
+        ttk.Button(import_bar, text="Télécharger le modèle d'import (.xlsx)",
+                   command=self.telecharger_modele).pack(side="left")
+        ttk.Button(import_bar, text="Importer (.xlsx)", command=self.importer).pack(side="left", padx=8)
+
         cols = ("id", "matricule", "nom", "prenom", "poste", "service", "statut")
         self.tree = ttk.Treeview(self, columns=cols, show="headings", height=18)
         for c, h, w in zip(cols, ["ID", "Matricule", "Nom", "Prénom", "Poste", "Service", "Statut"],
@@ -3208,6 +3218,34 @@ class PersonnelTab(ttk.Frame):
                 p["id"], p["matricule"] or "", p["nom"], p["prenom"] or "", p["poste"] or "",
                 p["service"] or "", p["statut"]))
 
+    def telecharger_modele(self):
+        path = filedialog.asksaveasfilename(
+            defaultextension=".xlsx", filetypes=[("Classeur Excel", "*.xlsx")],
+            initialfile="Modele_Import_Personnel.xlsx", title="Télécharger le modèle d'import — Personnel",
+        )
+        if not path:
+            return
+        core.export_personnel_template_xlsx(path)
+        messagebox.showinfo("Modèle téléchargé", f"Modèle enregistré :\n{path}")
+
+    def importer(self):
+        path = filedialog.askopenfilename(filetypes=[("Classeur Excel", "*.xlsx")],
+                                           title="Importer la liste du personnel")
+        if not path:
+            return
+        try:
+            rapport = core.import_personnel_xlsx(self.conn, path)
+        except Exception as exc:
+            messagebox.showerror("Erreur", f"Échec de l'import : {exc}")
+            return
+        self.refresh()
+        msg = f"{rapport['crees']} créé(s), {rapport['mis_a_jour']} mis à jour."
+        if rapport["erreurs"]:
+            msg += "\n\n⚠ " + "\n".join(rapport["erreurs"][:10])
+            if len(rapport["erreurs"]) > 10:
+                msg += f"\n... et {len(rapport['erreurs']) - 10} autre(s) erreur(s)."
+        messagebox.showinfo("Import terminé", msg)
+
 
 class TimeSheetTab(ttk.Frame):
     """Time sheet (pointage des heures) — menu GRH, sans lien avec la comptabilité."""
@@ -3233,6 +3271,12 @@ class TimeSheetTab(ttk.Frame):
         self.activite_var = tk.StringVar()
         ttk.Entry(form, textvariable=self.activite_var, width=40).grid(row=1, column=1, columnspan=3, padx=4, pady=(4, 0), sticky="we")
         ttk.Button(form, text="Ajouter le pointage", command=self.add).grid(row=1, column=5, padx=4, pady=(4, 0))
+
+        import_bar = ttk.Frame(self)
+        import_bar.pack(fill="x", padx=16, pady=(0, 6))
+        ttk.Button(import_bar, text="Télécharger le modèle d'import (.xlsx)",
+                   command=self.telecharger_modele).pack(side="left")
+        ttk.Button(import_bar, text="Importer (.xlsx)", command=self.importer).pack(side="left", padx=8)
 
         cols = ("id", "employe", "date", "heures", "activite")
         self.tree = ttk.Treeview(self, columns=cols, show="headings", height=18)
@@ -3287,6 +3331,34 @@ class TimeSheetTab(ttk.Frame):
             self.tree.insert("", "end", values=(
                 t["id"], t["employe"], core.to_display_date(t["date_pointage"]), f"{t['heures']:g}",
                 t["activite"] or ""))
+
+    def telecharger_modele(self):
+        path = filedialog.asksaveasfilename(
+            defaultextension=".xlsx", filetypes=[("Classeur Excel", "*.xlsx")],
+            initialfile="Modele_Import_Time_Sheet.xlsx", title="Télécharger le modèle d'import — Time sheet",
+        )
+        if not path:
+            return
+        core.export_time_sheet_template_xlsx(path)
+        messagebox.showinfo("Modèle téléchargé", f"Modèle enregistré :\n{path}")
+
+    def importer(self):
+        path = filedialog.askopenfilename(filetypes=[("Classeur Excel", "*.xlsx")],
+                                           title="Importer des pointages Time sheet")
+        if not path:
+            return
+        try:
+            rapport = core.import_time_sheet_xlsx(self.conn, path)
+        except Exception as exc:
+            messagebox.showerror("Erreur", f"Échec de l'import : {exc}")
+            return
+        self.refresh()
+        msg = f"{rapport['crees']} pointage(s) créé(s)."
+        if rapport["erreurs"]:
+            msg += "\n\n⚠ " + "\n".join(rapport["erreurs"][:10])
+            if len(rapport["erreurs"]) > 10:
+                msg += f"\n... et {len(rapport['erreurs']) - 10} autre(s) erreur(s)."
+        messagebox.showinfo("Import terminé", msg)
 
 
 class KpiTab(ttk.Frame):
@@ -3607,6 +3679,103 @@ class HsTab(ttk.Frame):
             self.tree.insert("", "end", tags=tag, values=(
                 h["id"], core.to_display_date(h["date_evenement"]), h["type_evenement"], h["employe"] or "",
                 h["gravite"] or "", h["statut"], h["description"] or ""))
+
+
+class TresorerieTab(ttk.Frame):
+    """Trésorerie (menu TRESORERIE) — banques alignées horizontalement avec
+    Entrées/Sorties de la période, et liste des engagements (Règlements
+    validés non encore payés) pour évaluer la capacité à y faire face."""
+
+    def __init__(self, parent, conn):
+        super().__init__(parent)
+        self.conn = conn
+        ttk.Label(self, text="TRÉSORERIE", font=("Segoe UI", 14, "bold")).pack(anchor="w", padx=16, pady=(16, 4))
+
+        notebook = ttk.Notebook(self)
+        notebook.pack(fill="both", expand=True, padx=16, pady=8)
+        tab_banques = ttk.Frame(notebook)
+        tab_engagements = ttk.Frame(notebook)
+        notebook.add(tab_banques, text="Banques (Entrées / Sorties)")
+        notebook.add(tab_engagements, text="Engagements à payer")
+
+        self._build_banques(tab_banques)
+        self._build_engagements(tab_engagements)
+        self.refresh()
+
+    def _build_banques(self, parent):
+        ttk.Label(parent, text=(
+            "Chaque compte de trésorerie (banque, caisse) sur une ligne, avec le solde de début de période, "
+            "les Entrées (débit) et Sorties (crédit) de la période, et le solde de fin — exercice courant "
+            "par défaut."
+        ), foreground="#595959", wraplength=1050).pack(anchor="w", padx=8, pady=(8, 8))
+        ttk.Button(parent, text="Actualiser", command=self.refresh).pack(anchor="w", padx=8)
+
+        cols = ("compte", "libelle", "debut", "entrees", "sorties", "fin")
+        self.tree_banques = ttk.Treeview(parent, columns=cols, show="headings", height=16)
+        headers = ["Compte", "Libellé", "Solde début", "Entrées", "Sorties", "Solde fin"]
+        widths = [90, 220, 130, 130, 130, 140]
+        for c, h, w in zip(cols, headers, widths):
+            self.tree_banques.heading(c, text=h)
+            self.tree_banques.column(c, width=w, anchor="w" if c in ("compte", "libelle") else "e")
+        self.tree_banques.tag_configure("total", background="#1F4E78", foreground="white", font=("Segoe UI", 9, "bold"))
+        self.tree_banques.pack(fill="both", expand=True, padx=8, pady=8)
+
+    def _build_engagements(self, parent):
+        ttk.Label(parent, text=(
+            "Règlements déjà validés (charge comptabilisée) dont le paiement bancaire n'a pas encore été "
+            "enregistré (voir menu ENGAGEMENTS-PROJETS > Règlements) — ce que l'entreprise doit encore "
+            "décaisser, comparé à la trésorerie disponible."
+        ), foreground="#595959", wraplength=1050).pack(anchor="w", padx=8, pady=(8, 8))
+        ttk.Button(parent, text="Actualiser", command=self.refresh).pack(anchor="w", padx=8)
+
+        self.synthese_var = tk.StringVar()
+        self.synthese_label = ttk.Label(parent, textvariable=self.synthese_var, font=("Segoe UI", 11, "bold"))
+        self.synthese_label.pack(anchor="w", padx=8, pady=(8, 8))
+
+        cols = ("numero", "date", "fournisseur", "montant")
+        self.tree_engagements = ttk.Treeview(parent, columns=cols, show="headings", height=14)
+        headers = ["N° Règlement", "Date", "Fournisseur", "Montant net à payer"]
+        widths = [130, 100, 260, 160]
+        for c, h, w in zip(cols, headers, widths):
+            self.tree_engagements.heading(c, text=h)
+            self.tree_engagements.column(c, width=w, anchor="w" if c != "montant" else "e")
+        self.tree_engagements.tag_configure("total", background="#1F4E78", foreground="white", font=("Segoe UI", 9, "bold"))
+        self.tree_engagements.pack(fill="both", expand=True, padx=8, pady=8)
+
+    def refresh(self):
+        for row in self.tree_banques.get_children():
+            self.tree_banques.delete(row)
+        lignes, total = core.compute_tresorerie_banques_horizontal(self.conn)
+        for l in lignes:
+            self.tree_banques.insert("", "end", values=(
+                l["code"], l["label"], fmt_cfa(l["solde_debut_periode"]), fmt_cfa(l["debit_periode"]),
+                fmt_cfa(l["credit_periode"]), fmt_cfa(l["solde_fin_periode"])))
+        self.tree_banques.insert("", "end", tags=("total",), values=(
+            "TOTAL", "", fmt_cfa(total["solde_debut_periode"]), fmt_cfa(total["debit_periode"]),
+            fmt_cfa(total["credit_periode"]), fmt_cfa(total["solde_fin_periode"])))
+
+        for row in self.tree_engagements.get_children():
+            self.tree_engagements.delete(row)
+        d = core.compute_engagements_a_payer(self.conn)
+        for e in d["engagements"]:
+            self.tree_engagements.insert("", "end", values=(
+                e["numero"], core.to_display_date(e["date_reglement"]), e["raison_sociale"],
+                fmt_cfa(e["net_a_payer"])))
+        self.tree_engagements.insert("", "end", tags=("total",), values=(
+            "TOTAL ENGAGEMENTS", "", "", fmt_cfa(d["total_engagements"])))
+
+        if d["peut_faire_face"]:
+            self.synthese_var.set(
+                f"✓ Trésorerie disponible : {fmt_cfa(d['treso_disponible'])}  —  Engagements : "
+                f"{fmt_cfa(d['total_engagements'])}  —  Solde après engagements : "
+                f"{fmt_cfa(d['solde_apres_engagements'])} — l'entreprise peut faire face à ses engagements.")
+            self.synthese_label.configure(foreground="#1F7A1F")
+        else:
+            self.synthese_var.set(
+                f"⚠ Trésorerie disponible : {fmt_cfa(d['treso_disponible'])}  —  Engagements : "
+                f"{fmt_cfa(d['total_engagements'])}  —  Solde après engagements : "
+                f"{fmt_cfa(d['solde_apres_engagements'])} — insuffisant pour faire face à tous les engagements.")
+            self.synthese_label.configure(foreground="#B00020")
 
 
 class ParcAutoTab(ttk.Frame):

@@ -7523,6 +7523,207 @@ def compute_tableau_bord_grh(conn):
     }
 
 
+# ---------------------------------------------------------------------------
+# TRÉSORERIE (menu TRESORERIE) — banques alignées horizontalement (une
+# colonne par compte de trésorerie, classe 5) avec Entrées/Sorties de la
+# période, et liste des engagements non encore payés (Règlements validés
+# mais dont le paiement bancaire n'a pas encore été comptabilisé — voir
+# enregistrer_paiement_reglement()) pour évaluer la capacité à y faire face.
+# ---------------------------------------------------------------------------
+def compute_tresorerie_banques_horizontal(conn, date_from=None, date_to=None, exercice=None):
+    """Une ligne par compte de trésorerie (classe 5), avec Solde début /
+    Entrées / Sorties / Solde fin de la période choisie (exercice entier
+    par défaut) — pensé pour un affichage banques-en-colonnes. Réutilise
+    compute_comptes_prefixe_periode() (même moteur que Impôts/Déclarations
+    sociales/Rapprochements bancaires)."""
+    lignes = compute_comptes_prefixe_periode(conn, "5", date_from=date_from, date_to=date_to, exercice=exercice)
+    total = {
+        "solde_debut_periode": sum(l["solde_debut_periode"] for l in lignes),
+        "debit_periode": sum(l["debit_periode"] for l in lignes),
+        "credit_periode": sum(l["credit_periode"] for l in lignes),
+        "solde_fin_periode": sum(l["solde_fin_periode"] for l in lignes),
+    }
+    return lignes, total
+
+
+def compute_engagements_a_payer(conn):
+    """Liste des Règlements VALIDÉS (charge/dette fournisseur déjà
+    comptabilisée) dont le paiement bancaire n'a PAS encore été
+    comptabilisé (paiement_comptabilise = 0) — les engagements financiers
+    restant à honorer. Compare leur total au solde de trésorerie
+    disponible (classe 5) pour évaluer la capacité à y faire face."""
+    rows = conn.execute(
+        """SELECT r.*, COALESCE(f.raison_sociale, r.fournisseur_code, '') AS raison_sociale
+           FROM reglements r LEFT JOIN fournisseurs f ON f.code = r.fournisseur_code
+           WHERE r.statut = 'validee' AND r.paiement_comptabilise = 0
+           ORDER BY r.date_reglement"""
+    ).fetchall()
+    engagements = []
+    total_engagements = 0.0
+    for r in rows:
+        totals = compute_reglement_totals(conn, r["id"])
+        engagements.append({
+            "reglement_id": r["id"], "numero": r["numero"], "date_reglement": r["date_reglement"],
+            "fournisseur_code": r["fournisseur_code"], "raison_sociale": r["raison_sociale"],
+            "net_a_payer": totals["net_a_payer"],
+        })
+        total_engagements += totals["net_a_payer"]
+
+    balance = compute_balance(conn, only_with_movement=False)
+    treso_disponible = sum(b["solde_cloture"] for b in balance if b["classe"] == "5")
+
+    return {
+        "engagements": engagements, "total_engagements": total_engagements,
+        "treso_disponible": treso_disponible, "solde_apres_engagements": treso_disponible - total_engagements,
+        "peut_faire_face": treso_disponible >= total_engagements,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Import Excel — Liste du personnel et Time sheet (GRH), avec modèle
+# téléchargeable (mêmes en-têtes que ceux attendus à l'import).
+# ---------------------------------------------------------------------------
+def export_personnel_template_xlsx(path):
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Personnel"
+    headers = ["Matricule", "Nom", "Prénom", "Poste", "Service", "Date d'embauche (JJ/MM/AAAA)",
+               "Téléphone", "Email", "Statut (actif/congé/suspendu/parti)"]
+    header_font = Font(bold=True, color="FFFFFFFF")
+    header_fill = PatternFill("solid", fgColor="1F4E78")
+    for i, label in enumerate(headers, start=1):
+        c = ws.cell(row=1, column=i, value=label)
+        c.font = header_font
+        c.fill = header_fill
+    ws.append(["EMP-001", "Kone", "Amadou", "Chef chantier", "Production", "15/01/2024",
+               "70000000", "akone@exemple.com", "actif"])
+    for i, w in enumerate([12, 16, 16, 20, 16, 24, 14, 24, 24], start=1):
+        ws.column_dimensions[chr(64 + i)].width = w
+    wb.save(path)
+    return path
+
+
+def import_personnel_xlsx(conn, path):
+    """Importe la Liste du personnel depuis un .xlsx (mêmes colonnes que
+    export_personnel_template_xlsx). Un matricule déjà existant MET À JOUR
+    la fiche ; sinon un nouvel employé est créé. Retourne
+    {crees, mis_a_jour, erreurs}."""
+    import openpyxl
+    wb = openpyxl.load_workbook(path, data_only=True)
+    ws = wb.active
+    existants = {p["matricule"]: p["id"] for p in list_personnel(conn) if p["matricule"]}
+    crees, mis_a_jour, erreurs = 0, 0, []
+    for i, row in enumerate(ws.iter_rows(min_row=2), start=2):
+        values = [c.value for c in row]
+        if all(v in (None, "") for v in values):
+            continue
+        matricule = str(values[0] or "").strip()
+        nom = str(values[1] or "").strip()
+        if not nom:
+            erreurs.append(f"Ligne {i} : nom manquant, ignorée.")
+            continue
+        prenom = str(values[2] or "").strip() if len(values) > 2 else ""
+        poste = str(values[3] or "").strip() if len(values) > 3 else ""
+        service = str(values[4] or "").strip() if len(values) > 4 else ""
+        date_embauche_raw = values[5] if len(values) > 5 else None
+        date_embauche = _parse_import_date(date_embauche_raw)
+        telephone = str(values[6] or "").strip() if len(values) > 6 else ""
+        email = str(values[7] or "").strip() if len(values) > 7 else ""
+        statut = str(values[8] or "actif").strip() if len(values) > 8 else "actif"
+        try:
+            if matricule and matricule in existants:
+                update_personnel(conn, existants[matricule], nom=nom, prenom=prenom, poste=poste,
+                                  service=service, date_embauche=date_embauche, telephone=telephone,
+                                  email=email, statut=statut)
+                mis_a_jour += 1
+            else:
+                new_id = add_personnel(conn, nom, matricule=matricule, prenom=prenom, poste=poste,
+                                        service=service, date_embauche=date_embauche or "",
+                                        telephone=telephone, email=email, statut=statut)
+                if matricule:
+                    existants[matricule] = new_id
+                crees += 1
+        except ValueError as exc:
+            erreurs.append(f"Ligne {i} : {exc}")
+    return {"crees": crees, "mis_a_jour": mis_a_jour, "erreurs": erreurs}
+
+
+def export_time_sheet_template_xlsx(path):
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Time sheet"
+    headers = ["Matricule (doit exister dans la Liste du personnel)", "Date (JJ/MM/AAAA)", "Heures", "Activité"]
+    header_font = Font(bold=True, color="FFFFFFFF")
+    header_fill = PatternFill("solid", fgColor="1F4E78")
+    for i, label in enumerate(headers, start=1):
+        c = ws.cell(row=1, column=i, value=label)
+        c.font = header_font
+        c.fill = header_fill
+    ws.append(["EMP-001", "20/08/2026", 8, "Coulage béton"])
+    for i, w in enumerate([36, 16, 10, 30], start=1):
+        ws.column_dimensions[chr(64 + i)].width = w
+    wb.save(path)
+    return path
+
+
+def import_time_sheet_xlsx(conn, path):
+    """Importe des pointages Time sheet depuis un .xlsx (mêmes colonnes que
+    export_time_sheet_template_xlsx). Chaque ligne DOIT référencer un
+    matricule déjà présent dans la Liste du personnel — sinon la ligne est
+    ignorée et signalée. Retourne {crees, erreurs}."""
+    import openpyxl
+    wb = openpyxl.load_workbook(path, data_only=True)
+    ws = wb.active
+    par_matricule = {p["matricule"]: p["id"] for p in list_personnel(conn) if p["matricule"]}
+    crees, erreurs = 0, []
+    for i, row in enumerate(ws.iter_rows(min_row=2), start=2):
+        values = [c.value for c in row]
+        if all(v in (None, "") for v in values):
+            continue
+        matricule = str(values[0] or "").strip()
+        if not matricule or matricule not in par_matricule:
+            erreurs.append(f"Ligne {i} : matricule « {matricule} » introuvable dans la Liste du personnel, ignorée.")
+            continue
+        date_str = _parse_import_date(values[1] if len(values) > 1 else None)
+        if not date_str:
+            erreurs.append(f"Ligne {i} : date manquante ou invalide, ignorée.")
+            continue
+        try:
+            heures = float(values[2]) if len(values) > 2 and values[2] not in (None, "") else 0
+        except (TypeError, ValueError):
+            erreurs.append(f"Ligne {i} : heures invalides, ignorée.")
+            continue
+        activite = str(values[3] or "").strip() if len(values) > 3 else ""
+        try:
+            add_time_sheet(conn, par_matricule[matricule], date_str, heures, activite=activite)
+            crees += 1
+        except ValueError as exc:
+            erreurs.append(f"Ligne {i} : {exc}")
+    return {"crees": crees, "erreurs": erreurs}
+
+
+def _parse_import_date(raw):
+    """Convertit une cellule Excel (datetime, ou texte JJ/MM/AAAA ou
+    AAAA-MM-JJ) en date ISO AAAA-MM-JJ — chaîne vide si non reconnaissable."""
+    if raw in (None, ""):
+        return ""
+    if isinstance(raw, datetime):
+        return raw.strftime("%Y-%m-%d")
+    if isinstance(raw, date):
+        return raw.strftime("%Y-%m-%d")
+    s = str(raw).strip()
+    for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y"):
+        try:
+            return datetime.strptime(s, fmt).strftime("%Y-%m-%d")
+        except ValueError:
+            continue
+    return ""
+
+
 if __name__ == "__main__":
     # Petit auto-test en ligne de commande (sans Tkinter).
     conn = get_connection(":memory:" if False else "test_core.db")
