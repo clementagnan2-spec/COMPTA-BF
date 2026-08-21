@@ -1621,7 +1621,7 @@ class BilanTab(ttk.Frame):
         self.tree_actif.heading("amort", text="Amortissements")
         self.tree_actif.heading("net", text="Net")
         self.tree_actif.heading("net_n1", text="Net N-1")
-        self.tree_actif.column("libelle", width=300, anchor="w", stretch=True)
+        self.tree_actif.column("libelle", width=340, anchor="w", stretch=True)
         self.tree_actif.column("brut", width=140, anchor="e", stretch=False)
         self.tree_actif.column("amort", width=140, anchor="e", stretch=False)
         self.tree_actif.column("net", width=150, anchor="e", stretch=False)
@@ -1800,6 +1800,12 @@ class BilanTab(ttk.Frame):
                               f"(voir le détail ci-dessous)")
             self.ecart_var.set("\n".join(parts))
             self.diag_link.pack(anchor="w", padx=8, pady=(0, 8))
+
+        # Toujours revenir au début (gauche) des tableaux après un rafraîchissement
+        # — sinon les libellés peuvent apparaître coupés si le scroll horizontal
+        # était resté décalé (ex. après une sélection ou un précédent scroll).
+        self.tree_actif.xview_moveto(0)
+        self.tree_passif.xview_moveto(0)
 
     def export_xlsx(self):
         path = filedialog.asksaveasfilename(

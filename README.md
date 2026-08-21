@@ -2462,3 +2462,33 @@ insuffisante de 3 500 000 → signalé correctement (`peut_faire_face:
 False`) ; modèles téléchargés puis réimportés (création, puis mise à jour
 sans doublon au second import, matricule inconnu proprement signalé) ;
 non-régression du Bilan gabarit vérifiée.
+
+### Bilan — correctif d'affichage (libellés coupés) + confirmation du calcul
+
+**Capture d'écran fournie** : les libellés apparaissaient coupés au début
+(« es premières et fournitures » au lieu de « Matières premières... »,
+« OPRES ET RESSOURCES DURABLES » au lieu de « CAPITAUX PROPRES... ») —
+les deux tableaux étaient scrollés horizontalement, la barre de défilement
+existante ne se réinitialisant jamais après un rafraîchissement.
+
+**Corrigé** : les deux tableaux reviennent maintenant systématiquement au
+début (gauche) après chaque rafraîchissement, et la colonne Libellé de
+l'Actif a été élargie (300→340px) pour réduire le besoin de défiler.
+
+**Vérifié — Total Actif ≠ Total Passif sur la capture n'est PAS un bug de
+calcul** : `compute_bilan()` classe chaque compte de la Balance dans une
+case et une seule, garantissant mathématiquement Actif = Passif dès lors
+que les données respectent la partie double (testé et confirmé : écart à
+0 sur un scénario équilibré). Un écart de 37 789 564 389 - 28 690 813 980
+= 9 098 750 409 signale donc un vrai déséquilibre dans les données
+saisies/importées (le cas le plus fréquent : un solde d'ouverture importé
+sans sa contrepartie — reproduit et vérifié : le diagnostic intégré
+détecte précisément ce cas et pointe vers l'onglet « Soldes
+d'ouverture »). Ce diagnostic s'affiche automatiquement sous les deux
+tableaux dès qu'un écart existe — probablement hors du cadre visible sur
+la capture transmise.
+
+Pour identifier précisément la cause dans votre cas, il faudrait soit
+consulter ce message de diagnostic directement dans l'application (faites
+défiler sous les tableaux), soit me transmettre votre fichier
+`comptabilite.db` pour un diagnostic direct.
