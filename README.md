@@ -2852,3 +2852,73 @@ physiquement absent du disque) : le gabarit se régénère automatiquement,
 l'export produit un fichier de 51 038 octets avec mise en forme préservée,
 aucune erreur. Non-régression vérifiée sur l'écran Bilan SYSCOHADA
 autonome et l'ensemble des 45 onglets de l'application.
+
+### Bilan — boutons pour modifier et restaurer le template
+
+**Demande** : un bouton pour modifier les formules du template.
+
+**Réalisé** :
+- **« Modifier les formules du template (importer une version corrigée) »** :
+  choisissez un fichier `.xls`/`.xlsx` (ex. le template téléchargé via
+  « Télécharger mon template », édité dans Excel avec vos propres
+  corrections) — validé avant d'être pris en compte (doit s'ouvrir
+  correctement et contenir au moins une vraie formule CtaCptSolde, sinon
+  refusé avec un message clair) puis remplace le template ACTIF utilisé
+  par l'application (`core.import_bilan_template()`). Toutes les
+  utilisations suivantes (« Visionner », « Exporter selon le gabarit
+  officiel ») utilisent automatiquement ce nouveau template.
+- **« Restaurer le template d'origine »** : annule toute modification
+  importée et revient au template intégré à l'application
+  (`core.restaurer_bilan_template_original()`), en cas d'erreur ou pour
+  repartir d'une base saine.
+
+Testé de bout en bout : import validé (131 formules détectées), refus
+propre d'un fichier sans formules et d'un fichier illisible (messages
+d'erreur clairs, pas de plantage), export fonctionnel avec le nouveau
+template, restauration de l'original, et l'écran Bilan SYSCOHADA
+autonome (qui ne dépend d'aucun template) reste pleinement fonctionnel
+tout au long de ces opérations.
+
+### Template figé — retrait de l'import/remplacement côté utilisateur
+
+**Demande** : le template doit rester figé dans le logiciel — les
+formules se modifient directement dedans, pas via un import utilisateur.
+
+**Réalisé** : les boutons « Modifier les formules du template (importer
+une version corrigée) » et « Restaurer le template d'origine », ajoutés
+juste avant, ont été retirés de l'écran. Le template reste donc figé
+(encodé dans `bilan_template_data.py`), non modifiable depuis
+l'application.
+
+**Nouveau fonctionnement pour modifier une formule** : indiquez-moi
+directement quelle formule doit changer (et sa nouvelle valeur), et je
+modifie le fichier gabarit source puis régénère `bilan_template_data.py`
+en conséquence — le nouveau template devient alors la version officielle
+figée, livrée avec le reste du code.
+
+Les 3 boutons restants (Télécharger mon template, Visionner selon mon
+template, Exporter selon le gabarit officiel) restent disponibles — ce
+sont des opérations de LECTURE/EXPORT, pas de modification.
+
+### Bouton « Modifier les formules du template » — ouvre le fichier figé directement dans Excel
+
+**Précision de l'utilisateur** : pas d'import/remplacement — un bouton
+qui ouvre directement le template figé (le fichier utilisé par le
+logiciel) pour éditer les formules dedans.
+
+**Réalisé** : le bouton **« Modifier les formules du template »**
+remplace l'ancien « Télécharger mon template » — il ouvre directement,
+avec Excel, le **même fichier physique** que celui utilisé par l'écran
+Bilan (`core.BILAN_TEMPLATE_PATH`, situé dans
+`%LOCALAPPDATA%\SaisieComptable\bilan_template.xls`). Le template reste
+figé du point de vue du logiciel (toujours aucun mécanisme d'import/
+remplacement dans l'interface), mais comme c'est exactement le même
+fichier, toute formule modifiée et enregistrée dans Excel (Ctrl+S, en
+gardant le format) est immédiatement prise en compte au prochain
+« Visionner » ou « Exporter » — sans étape supplémentaire, sans bouton
+d'import séparé.
+
+Testé : le fichier gabarit actif (celui régénéré automatiquement depuis
+le code source si absent) est bien accessible à cet emplacement, l'export
+et l'écran Bilan SYSCOHADA autonome fonctionnent normalement à partir de
+ce même fichier.

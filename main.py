@@ -1583,8 +1583,8 @@ class BilanSyscohadaTab(ttk.Frame):
         btn_bar = ttk.Frame(self)
         btn_bar.pack(fill="x", padx=8, pady=(0, 4))
         ttk.Button(btn_bar, text="Actualiser", command=self.refresh).pack(side="left")
-        ttk.Button(btn_bar, text="Télécharger mon template (vierge, avec formules)",
-                   command=self.telecharger_template).pack(side="left", padx=8)
+        ttk.Button(btn_bar, text="Modifier les formules du template",
+                   command=self.modifier_template).pack(side="left", padx=8)
         ttk.Button(btn_bar, text="Visionner le Bilan selon mon template",
                    command=self.visionner_gabarit).pack(side="left", padx=8)
         ttk.Button(btn_bar, text="Exporter selon le gabarit officiel (formules CtaCptSolde exactes)",
@@ -1756,6 +1756,29 @@ class BilanSyscohadaTab(ttk.Frame):
             )
             return
         messagebox.showinfo("Téléchargement terminé", f"Template enregistré :\n{path}")
+
+    def modifier_template(self):
+        """Ouvre directement le gabarit ACTIF (le même fichier utilisé par
+        l'application pour « Visionner » et « Exporter ») avec Excel — le
+        template reste figé du point de vue du logiciel (aucun mécanisme
+        d'import/remplacement dans l'appli), mais comme c'est le MÊME
+        fichier physique, toute formule modifiée et enregistrée dans Excel
+        est directement prise en compte au prochain calcul, sans étape
+        supplémentaire."""
+        path = core.BILAN_TEMPLATE_PATH or core._bilan_template_path()
+        if not messagebox.askyesno(
+            "Modifier les formules du template",
+            "Le gabarit va s'ouvrir dans Excel. Toute formule que vous modifiez ET ENREGISTREZ (Ctrl+S, "
+            "en gardant le même format) sera directement utilisée par l'application au prochain calcul "
+            "(« Visionner », « Exporter »).\n\nContinuer ?",
+        ):
+            return
+        if not _ouvrir_fichier(path):
+            messagebox.showinfo(
+                "Ouverture impossible",
+                f"Le template n'a pas pu s'ouvrir automatiquement — ouvrez-le manuellement dans Excel :"
+                f"\n{path}",
+            )
 
     def visionner_gabarit(self):
         """Génère le Bilan avec les formules exactes du gabarit officiel

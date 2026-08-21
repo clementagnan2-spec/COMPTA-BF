@@ -3614,6 +3614,48 @@ def _bilan_template_path():
     return path
 
 
+def import_bilan_template(path_source):
+    """Remplace le gabarit Bilan ACTIF par un fichier fourni par
+    l'utilisateur (ses formules modifiées/corrigées) — validé au préalable
+    (doit s'ouvrir correctement et contenir au moins une formule
+    CtaCptSolde reconnue) avant d'écraser l'ancien. Toutes les futures
+    utilisations (écran « Visionner », export « gabarit officiel »)
+    utiliseront ce nouveau fichier."""
+    try:
+        wb = open_template_workbook(path_source)
+    except Exception as exc:
+        raise ValueError(f"Ce fichier n'a pas pu être ouvert comme gabarit Excel : {exc}")
+    nb_formules = 0
+    for name in wb.sheetnames:
+        ws = wb[name]
+        for row in ws.iter_rows():
+            for cell in row:
+                if is_formula(cell.value):
+                    nb_formules += 1
+    if nb_formules == 0:
+        raise ValueError(
+            "Aucune formule CtaCptSolde... reconnue dans ce fichier — vérifiez qu'il s'agit bien d'un "
+            "gabarit Bilan valide (même structure que le fichier téléchargé via « Télécharger mon "
+            "template »)."
+        )
+    dest = _bilan_template_path()
+    import shutil
+    shutil.copyfile(path_source, dest)
+    return nb_formules
+
+
+def restaurer_bilan_template_original():
+    """Revient au gabarit Bilan d'ORIGINE (celui encodé dans le code
+    source, bilan_template_data.py) — écrase tout template importé/modifié
+    par l'utilisateur."""
+    import base64
+    import bilan_template_data
+    dest = _bilan_template_path()
+    with open(dest, "wb") as f:
+        f.write(base64.b64decode(bilan_template_data.BILAN_TEMPLATE_B64))
+    return dest
+
+
 try:
     BILAN_TEMPLATE_PATH = _bilan_template_path()
 except Exception:
