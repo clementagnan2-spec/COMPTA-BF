@@ -2585,3 +2585,45 @@ Testé : moteur comptable interne (Bilan, Règlements, clôture d'exercice)
 toujours pleinement fonctionnel après suppression ; les fonctions
 spécifiques aux gabarits supprimés échouent proprement avec une erreur
 claire si appelées (mais ne le sont plus, aucun écran n'y menant).
+
+### Suppression complète de la classe BilanTab (code mort résiduel)
+
+**Demande** : ne plus voir le message d'erreur « Impossible de calculer
+le Bilan » (gabarit `bilan_template.xls` introuvable).
+
+**Précision** : ce message provenait d'une version antérieure de
+l'exécutable, utilisée encore par l'utilisateur — le menu RAPPORTS
+FINANCIERS (et l'écran Bilan qui déclenchait ce message) avait déjà été
+entièrement supprimé du CODE SOURCE dans la réponse précédente ; il ne
+manquait qu'un rebuild de l'exécutable côté utilisateur pour que le
+message disparaisse.
+
+**Fait en plus, par souci de propreté** : la classe `BilanTab` elle-même
+(qui ne servait plus à rien, plus aucun menu n'y menant) a été
+entièrement supprimée du code source, plutôt que laissée comme code mort
+inutilisé — élimine toute trace de ce message d'erreur, même dans le
+code source.
+
+Testé : compilation propre, aucune référence résiduelle à `BilanTab` nulle
+part dans le code, moteur comptable interne toujours pleinement
+fonctionnel.
+
+### Nouveau menu RAPPORT FINANCIERS (Grand livre, Balance, Bilan SYSCOHADA)
+
+**Réalisé** : nouveau menu avec exactement 3 sous-menus, comme demandé.
+- **Grand livre** et **Balance** : simplement réenregistrés (les écrans
+  n'avaient jamais été supprimés, seulement retirés du menu).
+- **Bilan SYSCOHADA** (nouveau, reconstruit) : basé sur
+  `compute_bilan_detaille()` — **entièrement autonome, ne dépend d'aucun
+  fichier de gabarit externe** (contrairement à l'ancien Bilan basé sur
+  un gabarit `.xlsx`/`.xls`, source des crashs précédents). Calculé
+  compte par compte depuis la même Balance que l'onglet Balance,
+  garantissant mathématiquement Actif = Passif, avec comparatif de
+  l'exercice précédent (N-1) et diagnostic automatique en cas d'écart
+  réel (soldes d'ouverture incomplets, écritures non équilibrées).
+  Présentation à plat (Actif Brut/Amortissements/Net/Net N-1 à gauche,
+  Passif Exercice N/N-1 à droite), sans scroller.
+
+Testé avec un historique réel sur 2 exercices (2025 clôturé → 2026) :
+Total Actif = Total Passif exactement en N (4 700 000) comme en N-1
+(4 000 000), Grand livre et Balance non-régressés.
