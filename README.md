@@ -2761,3 +2761,33 @@ Testé : un compte avec solde d'ouverture de 2 000 000 et une vente de
 mouvement) et 2 000 000 en colonne N-1 (ouverture seule) — écarts à 0 sur
 les deux colonnes. Non-régression vérifiée (export gabarit officiel,
 Situation financière, clôture d'exercice).
+
+### Diagnostic : détail des comptes dans « Autres immobilisations non classées »
+
+**Constat de l'utilisateur** : plusieurs catégories du gabarit de
+référence (Terrains, Installations, Matériel de transport,
+Immobilisations financières, Charges immobilisées) n'apparaissaient pas
+sur l'écran, avec une grosse ligne « Autres immobilisations non classées »
+à la place — confirmé par l'utilisateur après vérification.
+
+**Cause probable** : les comptes réels de son plan comptable ne tombent
+pas dans les plages numériques attendues (`IMMO_CATEGORIES`, dérivées du
+gabarit de référence), et se retrouvent donc absorbés dans le reliquat
+« Autres » plutôt que classés correctement.
+
+**Réalisé — étape de diagnostic** : la ligne « Autres immobilisations non
+classées » affiche désormais le **détail compte par compte** des comptes
+concernés (code + libellé + montant), au lieu d'un simple total global —
+pour identifier précisément quels comptes ne correspondent à aucune
+catégorie attendue, et ainsi pouvoir corriger `IMMO_CATEGORIES` en
+conséquence une fois ces comptes identifiés.
+
+Testé : un compte hors de toutes les plages (200500) apparaît maintenant
+en sous-ligne détaillée sous « Autres immobilisations non classées »,
+avec son code, son libellé et son montant exact — tandis qu'un compte
+correctement classé (231100, Bâtiments) reste affiché normalement sans
+détail superflu. Écart resté à 0.
+
+**Prochaine étape** : une fois les comptes non classés visibles à
+l'écran, transmettez-moi leurs codes exacts pour que j'élargisse les
+plages `IMMO_CATEGORIES` en conséquence.

@@ -1631,6 +1631,9 @@ class BilanSyscohadaTab(ttk.Frame):
                 self.tree_actif.insert("", "end", tags=(row_tag,), values=(
                     f"  {l['label']}", fmt_cfa(l["brut"]) if l["brut"] else "",
                     fmt_cfa(l["amort"]) if l["amort"] else "", fmt_cfa(l["net"]), fmt_cfa(l.get("net_n1", 0))))
+                for compte in l.get("comptes", []):
+                    self.tree_actif.insert("", "end", values=(
+                        f"      • {compte['label']}", fmt_cfa(compte["montant"]), "", "", ""))
             else:
                 montant = l.get("sous_total", 0)
                 montant_n1 = l.get("sous_total_n1", 0)

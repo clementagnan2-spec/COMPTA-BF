@@ -3362,6 +3362,7 @@ def _compute_bilan_groupes(conn, exercice, balance=None, resultat_net_override=N
     total_amort = sum(b["solde_cloture"] for b in balance if b["classe"] == "2" and int(b["code"]) >= 280000)
     immobilisations = []
     somme_brut_categories = somme_amort_categories = 0.0
+    comptes_brut_classes, comptes_amort_classes = set(), set()
     for label, brut_ranges, amort_ranges in IMMO_CATEGORIES:
         brut = _sum_range(balance, brut_ranges, classe="2")
         amort = _sum_range(balance, amort_ranges, classe="2")
@@ -3369,12 +3370,36 @@ def _compute_bilan_groupes(conn, exercice, balance=None, resultat_net_override=N
         somme_amort_categories += amort
         if brut or amort:
             immobilisations.append({"key": label, "label": label, "brut": brut, "amort": amort, "net": brut + amort})
+        for b in balance:
+            if b["classe"] != "2":
+                continue
+            code_int = int(b["code"])
+            if any(lo <= code_int <= hi for lo, hi in brut_ranges):
+                comptes_brut_classes.add(b["code"])
+            if any(lo <= code_int <= hi for lo, hi in amort_ranges):
+                comptes_amort_classes.add(b["code"])
     autres_brut = total_brut - somme_brut_categories
     autres_amort = total_amort - somme_amort_categories
     if abs(autres_brut) >= 1 or abs(autres_amort) >= 1:
+        # Détail des comptes hors de TOUTES les plages IMMO_CATEGORIES — pour
+        # identifier précisément quels comptes réels ne correspondent à
+        # aucune catégorie attendue (ex. un plan de comptes différent de
+        # celui du rapport de référence), au lieu d'un simple montant global.
+        comptes_non_classes = []
+        for b in balance:
+            if b["classe"] != "2" or not b["solde_cloture"]:
+                continue
+            code_int = int(b["code"])
+            est_brut = code_int < 280000
+            if est_brut and b["code"] not in comptes_brut_classes:
+                comptes_non_classes.append({"label": f"{b['code']} {b['label']}", "montant": b["solde_cloture"]})
+            elif not est_brut and b["code"] not in comptes_amort_classes:
+                comptes_non_classes.append({"label": f"{b['code']} {b['label']} (amort./provision)",
+                                             "montant": b["solde_cloture"]})
         immobilisations.append({"key": "Autres immobilisations non classées",
                                  "label": "Autres immobilisations non classées",
-                                 "brut": autres_brut, "amort": autres_amort, "net": autres_brut + autres_amort})
+                                 "brut": autres_brut, "amort": autres_amort, "net": autres_brut + autres_amort,
+                                 "comptes": comptes_non_classes})
     immobilisations.sort(key=lambda l: -abs(l["brut"]))
 
     # ---- Stocks (classe 3), par préfixe à 2 chiffres ----
