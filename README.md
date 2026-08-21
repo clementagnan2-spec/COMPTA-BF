@@ -2554,3 +2554,34 @@ absent, seul l'ancien .xls disponible avec une détection de format
 défaillante) : fonctionne désormais correctement via le repli
 automatique. Testé aussi le cas extrême (aucun gabarit disponible) :
 erreur claire et actionnable levée, plus de plantage silencieux.
+
+### Suppression du menu RAPPORTS FINANCIERS et de tous ses gabarits
+
+**Demande** : supprimer tout le menu RAPPORTS FINANCIERS avec tous les
+templates le concernant.
+
+**Réalisé** :
+- Menu et les 12 entrées correspondantes retirés (Grand livre, Balance,
+  Bilan, Écritures non équilibrées, Compte de résultat, TFT, Situation
+  financière, Liasse fiscale, Tableaux d'exécution budgétaire, Impôts,
+  Déclarations sociales, Rapprochements bancaires).
+- **6 fichiers de gabarit supprimés** : `templates/bilan_template.xls`,
+  `templates/modele_bilan.xlsx`, `templates/modele_resultat.xlsx`,
+  `templates/modele_situation.xlsx`, `templates/modele_flux.xlsx`,
+  `etats_financiers_template.xlsx` — vérifié qu'aucun n'était utilisé
+  ailleurs dans l'application avant suppression.
+- **Workflow de build nettoyé** (`.github/workflows/build.yml`) : les 6
+  lignes `--add-data` correspondantes retirées.
+- Le moteur de calcul sous-jacent non spécifique aux gabarits
+  (`compute_bilan()`, `compute_balance()`, `close_exercice()`,
+  `valider_reglement()`...) **n'a pas été touché** et reste utilisé en
+  interne par les fonctionnalités actives (clôture d'exercice, Règlements,
+  etc.) — seules les fonctions spécifiques au moteur de gabarits Excel
+  (`compute_bilan_plat`, `generate_etat_xlsx`, `export_bilan_gabarit_xlsx`...)
+  sont désormais orphelines (code mort, mais inoffensif : plus aucun
+  écran n'y accède).
+
+Testé : moteur comptable interne (Bilan, Règlements, clôture d'exercice)
+toujours pleinement fonctionnel après suppression ; les fonctions
+spécifiques aux gabarits supprimés échouent proprement avec une erreur
+claire si appelées (mais ne le sont plus, aucun écran n'y menant).

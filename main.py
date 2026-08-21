@@ -100,26 +100,6 @@ class App(tk.Tk):
         register("plan_bailleur", PlanBailleurTab)
         register("stocks", StocksTab)
         register("production", ProductionTab)
-        register("cr", CompteResultatTab)
-        register("tft", TftTab)
-        register("situation_financiere", SituationFinanciereTab)
-        register("grand_livre", GrandLivreTab)
-        register("balance", BalanceTab)
-        register("bilan", BilanTab)
-        register("pieces_non_equilibrees", PiecesNonEquilibreesTab)
-        register("liasse", LiasseFiscaleTab)
-        register("budget_exec", PlaceholderTab,
-                 "Tableaux d'exécution budgétaire",
-                 "Suivi budget prévisionnel vs réalisé, par ligne budgétaire et par projet.")
-        register("impots", ClassePeriodeTab,
-                 "Impôts", "Tous les comptes de la classe 44 (État et collectivités publiques : IS, IMF, "
-                           "TVA due/facturée/récupérable, retenues à la source...), en solde de début de "
-                           "période, mouvements Débit/Crédit et solde de fin de période.", "44")
-        register("declarations_sociales", ClassePeriodeTab,
-                 "Déclarations sociales", "Tous les comptes de la classe 43 (Organismes sociaux — CNSS et "
-                                          "assimilés), en solde de début de période, mouvements Débit/Crédit "
-                                          "et solde de fin de période.", "43")
-        register("rapprochements", RapprochementBancaireTab)
         register("grh_personnel", PersonnelTab)
         register("grh_time_sheet", TimeSheetTab)
         register("grh_kpi", KpiTab)
@@ -182,20 +162,6 @@ class App(tk.Tk):
             ("Matières premières", "stocks"),
             ("Fabrication", "production"),
             ("Produits finis", "stocks"),
-        ])
-        add_top_menu("RAPPORTS FINANCIERS", [
-            ("Grand livre", "grand_livre"),
-            ("Balance", "balance"),
-            ("Bilan", "bilan"),
-            ("Écritures non équilibrées (diagnostic)", "pieces_non_equilibrees"),
-            ("Compte de résultat", "cr"),
-            ("TFT", "tft"),
-            ("Situation financière", "situation_financiere"),
-            ("Liasse fiscale", "liasse"),
-            ("Tableaux d'exécution budgétaire", "budget_exec"),
-            ("Impôts", "impots"),
-            ("Déclarations sociales", "declarations_sociales"),
-            ("Rapprochements bancaires", "rapprochements"),
         ])
         add_top_menu("ENGAGEMENTS-PROJETS", [
             ("Fournisseurs", "fournisseurs"),
