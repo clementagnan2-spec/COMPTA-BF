@@ -2825,3 +2825,30 @@ Bilan généré pour visionnage avec mise en forme préservée (131 valeurs
 calculées, 0 formule non évaluée, aucun plantage même sur les lignes de
 totaux qui référencent d'autres cellules) ; écran Bilan SYSCOHADA
 autonome toujours pleinement fonctionnel en parallèle.
+
+### Fin définitive du crash « fichier de gabarit introuvable » — gabarit encodé dans le code source
+
+**Crash signalé une nouvelle fois** (capture d'écran) : le bouton
+« Visionner le Bilan selon mon template » échouait avec `[Errno 2] No
+such file or directory: ...\templates\bilan_template.xls` — la version
+`.exe` utilisée ne contenait toujours pas ce fichier, malgré une
+configuration de build correcte (déjà vérifiée deux fois). Le mécanisme
+`--add-data` de PyInstaller s'est révélé peu fiable en pratique.
+
+**Corrigé définitivement** : le gabarit `templates/bilan_template.xls`
+(60 137 octets) est maintenant **encodé en base64 directement dans le
+code source Python** (nouveau fichier `bilan_template_data.py`,
+~86 Ko). Au premier besoin, `core.py` le régénère automatiquement dans
+le dossier persistant de l'application (`%LOCALAPPDATA%\SaisieComptable`,
+le même dossier que la base de données) — **sans dépendre d'aucun
+mécanisme de bundle externe**. Le fichier `--add-data` du workflow de
+build est conservé par sécurité, mais l'application n'en a plus besoin :
+elle fonctionne à l'identique même si ce fichier est totalement absent de
+l'installation.
+
+Testé en simulant exactement le scénario du crash (variable d'environnement
+`LOCALAPPDATA` neutralisée, fichier `templates/bilan_template.xls`
+physiquement absent du disque) : le gabarit se régénère automatiquement,
+l'export produit un fichier de 51 038 octets avec mise en forme préservée,
+aucune erreur. Non-régression vérifiée sur l'écran Bilan SYSCOHADA
+autonome et l'ensemble des 45 onglets de l'application.

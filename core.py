@@ -3593,7 +3593,34 @@ def compute_bilan_detaille(conn, exercice=None):
 # adapté pour lire les soldes directement depuis CETTE application (Balance
 # SQLite) au lieu d'exiger l'import de deux fichiers de balance externes.
 # ---------------------------------------------------------------------------
-BILAN_TEMPLATE_PATH = os.path.join(_resource_dir(), "templates", "bilan_template.xls")
+def _bilan_template_path():
+    """Emplacement du gabarit Bilan — régénéré à la volée depuis les
+    données encodées en base64 dans bilan_template_data.py si le fichier
+    n'existe pas encore (ou plus) à cet endroit. Écrit dans le même
+    dossier persistant que la base de données (%LOCALAPPDATA%\\SaisieComptable
+    sous Windows) plutôt que dans le dossier d'installation/d'extraction
+    PyInstaller — élimine TOUTE dépendance au bundle --add-data du build,
+    qui s'est révélé peu fiable en pratique (fichier absent de
+    l'exécutable compilé malgré une configuration correcte)."""
+    base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
+    folder = os.path.join(base, "SaisieComptable")
+    os.makedirs(folder, exist_ok=True)
+    path = os.path.join(folder, "bilan_template.xls")
+    if not os.path.exists(path):
+        import base64
+        import bilan_template_data
+        with open(path, "wb") as f:
+            f.write(base64.b64decode(bilan_template_data.BILAN_TEMPLATE_B64))
+    return path
+
+
+try:
+    BILAN_TEMPLATE_PATH = _bilan_template_path()
+except Exception:
+    # Ne doit jamais empêcher le reste de l'application de démarrer — les
+    # fonctions qui utilisent ce chemin (export_bilan_gabarit_xlsx...)
+    # retentent la régénération à chaque appel si besoin (voir plus bas).
+    BILAN_TEMPLATE_PATH = None
 
 ETATS_TEMPLATES = {
     "bilan": {"path": os.path.join(_resource_dir(), "templates", "modele_bilan.xlsx"),
@@ -3960,7 +3987,7 @@ def compute_bilan_plat(conn, exercice=None):
         # Repli sur l'ancien gabarit SpreadsheetML si le nouveau modèle .xlsx
         # est absent ou illisible (ex. build antérieure sans templates/modele_bilan.xlsx) —
         # ne remonte l'erreur que si les DEUX échouent.
-        wb = open_template_workbook(BILAN_TEMPLATE_PATH)
+        wb = open_template_workbook(BILAN_TEMPLATE_PATH or _bilan_template_path())
         actual_sheet = _guess_etat_sheet(wb, "BILAN")
     ws = wb[actual_sheet]
 
@@ -4015,7 +4042,7 @@ def export_bilan_gabarit_xlsx(conn, path, exercice=None):
         soldes_n = _soldes_dict(conn, exercice)
         soldes_n1 = _soldes_dict(conn, exercice_n1)
 
-        with open(BILAN_TEMPLATE_PATH, encoding="utf-8") as f:
+        with open(BILAN_TEMPLATE_PATH or _bilan_template_path(), encoding="utf-8") as f:
             content = f.read()
 
         named_refs = {}

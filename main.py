@@ -1747,7 +1747,7 @@ class BilanSyscohadaTab(ttk.Frame):
             return
         try:
             import shutil
-            shutil.copyfile(core.BILAN_TEMPLATE_PATH, path)
+            shutil.copyfile(core.BILAN_TEMPLATE_PATH or core._bilan_template_path(), path)
         except Exception as exc:
             messagebox.showerror(
                 "Erreur",
