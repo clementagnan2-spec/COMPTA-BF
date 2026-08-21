@@ -3695,10 +3695,33 @@ def _spreadsheetml_to_workbook(path):
 
 
 def open_template_workbook(template_path):
+    """Ouvre un gabarit Excel — détecte automatiquement l'ancien format
+    SpreadsheetML (XML, souvent nommé .xls) et le convertit. Auto-réparant :
+    si le premier essai échoue (mauvaise détection, encodage inhabituel...),
+    retente l'AUTRE méthode avant d'abandonner avec un message clair —
+    pour ne jamais planter toute l'application sur un simple souci de
+    lecture d'un gabarit."""
     import openpyxl as _openpyxl
-    if _is_spreadsheetml(template_path):
-        return _spreadsheetml_to_workbook(template_path)
-    return _openpyxl.load_workbook(template_path, data_only=False)
+    if not os.path.exists(template_path):
+        raise FileNotFoundError(
+            f"Le gabarit Excel « {template_path} » est introuvable. Réinstallez l'application avec "
+            f"une version complète (le dossier « templates » doit être présent à côté de l'exécutable)."
+        )
+    essai_spreadsheetml = _is_spreadsheetml(template_path)
+    try:
+        if essai_spreadsheetml:
+            return _spreadsheetml_to_workbook(template_path)
+        return _openpyxl.load_workbook(template_path, data_only=False)
+    except Exception as premiere_erreur:
+        try:
+            if essai_spreadsheetml:
+                return _openpyxl.load_workbook(template_path, data_only=False)
+            return _spreadsheetml_to_workbook(template_path)
+        except Exception:
+            raise ValueError(
+                f"Impossible de lire le gabarit Excel « {template_path} » (fichier corrompu ou format "
+                f"non reconnu) : {premiere_erreur}"
+            )
 
 
 def _guess_etat_sheet(wb, preferred):
@@ -3775,10 +3798,16 @@ def compute_bilan_plat(conn, exercice=None):
     soldes_n1 = _soldes_dict(conn, exercice_n1)
 
     info = ETATS_TEMPLATES["bilan"]
-    if os.path.exists(info["path"]):
-        wb = open_template_workbook(info["path"])
-        actual_sheet = _guess_etat_sheet(wb, preferred=info["sheet_hint"])
-    else:
+    try:
+        if os.path.exists(info["path"]):
+            wb = open_template_workbook(info["path"])
+            actual_sheet = _guess_etat_sheet(wb, preferred=info["sheet_hint"])
+        else:
+            raise FileNotFoundError(info["path"])
+    except Exception:
+        # Repli sur l'ancien gabarit SpreadsheetML si le nouveau modèle .xlsx
+        # est absent ou illisible (ex. build antérieure sans templates/modele_bilan.xlsx) —
+        # ne remonte l'erreur que si les DEUX échouent.
         wb = open_template_workbook(BILAN_TEMPLATE_PATH)
         actual_sheet = _guess_etat_sheet(wb, "BILAN")
     ws = wb[actual_sheet]
@@ -3818,12 +3847,15 @@ def compute_bilan_plat(conn, exercice=None):
 def export_bilan_gabarit_xlsx(conn, path, exercice=None):
     """Exporte le Bilan dans le gabarit officiel (templates/modele_bilan.xlsx,
     ou à défaut l'ancien gabarit SpreadsheetML templates/bilan_template.xls
-    si le premier est absent) — voir generate_etat_xlsx()."""
-    if os.path.exists(ETATS_TEMPLATES["bilan"]["path"]):
+    si le premier est absent ou illisible) — voir generate_etat_xlsx()."""
+    try:
+        if not os.path.exists(ETATS_TEMPLATES["bilan"]["path"]):
+            raise FileNotFoundError(ETATS_TEMPLATES["bilan"]["path"])
         generate_etat_xlsx(conn, "bilan", path, exercice=exercice)
-    else:
+    except Exception:
         # Repli sur l'ancien gabarit SpreadsheetML si le nouveau modèle .xlsx
-        # n'est pas disponible (ex. build antérieure).
+        # est absent ou illisible (ex. build antérieure) — ne remonte
+        # l'erreur que si les DEUX échouent (voir open_template_workbook).
         exercice = exercice or get_current_exercice(conn)
         exercice_n1 = str(int(exercice) - 1)
         soldes_n = _soldes_dict(conn, exercice)

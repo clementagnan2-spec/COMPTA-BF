@@ -2522,3 +2522,35 @@ Testé avec un historique réel sur 2 exercices (2025 clôturé → 2026, avec
 une extension de bâtiment) : colonne Net N-1 correctement remplie (4 000 000,
 la valeur de 2025) au lieu d'être vide, TOTAL GENERAL Actif = TOTAL
 GENERAL Passif exactement (6 000 000) en N comme en N-1, écart à 0.
+
+### Crash au démarrage du Bilan corrigé — lecture de gabarit rendue auto-réparante
+
+**Crash signalé** (capture d'écran) : `openpyxl does not support the old
+.xls file format` — l'application plantait entièrement à l'ouverture du
+Bilan.
+
+**Cause** : le code utilisait `os.path.exists(...)` pour choisir entre le
+nouveau gabarit (`modele_bilan.xlsx`) et l'ancien (`bilan_template.xls`,
+un fichier XML SpreadsheetML malgré son extension .xls) — dans
+l'environnement de l'utilisateur, ce choix a mené vers l'ancien gabarit,
+mais la détection automatique de son format (`_is_spreadsheetml()`) a
+échoué, envoyant le fichier directement à `openpyxl.load_workbook()` qui
+ne sait pas lire ce format → plantage complet et immédiat de
+l'application (aucune gestion d'erreur).
+
+**Corrigé — deux niveaux de protection** :
+1. **`open_template_workbook()` rendue auto-réparante** : si la première
+   tentative de lecture échoue (quelle qu'en soit la raison — mauvaise
+   détection de format, encodage inhabituel...), la fonction retente
+   automatiquement l'AUTRE méthode avant d'abandonner. Message d'erreur
+   clair uniquement si les deux échouent.
+2. **Gestion d'erreur ajoutée à tous les points d'entrée** (Bilan à
+   l'écran, export .xlsx) : un souci de lecture de gabarit affiche
+   désormais un message d'erreur clair et actionnable au lieu de faire
+   planter toute l'application.
+
+Testé en reproduisant exactement le scénario du crash (gabarit .xlsx
+absent, seul l'ancien .xls disponible avec une détection de format
+défaillante) : fonctionne désormais correctement via le repli
+automatique. Testé aussi le cas extrême (aucun gabarit disponible) :
+erreur claire et actionnable levée, plus de plantage silencieux.

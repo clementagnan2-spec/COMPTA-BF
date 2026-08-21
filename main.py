@@ -1619,7 +1619,19 @@ class BilanTab(ttk.Frame):
             for row in tree.get_children():
                 tree.delete(row)
 
-        d = core.compute_bilan_plat(self.conn)
+        try:
+            d = core.compute_bilan_plat(self.conn)
+        except Exception as exc:
+            messagebox.showerror(
+                "Impossible de calculer le Bilan",
+                f"Le gabarit Excel du Bilan n'a pas pu être lu :\n\n{exc}\n\n"
+                f"Vérifiez que le dossier « templates » (contenant modele_bilan.xlsx et "
+                f"bilan_template.xls) est bien présent à côté de l'exécutable, dans une installation "
+                f"complète et à jour de l'application."
+            )
+            self.ecart_var.set("⚠ Bilan indisponible — voir le message d'erreur.")
+            self.ecart_label.configure(foreground="#B00020")
+            return
 
         def fmt(v):
             return fmt_cfa(v) if v not in (None, "") else ""
@@ -1661,8 +1673,12 @@ class BilanTab(ttk.Frame):
         )
         if not path:
             return
-        core.export_bilan_gabarit_xlsx(self.conn, path)
-        messagebox.showinfo("Export termin\u00e9", f"Bilan export\u00e9 dans le gabarit officiel :\n{path}")
+        try:
+            core.export_bilan_gabarit_xlsx(self.conn, path)
+        except Exception as exc:
+            messagebox.showerror("Erreur", f"Échec de l'export : {exc}")
+            return
+        messagebox.showinfo("Export terminé", f"Bilan exporté dans le gabarit officiel :\n{path}")
 
 
 class PiecesNonEquilibreesTab(ttk.Frame):
