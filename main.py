@@ -1949,7 +1949,9 @@ class GrandLivreTab(ttk.Frame):
 
         cols = ("date", "piece", "journal", "libelle", "ouv_debit", "ouv_credit",
                 "mvt_debit", "mvt_credit", "sold_debit", "sold_credit")
-        self.tree = ttk.Treeview(self, columns=cols, show="headings")
+        _gl_frame = ttk.Frame(self)
+        _gl_frame.pack(fill="both", expand=True, padx=8, pady=(0, 8))
+        self.tree = ttk.Treeview(_gl_frame, columns=cols, show="headings")
         headers = ["Date", "Pièce", "Journal", "Libellé", "Ouverture Débit", "Ouverture Crédit",
                    "Mouvement Débit", "Mouvement Crédit", "Clôture Débit", "Clôture Crédit"]
         widths = [85, 70, 55, 220, 100, 100, 100, 100, 100, 100]
@@ -1959,8 +1961,6 @@ class GrandLivreTab(ttk.Frame):
         self.tree.tag_configure("compte_header", background="#B4C6E7", font=("Segoe UI", 9, "bold"))
         self.tree.tag_configure("compte_total", background="#B4C6E7", font=("Segoe UI", 9, "bold"))
         self.tree.tag_configure("classe_total", background="#F4B183", font=("Segoe UI", 10, "bold"))
-        _gl_frame = ttk.Frame(self)
-        _gl_frame.pack(fill="both", expand=True, padx=8, pady=(0, 8))
         _gl_vscroll = ttk.Scrollbar(_gl_frame, orient="vertical", command=self.tree.yview)
         _gl_hscroll = ttk.Scrollbar(_gl_frame, orient="horizontal", command=self.tree.xview)
         self.tree.configure(yscrollcommand=_gl_vscroll.set, xscrollcommand=_gl_hscroll.set)

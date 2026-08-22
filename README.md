@@ -3062,3 +3062,27 @@ cas erroné trouvé.
 Testé : compilation propre, moteur comptable toujours pleinement
 fonctionnel, aucune autre scrollbar mal attribuée détectée dans
 l'ensemble de l'application.
+
+### Crash Grand livre corrigé — mélange grid/pack sur le mauvais conteneur
+
+**Crash signalé** (capture d'écran) : `_tkinter.TclError: cannot use
+geometry manager grid inside .!frame2.!grandlivretab which already has
+slaves managed by pack` à l'ouverture du Grand livre.
+
+**Cause** : dans mon précédent correctif de `GrandLivreTab` (ajout des
+scrollbars verticale et horizontale), le tableau (`self.tree`) avait été
+créé avec `self` comme parent (l'onglet lui-même, qui utilise déjà
+`.pack()` pour sa barre de filtres) au lieu du nouveau conteneur
+`_gl_frame` — puis positionné avec `.grid()`, provoquant un conflit
+Tkinter (un même conteneur ne peut pas mélanger `pack()` et `grid()`
+entre ses enfants directs).
+
+**Corrigé** : le tableau est maintenant créé directement avec
+`_gl_frame` comme parent, cohérent avec son positionnement en `.grid()`.
+**Vérification systématique** de tous les autres écrans ayant reçu une
+scrollbar par `.grid()` (au lieu du motif `pack(in_=...)` utilisé
+partout ailleurs) — aucun autre cas de ce type trouvé (Bilan SYSCOHADA
+était déjà correctement construit dès le départ).
+
+Testé : compilation propre, Grand livre calculable sans erreur, moteur
+comptable toujours pleinement fonctionnel.
