@@ -3114,3 +3114,26 @@ compris sur les tableaux en variable locale, pas seulement `self.xxx`).
 
 Testé : compilation propre, Trésorerie calculable sans erreur, moteur
 comptable toujours pleinement fonctionnel.
+
+### Toutes les scrollbars ajoutées automatiquement retirées — stabilité avant tout
+
+**Demande** : après plusieurs plantages successifs causés par le script
+d'ajout automatique de scrollbars (Grand livre, Trésorerie, Balance
+âgée), retrait de toutes les scrollbars ajoutées, y compris celles qui
+n'avaient pas encore planté.
+
+**Réalisé** : les **50 scrollbars ajoutées automatiquement** (script
+précédent) ont été annulées par un script de sens inverse, restituant
+l'affichage simple d'origine (`self.tree.pack(...)`). Les **4 cas
+corrigés manuellement** (Bilan SYSCOHADA, Grand livre, Soldes
+d'ouverture, Exercices comptables) ont également été ramenés à leur
+structure simple d'origine, par souci de cohérence et pour éliminer tout
+risque résiduel — même s'ils n'avaient causé aucun plantage.
+
+Les 2 scrollbars **préexistantes** avant mes modifications (non liées à
+cet incident, jamais fautives) ont été conservées telles quelles.
+
+Testé : compilation propre sur les 46 écrans concernés, moteur comptable
+et Grand livre pleinement fonctionnels, Soldes d'ouverture (colonnes
+Débit/Crédit avec totaux, ajoutées dans une réponse précédente et non
+liées au bug) toujours opérationnels.

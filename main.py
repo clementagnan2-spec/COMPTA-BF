@@ -1388,12 +1388,7 @@ class BalanceTab(ttk.Frame):
             self.tree.column(c, width=w, anchor="w")
         self.tree.tag_configure("classe_total", background="#DCE6F1", font=("Segoe UI", 9, "bold"))
         self.tree.tag_configure("grand_total", background="#1F4E78", foreground="white", font=("Segoe UI", 10, "bold"))
-        _tree_scrollframe = ttk.Frame(self)
-        _tree_scrollframe.pack(fill="both", expand=True, padx=8, pady=8)
-        _tree_vscroll = ttk.Scrollbar(_tree_scrollframe, orient="vertical", command=self.tree.yview)
-        self.tree.configure(yscrollcommand=_tree_vscroll.set)
-        self.tree.pack(in_=_tree_scrollframe, side="left", fill="both", expand=True)
-        _tree_vscroll.pack(in_=_tree_scrollframe, side="right", fill="y")
+        self.tree.pack(fill="both", expand=True, padx=8, pady=8)
         btn_bar = ttk.Frame(self)
         btn_bar.pack(fill="x", pady=(0, 4))
         ttk.Button(btn_bar, text="Actualiser", command=self.refresh).pack(side="left", padx=8)
@@ -1486,12 +1481,7 @@ class CompteResultatTab(ttk.Frame):
             tree_font = ("Segoe UI", 9, "bold") if key == "total" else ("Segoe UI", 9)
             self.tree.tag_configure(key, background=color, foreground=fg, font=tree_font)
             self.tree.tag_configure(key + "_header", background=color, foreground=fg, font=("Segoe UI", 9, "bold"))
-        _tree_scrollframe = ttk.Frame(self)
-        _tree_scrollframe.pack(fill="both", expand=True, padx=8, pady=8)
-        _tree_vscroll = ttk.Scrollbar(_tree_scrollframe, orient="vertical", command=self.tree.yview)
-        self.tree.configure(yscrollcommand=_tree_vscroll.set)
-        self.tree.pack(in_=_tree_scrollframe, side="left", fill="both", expand=True)
-        _tree_vscroll.pack(in_=_tree_scrollframe, side="right", fill="y")
+        self.tree.pack(fill="both", expand=True, padx=8, pady=8)
         ttk.Label(self, text=(
             "Calculé à partir de la même fonction que la Liasse fiscale, la Situation financière et "
             "le TFT (compute_liasse_resultat) — toujours cohérent avec la Balance et le Bilan."
@@ -1610,30 +1600,20 @@ class BilanSyscohadaTab(ttk.Frame):
         columns_frame.rowconfigure(0, weight=1)
 
         actif_cols = ("libelle", "brut", "amort", "net", "net_n1")
-        actif_frame = ttk.Frame(columns_frame)
-        actif_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 4))
-        self.tree_actif = ttk.Treeview(actif_frame, columns=actif_cols, show="headings", height=30)
+        self.tree_actif = ttk.Treeview(columns_frame, columns=actif_cols, show="headings", height=30)
         headers_a = ["Libellé (ACTIF)", "Brut", "Amort.", "Net", "Net N-1 (ouverture)"]
         for c, h, w in zip(actif_cols, headers_a, [260, 100, 100, 110, 130]):
             self.tree_actif.heading(c, text=h)
             self.tree_actif.column(c, width=w, anchor="w" if c == "libelle" else "e", stretch=(c == "libelle"))
-        actif_scroll = ttk.Scrollbar(actif_frame, orient="vertical", command=self.tree_actif.yview)
-        self.tree_actif.configure(yscrollcommand=actif_scroll.set)
-        self.tree_actif.pack(side="left", fill="both", expand=True)
-        actif_scroll.pack(side="right", fill="y")
+        self.tree_actif.grid(row=0, column=0, sticky="nsew", padx=(0, 4))
 
         passif_cols = ("libelle", "montant", "montant_n1")
-        passif_frame = ttk.Frame(columns_frame)
-        passif_frame.grid(row=0, column=1, sticky="nsew", padx=(4, 0))
-        self.tree_passif = ttk.Treeview(passif_frame, columns=passif_cols, show="headings", height=30)
+        self.tree_passif = ttk.Treeview(columns_frame, columns=passif_cols, show="headings", height=30)
         headers_p = ["Libellé (PASSIF)", "Montant", "Montant N-1 (ouverture)"]
         for c, h, w in zip(passif_cols, headers_p, [280, 140, 140]):
             self.tree_passif.heading(c, text=h)
             self.tree_passif.column(c, width=w, anchor="w" if c == "libelle" else "e", stretch=(c == "libelle"))
-        passif_scroll = ttk.Scrollbar(passif_frame, orient="vertical", command=self.tree_passif.yview)
-        self.tree_passif.configure(yscrollcommand=passif_scroll.set)
-        self.tree_passif.pack(side="left", fill="both", expand=True)
-        passif_scroll.pack(side="right", fill="y")
+        self.tree_passif.grid(row=0, column=1, sticky="nsew", padx=(4, 0))
 
         style = ttk.Style()
         style.configure("BilanS.Treeview", rowheight=22, font=("Segoe UI", 10))
@@ -1883,12 +1863,7 @@ class PiecesNonEquilibreesTab(ttk.Frame):
             self.tree.heading(c, text=h)
             self.tree.column(c, width=w, anchor="w" if c in ("piece", "journal") else "e")
         self.tree.tag_configure("total", background="#1F4E78", foreground="white", font=("Segoe UI", 10, "bold"))
-        _tree_scrollframe = ttk.Frame(self)
-        _tree_scrollframe.pack(fill="both", expand=True, padx=16, pady=8)
-        _tree_vscroll = ttk.Scrollbar(_tree_scrollframe, orient="vertical", command=self.tree.yview)
-        self.tree.configure(yscrollcommand=_tree_vscroll.set)
-        self.tree.pack(in_=_tree_scrollframe, side="left", fill="both", expand=True)
-        _tree_vscroll.pack(in_=_tree_scrollframe, side="right", fill="y")
+        self.tree.pack(fill="both", expand=True, padx=16, pady=8)
 
         self.total_var = tk.StringVar()
         ttk.Label(self, textvariable=self.total_var, font=("Segoe UI", 10, "bold")).pack(
@@ -1949,9 +1924,7 @@ class GrandLivreTab(ttk.Frame):
 
         cols = ("date", "piece", "journal", "libelle", "ouv_debit", "ouv_credit",
                 "mvt_debit", "mvt_credit", "sold_debit", "sold_credit")
-        _gl_frame = ttk.Frame(self)
-        _gl_frame.pack(fill="both", expand=True, padx=8, pady=(0, 8))
-        self.tree = ttk.Treeview(_gl_frame, columns=cols, show="headings")
+        self.tree = ttk.Treeview(self, columns=cols, show="headings")
         headers = ["Date", "Pièce", "Journal", "Libellé", "Ouverture Débit", "Ouverture Crédit",
                    "Mouvement Débit", "Mouvement Crédit", "Clôture Débit", "Clôture Crédit"]
         widths = [85, 70, 55, 220, 100, 100, 100, 100, 100, 100]
@@ -1961,14 +1934,7 @@ class GrandLivreTab(ttk.Frame):
         self.tree.tag_configure("compte_header", background="#B4C6E7", font=("Segoe UI", 9, "bold"))
         self.tree.tag_configure("compte_total", background="#B4C6E7", font=("Segoe UI", 9, "bold"))
         self.tree.tag_configure("classe_total", background="#F4B183", font=("Segoe UI", 10, "bold"))
-        _gl_vscroll = ttk.Scrollbar(_gl_frame, orient="vertical", command=self.tree.yview)
-        _gl_hscroll = ttk.Scrollbar(_gl_frame, orient="horizontal", command=self.tree.xview)
-        self.tree.configure(yscrollcommand=_gl_vscroll.set, xscrollcommand=_gl_hscroll.set)
-        self.tree.grid(row=0, column=0, sticky="nsew")
-        _gl_vscroll.grid(row=0, column=1, sticky="ns")
-        _gl_hscroll.grid(row=1, column=0, sticky="ew")
-        _gl_frame.rowconfigure(0, weight=1)
-        _gl_frame.columnconfigure(0, weight=1)
+        self.tree.pack(fill="both", expand=True, padx=8, pady=(0, 8))
 
     def _extract_compte_code(self):
         raw = self.compte_var.get().strip()
@@ -2088,12 +2054,7 @@ class OpeningBalancesTab(ttk.Frame):
             self.tree.heading(c, text=h)
             self.tree.column(c, width=w, anchor="w" if c in ("code", "label") else "e")
         self.tree.tag_configure("total", background="#1F4E78", foreground="white", font=("Segoe UI", 10, "bold"))
-        tree_frame = ttk.Frame(self)
-        tree_frame.pack(fill="both", expand=True, padx=8, pady=8)
-        scroll_y = ttk.Scrollbar(tree_frame, orient="vertical", command=self.tree.yview)
-        self.tree.configure(yscrollcommand=scroll_y.set)
-        self.tree.pack(in_=tree_frame, side="left", fill="both", expand=True)
-        scroll_y.pack(side="right", fill="y")
+        self.tree.pack(fill="both", expand=True, padx=8, pady=8)
         self.tree.bind("<<TreeviewSelect>>", self._on_select)
 
         bottom = ttk.Frame(self)
@@ -2276,12 +2237,7 @@ class StocksSyntheseTab(ttk.Frame):
         for c, h, w in zip(cols, headers, widths):
             self.tree.heading(c, text=h)
             self.tree.column(c, width=w, anchor="w")
-        _tree_scrollframe = ttk.Frame(self)
-        _tree_scrollframe.pack(fill="both", expand=True, padx=8, pady=8)
-        _tree_vscroll = ttk.Scrollbar(_tree_scrollframe, orient="vertical", command=self.tree.yview)
-        self.tree.configure(yscrollcommand=_tree_vscroll.set)
-        self.tree.pack(in_=_tree_scrollframe, side="left", fill="both", expand=True)
-        _tree_vscroll.pack(in_=_tree_scrollframe, side="right", fill="y")
+        self.tree.pack(fill="both", expand=True, padx=8, pady=8)
         self.tree.bind("<<TreeviewSelect>>", self._on_select)
         self.selected_code = None
         self.refresh()
@@ -2380,12 +2336,7 @@ class StocksMouvementsTab(ttk.Frame):
             self.tree.heading(c, text=h)
             self.tree.column(c, width=w, anchor="w")
         self.tree.tag_configure("auto", foreground="#1F4E78")
-        _tree_scrollframe = ttk.Frame(self)
-        _tree_scrollframe.pack(fill="both", expand=True, padx=8, pady=8)
-        _tree_vscroll = ttk.Scrollbar(_tree_scrollframe, orient="vertical", command=self.tree.yview)
-        self.tree.configure(yscrollcommand=_tree_vscroll.set)
-        self.tree.pack(in_=_tree_scrollframe, side="left", fill="both", expand=True)
-        _tree_vscroll.pack(in_=_tree_scrollframe, side="right", fill="y")
+        self.tree.pack(fill="both", expand=True, padx=8, pady=8)
 
         self.totals_var = tk.StringVar()
         ttk.Label(self, textvariable=self.totals_var, font=("Segoe UI", 10, "bold")).pack(anchor="w", padx=8, pady=(0, 8))
@@ -2424,12 +2375,7 @@ class CoutsFabricationPeriodeTab(ttk.Frame):
             "sur la ligne correspondante dans l'onglet Saisie."
         ), foreground="#595959").pack(anchor="w", padx=8, pady=(8, 0))
         self.text = tk.Text(self, font=("Consolas", 11), wrap="none")
-        _text_scrollframe = ttk.Frame(self)
-        _text_scrollframe.pack(fill="both", expand=True, padx=8, pady=8)
-        _text_vscroll = ttk.Scrollbar(_text_scrollframe, orient="vertical", command=self.text.yview)
-        self.text.configure(yscrollcommand=_text_vscroll.set)
-        self.text.pack(in_=_text_scrollframe, side="left", fill="both", expand=True)
-        _text_vscroll.pack(in_=_text_scrollframe, side="right", fill="y")
+        self.text.pack(fill="both", expand=True, padx=8, pady=8)
         ttk.Button(self, text="Actualiser", command=self.refresh).pack(pady=(0, 8))
         self.refresh()
 
@@ -2540,12 +2486,7 @@ class RecetteFabricationTab(ttk.Frame):
         for c, h, w in zip(cols, headers, widths):
             self.tree.heading(c, text=h)
             self.tree.column(c, width=w, anchor="w")
-        _tree_scrollframe = ttk.Frame(self)
-        _tree_scrollframe.pack(fill="both", expand=True, padx=12, pady=8)
-        _tree_vscroll = ttk.Scrollbar(_tree_scrollframe, orient="vertical", command=self.tree.yview)
-        self.tree.configure(yscrollcommand=_tree_vscroll.set)
-        self.tree.pack(in_=_tree_scrollframe, side="left", fill="both", expand=True)
-        _tree_vscroll.pack(in_=_tree_scrollframe, side="right", fill="y")
+        self.tree.pack(fill="both", expand=True, padx=12, pady=8)
         self.tree.bind("<<TreeviewSelect>>", self._on_ligne_select)
         ttk.Button(self, text="Supprimer le composant sélectionné", command=self.delete_ligne).pack(
             anchor="w", padx=12)
@@ -2836,12 +2777,7 @@ class TftIndirectTab(ttk.Frame):
             tree_font = ("Segoe UI", 9, "bold") if key == "total" else ("Segoe UI", 9)
             self.tree.tag_configure(key, background=color, foreground=fg, font=tree_font)
             self.tree.tag_configure(key + "_header", background=color, foreground=fg, font=("Segoe UI", 9, "bold"))
-        _tree_scrollframe = ttk.Frame(self)
-        _tree_scrollframe.pack(fill="both", expand=True, padx=8, pady=8)
-        _tree_vscroll = ttk.Scrollbar(_tree_scrollframe, orient="vertical", command=self.tree.yview)
-        self.tree.configure(yscrollcommand=_tree_vscroll.set)
-        self.tree.pack(in_=_tree_scrollframe, side="left", fill="both", expand=True)
-        _tree_vscroll.pack(in_=_tree_scrollframe, side="right", fill="y")
+        self.tree.pack(fill="both", expand=True, padx=8, pady=8)
         self.ecart_var = tk.StringVar()
         ttk.Label(self, textvariable=self.ecart_var, font=("Segoe UI", 10, "bold")).pack(anchor="w", padx=8)
         ttk.Button(self, text="Actualiser", command=self.refresh).pack(pady=8)
@@ -2951,12 +2887,7 @@ class TftDirectTab(ttk.Frame):
         ), foreground="#595959", wraplength=550).pack(side="left", padx=12)
 
         self.text = tk.Text(self, font=("Consolas", 11), wrap="none")
-        _text_scrollframe = ttk.Frame(self)
-        _text_scrollframe.pack(fill="both", expand=True, padx=8, pady=8)
-        _text_vscroll = ttk.Scrollbar(_text_scrollframe, orient="vertical", command=self.text.yview)
-        self.text.configure(yscrollcommand=_text_vscroll.set)
-        self.text.pack(in_=_text_scrollframe, side="left", fill="both", expand=True)
-        _text_vscroll.pack(in_=_text_scrollframe, side="right", fill="y")
+        self.text.pack(fill="both", expand=True, padx=8, pady=8)
         self.refresh()
 
     def save_and_refresh(self):
@@ -3025,12 +2956,7 @@ class SituationFinanciereTab(ttk.Frame):
             tree_font = ("Segoe UI", 9, "bold") if key == "total" else ("Segoe UI", 9)
             self.tree.tag_configure(key, background=color, foreground=fg, font=tree_font)
             self.tree.tag_configure(key + "_header", background=color, foreground=fg, font=("Segoe UI", 9, "bold"))
-        _tree_scrollframe = ttk.Frame(self)
-        _tree_scrollframe.pack(fill="both", expand=True, padx=8, pady=8)
-        _tree_vscroll = ttk.Scrollbar(_tree_scrollframe, orient="vertical", command=self.tree.yview)
-        self.tree.configure(yscrollcommand=_tree_vscroll.set)
-        self.tree.pack(in_=_tree_scrollframe, side="left", fill="both", expand=True)
-        _tree_vscroll.pack(in_=_tree_scrollframe, side="right", fill="y")
+        self.tree.pack(fill="both", expand=True, padx=8, pady=8)
         self.ecart_var = tk.StringVar()
         ttk.Label(self, textvariable=self.ecart_var, font=("Segoe UI", 10, "bold")).pack(anchor="w", padx=8)
         ttk.Button(self, text="Actualiser", command=self.refresh).pack(pady=8)
@@ -3266,12 +3192,7 @@ class PersonnelTab(ttk.Frame):
                            [40, 100, 130, 130, 150, 130, 90]):
             self.tree.heading(c, text=h)
             self.tree.column(c, width=w, anchor="w")
-        _tree_scrollframe = ttk.Frame(self)
-        _tree_scrollframe.pack(fill="both", expand=True, padx=16, pady=8)
-        _tree_vscroll = ttk.Scrollbar(_tree_scrollframe, orient="vertical", command=self.tree.yview)
-        self.tree.configure(yscrollcommand=_tree_vscroll.set)
-        self.tree.pack(in_=_tree_scrollframe, side="left", fill="both", expand=True)
-        _tree_vscroll.pack(in_=_tree_scrollframe, side="right", fill="y")
+        self.tree.pack(fill="both", expand=True, padx=16, pady=8)
         self.tree.bind("<<TreeviewSelect>>", self._on_select)
         self.refresh()
 
@@ -3408,12 +3329,7 @@ class TimeSheetTab(ttk.Frame):
         for c, h, w in zip(cols, ["ID", "Employé", "Date", "Heures", "Activité"], [40, 180, 100, 80, 350]):
             self.tree.heading(c, text=h)
             self.tree.column(c, width=w, anchor="w")
-        _tree_scrollframe = ttk.Frame(self)
-        _tree_scrollframe.pack(fill="both", expand=True, padx=16, pady=8)
-        _tree_vscroll = ttk.Scrollbar(_tree_scrollframe, orient="vertical", command=self.tree.yview)
-        self.tree.configure(yscrollcommand=_tree_vscroll.set)
-        self.tree.pack(in_=_tree_scrollframe, side="left", fill="both", expand=True)
-        _tree_vscroll.pack(in_=_tree_scrollframe, side="right", fill="y")
+        self.tree.pack(fill="both", expand=True, padx=16, pady=8)
         ttk.Button(self, text="Supprimer la ligne sélectionnée", command=self.delete_sel).pack(anchor="w", padx=16, pady=(0, 12))
         self.refresh()
 
@@ -3546,12 +3462,7 @@ class KpiTab(ttk.Frame):
             self.tree.column(c, width=w, anchor="w")
         self.tree.tag_configure("atteint", foreground="#1F7A1F")
         self.tree.tag_configure("non_atteint", foreground="#B00020")
-        _tree_scrollframe = ttk.Frame(self)
-        _tree_scrollframe.pack(fill="both", expand=True, padx=16, pady=8)
-        _tree_vscroll = ttk.Scrollbar(_tree_scrollframe, orient="vertical", command=self.tree.yview)
-        self.tree.configure(yscrollcommand=_tree_vscroll.set)
-        self.tree.pack(in_=_tree_scrollframe, side="left", fill="both", expand=True)
-        _tree_vscroll.pack(in_=_tree_scrollframe, side="right", fill="y")
+        self.tree.pack(fill="both", expand=True, padx=16, pady=8)
         self.tree.bind("<<TreeviewSelect>>", self._on_select)
         self.refresh()
 
@@ -3741,12 +3652,7 @@ class HsTab(ttk.Frame):
             self.tree.heading(c, text=h)
             self.tree.column(c, width=w, anchor="w")
         self.tree.tag_configure("ouvert", foreground="#B00020")
-        _tree_scrollframe = ttk.Frame(self)
-        _tree_scrollframe.pack(fill="both", expand=True, padx=16, pady=8)
-        _tree_vscroll = ttk.Scrollbar(_tree_scrollframe, orient="vertical", command=self.tree.yview)
-        self.tree.configure(yscrollcommand=_tree_vscroll.set)
-        self.tree.pack(in_=_tree_scrollframe, side="left", fill="both", expand=True)
-        _tree_vscroll.pack(in_=_tree_scrollframe, side="right", fill="y")
+        self.tree.pack(fill="both", expand=True, padx=16, pady=8)
         self.tree.bind("<<TreeviewSelect>>", self._on_select)
         self.refresh()
 
@@ -3858,12 +3764,7 @@ class TresorerieTab(ttk.Frame):
             self.tree_banques.heading(c, text=h)
             self.tree_banques.column(c, width=w, anchor="w" if c in ("compte", "libelle") else "e")
         self.tree_banques.tag_configure("total", background="#1F4E78", foreground="white", font=("Segoe UI", 9, "bold"))
-        _tree_banques_scrollframe = ttk.Frame(parent)
-        _tree_banques_scrollframe.pack(fill="both", expand=True, padx=8, pady=8)
-        _tree_banques_vscroll = ttk.Scrollbar(_tree_banques_scrollframe, orient="vertical", command=self.tree_banques.yview)
-        self.tree_banques.configure(yscrollcommand=_tree_banques_vscroll.set)
-        self.tree_banques.pack(in_=_tree_banques_scrollframe, side="left", fill="both", expand=True)
-        _tree_banques_vscroll.pack(in_=_tree_banques_scrollframe, side="right", fill="y")
+        self.tree_banques.pack(fill="both", expand=True, padx=8, pady=8)
 
     def _build_engagements(self, parent):
         ttk.Label(parent, text=(
@@ -3885,12 +3786,7 @@ class TresorerieTab(ttk.Frame):
             self.tree_engagements.heading(c, text=h)
             self.tree_engagements.column(c, width=w, anchor="w" if c != "montant" else "e")
         self.tree_engagements.tag_configure("total", background="#1F4E78", foreground="white", font=("Segoe UI", 9, "bold"))
-        _tree_engagements_scrollframe = ttk.Frame(parent)
-        _tree_engagements_scrollframe.pack(fill="both", expand=True, padx=8, pady=8)
-        _tree_engagements_vscroll = ttk.Scrollbar(_tree_engagements_scrollframe, orient="vertical", command=self.tree_engagements.yview)
-        self.tree_engagements.configure(yscrollcommand=_tree_engagements_vscroll.set)
-        self.tree_engagements.pack(in_=_tree_engagements_scrollframe, side="left", fill="both", expand=True)
-        _tree_engagements_vscroll.pack(in_=_tree_engagements_scrollframe, side="right", fill="y")
+        self.tree_engagements.pack(fill="both", expand=True, padx=8, pady=8)
 
     def refresh(self):
         for row in self.tree_banques.get_children():
@@ -3972,12 +3868,7 @@ class ParcAutoTab(ttk.Frame):
                            [40, 140, 120, 120, 120, 150, 110]):
             self.tree.heading(c, text=h)
             self.tree.column(c, width=w, anchor="w")
-        _tree_scrollframe = ttk.Frame(self)
-        _tree_scrollframe.pack(fill="both", expand=True, padx=16, pady=8)
-        _tree_vscroll = ttk.Scrollbar(_tree_scrollframe, orient="vertical", command=self.tree.yview)
-        self.tree.configure(yscrollcommand=_tree_vscroll.set)
-        self.tree.pack(in_=_tree_scrollframe, side="left", fill="both", expand=True)
-        _tree_vscroll.pack(in_=_tree_scrollframe, side="right", fill="y")
+        self.tree.pack(fill="both", expand=True, padx=16, pady=8)
         self.tree.bind("<<TreeviewSelect>>", self._on_select)
         self.refresh()
 
@@ -4078,12 +3969,7 @@ class MissionsTab(ttk.Frame):
         for c, h, w in zip(cols, headers, widths):
             self.tree.heading(c, text=h)
             self.tree.column(c, width=w, anchor="w")
-        _tree_scrollframe = ttk.Frame(self)
-        _tree_scrollframe.pack(fill="both", expand=True, padx=16, pady=8)
-        _tree_vscroll = ttk.Scrollbar(_tree_scrollframe, orient="vertical", command=self.tree.yview)
-        self.tree.configure(yscrollcommand=_tree_vscroll.set)
-        self.tree.pack(in_=_tree_scrollframe, side="left", fill="both", expand=True)
-        _tree_vscroll.pack(in_=_tree_scrollframe, side="right", fill="y")
+        self.tree.pack(fill="both", expand=True, padx=16, pady=8)
         self.refresh()
 
     def _refresh_vehicule_values(self):
@@ -4177,12 +4063,7 @@ class PiecesRechangeTab(ttk.Frame):
         for c, h, w in zip(cols, headers, widths):
             self.tree.heading(c, text=h)
             self.tree.column(c, width=w, anchor="w")
-        _tree_scrollframe = ttk.Frame(self)
-        _tree_scrollframe.pack(fill="both", expand=True, padx=16, pady=8)
-        _tree_vscroll = ttk.Scrollbar(_tree_scrollframe, orient="vertical", command=self.tree.yview)
-        self.tree.configure(yscrollcommand=_tree_vscroll.set)
-        self.tree.pack(in_=_tree_scrollframe, side="left", fill="both", expand=True)
-        _tree_vscroll.pack(in_=_tree_scrollframe, side="right", fill="y")
+        self.tree.pack(fill="both", expand=True, padx=16, pady=8)
         self.tree.bind("<<TreeviewSelect>>", self._on_select)
         self.refresh()
 
@@ -4305,12 +4186,7 @@ class ReparationDialog(tk.Toplevel):
         for c, h, w in zip(cols, ["ID", "Pièce", "Quantité", "Coût unit.", "Montant"], [40, 300, 90, 100, 110]):
             self.tree.heading(c, text=h)
             self.tree.column(c, width=w, anchor="w")
-        _tree_scrollframe = ttk.Frame(self)
-        _tree_scrollframe.pack(fill="both", expand=True, padx=6, pady=6)
-        _tree_vscroll = ttk.Scrollbar(_tree_scrollframe, orient="vertical", command=self.tree.yview)
-        self.tree.configure(yscrollcommand=_tree_vscroll.set)
-        self.tree.pack(in_=_tree_scrollframe, side="left", fill="both", expand=True)
-        _tree_vscroll.pack(in_=_tree_scrollframe, side="right", fill="y")
+        self.tree.pack(fill="both", expand=True, padx=6, pady=6)
         ttk.Button(lignes_frame, text="Supprimer la ligne sélectionnée (restitue le stock)",
                    command=self.delete_ligne).pack(anchor="w", padx=6, pady=(0, 6))
         self.total_var = tk.StringVar()
@@ -4409,12 +4285,7 @@ class ReparationsTab(ttk.Frame):
         for c, h, w in zip(cols, headers, widths):
             self.tree.heading(c, text=h)
             self.tree.column(c, width=w, anchor="w")
-        _tree_scrollframe = ttk.Frame(self)
-        _tree_scrollframe.pack(fill="both", expand=True, padx=16, pady=8)
-        _tree_vscroll = ttk.Scrollbar(_tree_scrollframe, orient="vertical", command=self.tree.yview)
-        self.tree.configure(yscrollcommand=_tree_vscroll.set)
-        self.tree.pack(in_=_tree_scrollframe, side="left", fill="both", expand=True)
-        _tree_vscroll.pack(in_=_tree_scrollframe, side="right", fill="y")
+        self.tree.pack(fill="both", expand=True, padx=16, pady=8)
         self.tree.bind("<Double-1>", self._on_double_click)
         self._by_iid = {}
         self.refresh()
@@ -4502,12 +4373,7 @@ class ImmobilisationsTab(ttk.Frame):
         for c, h, w in zip(cols, headers, widths):
             self.tree.heading(c, text=h)
             self.tree.column(c, width=w, anchor="w")
-        _tree_scrollframe = ttk.Frame(self)
-        _tree_scrollframe.pack(fill="both", expand=True, padx=16, pady=8)
-        _tree_vscroll = ttk.Scrollbar(_tree_scrollframe, orient="vertical", command=self.tree.yview)
-        self.tree.configure(yscrollcommand=_tree_vscroll.set)
-        self.tree.pack(in_=_tree_scrollframe, side="left", fill="both", expand=True)
-        _tree_vscroll.pack(in_=_tree_scrollframe, side="right", fill="y")
+        self.tree.pack(fill="both", expand=True, padx=16, pady=8)
         self.tree.bind("<<TreeviewSelect>>", self._on_select)
         ttk.Button(self, text="Actualiser", command=self.refresh).pack(anchor="w", padx=16, pady=(0, 12))
         self.refresh()
@@ -4577,12 +4443,7 @@ class AmortissementsTab(ttk.Frame):
         self.tree.heading("taux", text="Taux annuel (%)")
         self.tree.column("categorie", width=560, anchor="w")
         self.tree.column("taux", width=120, anchor="e")
-        _tree_scrollframe = ttk.Frame(self)
-        _tree_scrollframe.pack(fill="both", expand=True, padx=16, pady=8)
-        _tree_vscroll = ttk.Scrollbar(_tree_scrollframe, orient="vertical", command=self.tree.yview)
-        self.tree.configure(yscrollcommand=_tree_vscroll.set)
-        self.tree.pack(in_=_tree_scrollframe, side="left", fill="both", expand=True)
-        _tree_vscroll.pack(in_=_tree_scrollframe, side="right", fill="y")
+        self.tree.pack(fill="both", expand=True, padx=16, pady=8)
         self.tree.bind("<Double-1>", self._on_double_click)
         ttk.Label(self, text="Double-cliquez sur une catégorie pour modifier son taux.",
                   foreground="#595959").pack(anchor="w", padx=16)
@@ -4656,12 +4517,7 @@ class AnalytiquePeriodeTab(ttk.Frame):
             self.tree.heading(c, text=h)
             self.tree.column(c, width=w, anchor="w")
         self.tree.tag_configure("total", background="#1F4E78", foreground="white", font=("Segoe UI", 10, "bold"))
-        _tree_scrollframe = ttk.Frame(self)
-        _tree_scrollframe.pack(fill="both", expand=True, padx=16, pady=8)
-        _tree_vscroll = ttk.Scrollbar(_tree_scrollframe, orient="vertical", command=self.tree.yview)
-        self.tree.configure(yscrollcommand=_tree_vscroll.set)
-        self.tree.pack(in_=_tree_scrollframe, side="left", fill="both", expand=True)
-        _tree_vscroll.pack(in_=_tree_scrollframe, side="right", fill="y")
+        self.tree.pack(fill="both", expand=True, padx=16, pady=8)
 
         ttk.Label(self, text=(
             "Pour qu'une charge apparaisse ici : dans l'onglet Saisie, renseignez le champ "
@@ -4746,12 +4602,7 @@ class ClassePeriodeTab(ttk.Frame):
             self.tree.heading(c, text=h)
             self.tree.column(c, width=w, anchor="w")
         self.tree.tag_configure("total", background="#1F4E78", foreground="white", font=("Segoe UI", 10, "bold"))
-        _tree_scrollframe = ttk.Frame(self)
-        _tree_scrollframe.pack(fill="both", expand=True, padx=16, pady=8)
-        _tree_vscroll = ttk.Scrollbar(_tree_scrollframe, orient="vertical", command=self.tree.yview)
-        self.tree.configure(yscrollcommand=_tree_vscroll.set)
-        self.tree.pack(in_=_tree_scrollframe, side="left", fill="both", expand=True)
-        _tree_vscroll.pack(in_=_tree_scrollframe, side="right", fill="y")
+        self.tree.pack(fill="both", expand=True, padx=16, pady=8)
         self.total_var = tk.StringVar()
         ttk.Label(self, textvariable=self.total_var, font=("Segoe UI", 10, "bold")).pack(anchor="w", padx=16, pady=(0, 12))
         self.refresh()
@@ -4826,12 +4677,7 @@ class RapprochementBancaireTab(ttk.Frame):
         self.tree.tag_configure("compte_header", background="#B4C6E7", font=("Segoe UI", 9, "bold"))
         self.tree.tag_configure("compte_footer", background="#DCE6F1", font=("Segoe UI", 9, "bold"))
         self.tree.tag_configure("pointe", background="#D9EAD3")
-        _tree_scrollframe = ttk.Frame(self)
-        _tree_scrollframe.pack(fill="both", expand=True, padx=16, pady=8)
-        _tree_vscroll = ttk.Scrollbar(_tree_scrollframe, orient="vertical", command=self.tree.yview)
-        self.tree.configure(yscrollcommand=_tree_vscroll.set)
-        self.tree.pack(in_=_tree_scrollframe, side="left", fill="both", expand=True)
-        _tree_vscroll.pack(in_=_tree_scrollframe, side="right", fill="y")
+        self.tree.pack(fill="both", expand=True, padx=16, pady=8)
         self.tree.bind("<Button-1>", self._on_click)
 
         self.ecart_var = tk.StringVar()
@@ -4923,12 +4769,7 @@ class VentesTab(ttk.Frame):
         for c, h, w in zip(cols, headers, widths):
             self.tree.heading(c, text=h)
             self.tree.column(c, width=w, anchor="w")
-        _tree_scrollframe = ttk.Frame(self)
-        _tree_scrollframe.pack(fill="both", expand=True, padx=16, pady=8)
-        _tree_vscroll = ttk.Scrollbar(_tree_scrollframe, orient="vertical", command=self.tree.yview)
-        self.tree.configure(yscrollcommand=_tree_vscroll.set)
-        self.tree.pack(in_=_tree_scrollframe, side="left", fill="both", expand=True)
-        _tree_vscroll.pack(in_=_tree_scrollframe, side="right", fill="y")
+        self.tree.pack(fill="both", expand=True, padx=16, pady=8)
         self.total_var = tk.StringVar()
         ttk.Label(self, textvariable=self.total_var, font=("Segoe UI", 10, "bold")).pack(anchor="w", padx=16, pady=(0, 12))
         self.refresh()
@@ -4987,12 +4828,7 @@ class AchatsTab(ttk.Frame):
         for c, h, w in zip(cols, headers, widths):
             self.tree.heading(c, text=h)
             self.tree.column(c, width=w, anchor="w")
-        _tree_scrollframe = ttk.Frame(self)
-        _tree_scrollframe.pack(fill="both", expand=True, padx=16, pady=8)
-        _tree_vscroll = ttk.Scrollbar(_tree_scrollframe, orient="vertical", command=self.tree.yview)
-        self.tree.configure(yscrollcommand=_tree_vscroll.set)
-        self.tree.pack(in_=_tree_scrollframe, side="left", fill="both", expand=True)
-        _tree_vscroll.pack(in_=_tree_scrollframe, side="right", fill="y")
+        self.tree.pack(fill="both", expand=True, padx=16, pady=8)
         self.total_var = tk.StringVar()
         ttk.Label(self, textvariable=self.total_var, font=("Segoe UI", 10, "bold")).pack(anchor="w", padx=16, pady=(0, 12))
         self.refresh()
@@ -5026,12 +4862,7 @@ class MargesTab(ttk.Frame):
         super().__init__(parent)
         self.conn = conn
         self.text = tk.Text(self, font=("Consolas", 11), wrap="none")
-        _text_scrollframe = ttk.Frame(self)
-        _text_scrollframe.pack(fill="both", expand=True, padx=16, pady=16)
-        _text_vscroll = ttk.Scrollbar(_text_scrollframe, orient="vertical", command=self.text.yview)
-        self.text.configure(yscrollcommand=_text_vscroll.set)
-        self.text.pack(in_=_text_scrollframe, side="left", fill="both", expand=True)
-        _text_vscroll.pack(in_=_text_scrollframe, side="right", fill="y")
+        self.text.pack(fill="both", expand=True, padx=16, pady=16)
         self.refresh()
 
     def refresh(self):
@@ -5100,12 +4931,7 @@ class ClientsTab(ttk.Frame):
         for c, h, w in zip(cols, headers, widths):
             self.tree.heading(c, text=h)
             self.tree.column(c, width=w, anchor="w")
-        _tree_scrollframe = ttk.Frame(self)
-        _tree_scrollframe.pack(fill="both", expand=True, padx=16, pady=8)
-        _tree_vscroll = ttk.Scrollbar(_tree_scrollframe, orient="vertical", command=self.tree.yview)
-        self.tree.configure(yscrollcommand=_tree_vscroll.set)
-        self.tree.pack(in_=_tree_scrollframe, side="left", fill="both", expand=True)
-        _tree_vscroll.pack(in_=_tree_scrollframe, side="right", fill="y")
+        self.tree.pack(fill="both", expand=True, padx=16, pady=8)
         self.tree.bind("<<TreeviewSelect>>", self._on_select)
         self.refresh()
 
@@ -5236,12 +5062,7 @@ class FournisseursTab(ttk.Frame):
         for c, h, w in zip(cols, headers, widths):
             self.tree.heading(c, text=h)
             self.tree.column(c, width=w, anchor="w")
-        _tree_scrollframe = ttk.Frame(self)
-        _tree_scrollframe.pack(fill="both", expand=True, padx=16, pady=8)
-        _tree_vscroll = ttk.Scrollbar(_tree_scrollframe, orient="vertical", command=self.tree.yview)
-        self.tree.configure(yscrollcommand=_tree_vscroll.set)
-        self.tree.pack(in_=_tree_scrollframe, side="left", fill="both", expand=True)
-        _tree_vscroll.pack(in_=_tree_scrollframe, side="right", fill="y")
+        self.tree.pack(fill="both", expand=True, padx=16, pady=8)
         self.tree.bind("<<TreeviewSelect>>", self._on_select)
         self.refresh()
 
@@ -5419,12 +5240,7 @@ class FacturationTab(ttk.Frame):
         for c, h, w in zip(cols, headers, widths):
             self.tree.heading(c, text=h)
             self.tree.column(c, width=w, anchor="w")
-        _tree_scrollframe = ttk.Frame(self)
-        _tree_scrollframe.pack(fill="both", expand=True, padx=12, pady=6)
-        _tree_vscroll = ttk.Scrollbar(_tree_scrollframe, orient="vertical", command=self.tree.yview)
-        self.tree.configure(yscrollcommand=_tree_vscroll.set)
-        self.tree.pack(in_=_tree_scrollframe, side="left", fill="both", expand=True)
-        _tree_vscroll.pack(in_=_tree_scrollframe, side="right", fill="y")
+        self.tree.pack(fill="both", expand=True, padx=12, pady=6)
         ttk.Button(self, text="Supprimer la ligne sélectionnée", command=self.delete_ligne).pack(anchor="w", padx=12)
 
         self.totals_var = tk.StringVar()
@@ -5825,12 +5641,7 @@ class RecouvrementTab(ttk.Frame):
             self.tree.heading(c, text=h)
             self.tree.column(c, width=w, anchor="w")
         self.tree.tag_configure("depasse", foreground="#B00020")
-        _tree_scrollframe = ttk.Frame(self)
-        _tree_scrollframe.pack(fill="both", expand=True, padx=16, pady=8)
-        _tree_vscroll = ttk.Scrollbar(_tree_scrollframe, orient="vertical", command=self.tree.yview)
-        self.tree.configure(yscrollcommand=_tree_vscroll.set)
-        self.tree.pack(in_=_tree_scrollframe, side="left", fill="both", expand=True)
-        _tree_vscroll.pack(in_=_tree_scrollframe, side="right", fill="y")
+        self.tree.pack(fill="both", expand=True, padx=16, pady=8)
         self.tree.bind("<<TreeviewSelect>>", self._on_select)
 
     def _build_balance_agee(self, parent):
@@ -5863,12 +5674,7 @@ class RecouvrementTab(ttk.Frame):
         self.tree_agee = ttk.Treeview(parent, columns=cols, show="headings", height=18)
         self.tree_agee.heading("client", text="Client")
         self.tree_agee.column("client", width=260, anchor="w")
-        _tree_agee_scrollframe = ttk.Frame(parent)
-        _tree_agee_scrollframe.pack(fill="both", expand=True, padx=16, pady=8)
-        _tree_agee_vscroll = ttk.Scrollbar(_tree_agee_scrollframe, orient="vertical", command=self.tree_agee.yview)
-        self.tree_agee.configure(yscrollcommand=_tree_agee_vscroll.set)
-        self.tree_agee.pack(in_=_tree_agee_scrollframe, side="left", fill="both", expand=True)
-        _tree_agee_vscroll.pack(in_=_tree_agee_scrollframe, side="right", fill="y")
+        self.tree_agee.pack(fill="both", expand=True, padx=16, pady=8)
         self.tree_agee.tag_configure("total", background="#1F4E78", foreground="white", font=("Segoe UI", 9, "bold"))
         self.tree_agee.bind("<Double-1>", self._on_double_click_agee)
         self._by_iid_agee = {}
@@ -6068,12 +5874,7 @@ class BalanceAgeeDetailDialog(tk.Toplevel):
         for c, h, w in zip(cols, headers, widths):
             tree.heading(c, text=h)
             tree.column(c, width=w, anchor="w" if c in ("piece", "libelle") else "e")
-        _bad_frame = ttk.Frame(self)
-        _bad_frame.pack(fill="both", expand=True, padx=12, pady=8)
-        _bad_scroll = ttk.Scrollbar(_bad_frame, orient="vertical", command=tree.yview)
-        tree.configure(yscrollcommand=_bad_scroll.set)
-        tree.pack(in_=_bad_frame, side="left", fill="both", expand=True)
-        _bad_scroll.pack(in_=_bad_frame, side="right", fill="y")
+        tree.pack(fill="both", expand=True, padx=12, pady=8)
         for f in sorted(client["factures"], key=lambda x: -x["age_jours"]):
             tree.insert("", "end", values=(
                 f["piece"], f["libelle"], core.to_display_date(f["date_facture"]), f["age_jours"],
@@ -6181,12 +5982,7 @@ class FacturesFrsTab(ttk.Frame):
         for c, h, w in zip(cols, headers, widths):
             self.tree.heading(c, text=h)
             self.tree.column(c, width=w, anchor="w")
-        _tree_scrollframe = ttk.Frame(self)
-        _tree_scrollframe.pack(fill="both", expand=True, padx=12, pady=6)
-        _tree_vscroll = ttk.Scrollbar(_tree_scrollframe, orient="vertical", command=self.tree.yview)
-        self.tree.configure(yscrollcommand=_tree_vscroll.set)
-        self.tree.pack(in_=_tree_scrollframe, side="left", fill="both", expand=True)
-        _tree_vscroll.pack(in_=_tree_scrollframe, side="right", fill="y")
+        self.tree.pack(fill="both", expand=True, padx=12, pady=6)
         ttk.Button(self, text="Supprimer la ligne sélectionnée", command=self.delete_ligne).pack(anchor="w", padx=12)
 
         self.totals_var = tk.StringVar()
@@ -6579,12 +6375,7 @@ class ExpressionBesoinDialog(tk.Toplevel):
         for c, h, w in zip(cols, ["ID", "Libellé", "Quantité", "Unité"], [40, 400, 100, 100]):
             self.tree.heading(c, text=h)
             self.tree.column(c, width=w, anchor="w")
-        _tree_scrollframe = ttk.Frame(self)
-        _tree_scrollframe.pack(fill="both", expand=True, padx=6, pady=6)
-        _tree_vscroll = ttk.Scrollbar(_tree_scrollframe, orient="vertical", command=self.tree.yview)
-        self.tree.configure(yscrollcommand=_tree_vscroll.set)
-        self.tree.pack(in_=_tree_scrollframe, side="left", fill="both", expand=True)
-        _tree_vscroll.pack(in_=_tree_scrollframe, side="right", fill="y")
+        self.tree.pack(fill="both", expand=True, padx=6, pady=6)
         self.delete_ligne_btn = ttk.Button(lignes_frame, text="Supprimer la ligne sélectionnée",
                                             command=self.delete_ligne)
         self.delete_ligne_btn.pack(anchor="w", padx=6, pady=(0, 6))
@@ -6697,12 +6488,7 @@ class ExpressionBesoinTab(ttk.Frame):
         for c, h, w in zip(cols, headers, widths):
             self.tree.heading(c, text=h)
             self.tree.column(c, width=w, anchor="w")
-        _tree_scrollframe = ttk.Frame(self)
-        _tree_scrollframe.pack(fill="both", expand=True, padx=16, pady=8)
-        _tree_vscroll = ttk.Scrollbar(_tree_scrollframe, orient="vertical", command=self.tree.yview)
-        self.tree.configure(yscrollcommand=_tree_vscroll.set)
-        self.tree.pack(in_=_tree_scrollframe, side="left", fill="both", expand=True)
-        _tree_vscroll.pack(in_=_tree_scrollframe, side="right", fill="y")
+        self.tree.pack(fill="both", expand=True, padx=16, pady=8)
         self.tree.bind("<Double-1>", self._on_double_click)
         self._by_iid = {}
         self.refresh()
@@ -6862,12 +6648,7 @@ class BonCommandeEPDialog(tk.Toplevel):
         for c, h, w in zip(cols, headers, widths):
             self.tree.heading(c, text=h)
             self.tree.column(c, width=w, anchor="w")
-        _tree_scrollframe = ttk.Frame(self)
-        _tree_scrollframe.pack(fill="both", expand=True, padx=6, pady=6)
-        _tree_vscroll = ttk.Scrollbar(_tree_scrollframe, orient="vertical", command=self.tree.yview)
-        self.tree.configure(yscrollcommand=_tree_vscroll.set)
-        self.tree.pack(in_=_tree_scrollframe, side="left", fill="both", expand=True)
-        _tree_vscroll.pack(in_=_tree_scrollframe, side="right", fill="y")
+        self.tree.pack(fill="both", expand=True, padx=6, pady=6)
         self.tree.bind("<<TreeviewSelect>>", self._on_select_ligne)
         self.total_var = tk.StringVar()
         ttk.Label(lignes_frame, textvariable=self.total_var, font=("Segoe UI", 10, "bold")).pack(
@@ -7135,12 +6916,7 @@ class BonCommandeEPTab(ttk.Frame):
             self.tree.heading(c, text=h)
             self.tree.column(c, width=w, anchor="w")
         self.tree.tag_configure("retard", foreground="#B00020", font=("Segoe UI", 9, "bold"))
-        _tree_scrollframe = ttk.Frame(self)
-        _tree_scrollframe.pack(fill="both", expand=True, padx=16, pady=8)
-        _tree_vscroll = ttk.Scrollbar(_tree_scrollframe, orient="vertical", command=self.tree.yview)
-        self.tree.configure(yscrollcommand=_tree_vscroll.set)
-        self.tree.pack(in_=_tree_scrollframe, side="left", fill="both", expand=True)
-        _tree_vscroll.pack(in_=_tree_scrollframe, side="right", fill="y")
+        self.tree.pack(fill="both", expand=True, padx=16, pady=8)
         self.tree.bind("<Double-1>", self._on_double_click)
         self._by_iid = {}
         self.refresh()
@@ -7223,12 +6999,7 @@ class BordereauLivraisonDialog(tk.Toplevel):
         for c, h, w in zip(cols, headers, widths):
             self.tree.heading(c, text=h)
             self.tree.column(c, width=w, anchor="w")
-        _tree_scrollframe = ttk.Frame(self)
-        _tree_scrollframe.pack(fill="both", expand=True, padx=6, pady=6)
-        _tree_vscroll = ttk.Scrollbar(_tree_scrollframe, orient="vertical", command=self.tree.yview)
-        self.tree.configure(yscrollcommand=_tree_vscroll.set)
-        self.tree.pack(in_=_tree_scrollframe, side="left", fill="both", expand=True)
-        _tree_vscroll.pack(in_=_tree_scrollframe, side="right", fill="y")
+        self.tree.pack(fill="both", expand=True, padx=6, pady=6)
         self.tree.bind("<Double-1>", self._on_edit_qte_livree)
 
         ttk.Label(lignes_frame, text=(
@@ -7331,12 +7102,7 @@ class BordereauLivraisonTab(ttk.Frame):
         for c, h, w in zip(cols, headers, widths):
             self.tree.heading(c, text=h)
             self.tree.column(c, width=w, anchor="w")
-        _tree_scrollframe = ttk.Frame(self)
-        _tree_scrollframe.pack(fill="both", expand=True, padx=16, pady=8)
-        _tree_vscroll = ttk.Scrollbar(_tree_scrollframe, orient="vertical", command=self.tree.yview)
-        self.tree.configure(yscrollcommand=_tree_vscroll.set)
-        self.tree.pack(in_=_tree_scrollframe, side="left", fill="both", expand=True)
-        _tree_vscroll.pack(in_=_tree_scrollframe, side="right", fill="y")
+        self.tree.pack(fill="both", expand=True, padx=16, pady=8)
         self.tree.bind("<Double-1>", self._on_double_click)
         self._by_iid = {}
         self.refresh()
@@ -7500,12 +7266,7 @@ class ReglementDialog(tk.Toplevel):
         for c, h, w in zip(cols, headers, widths):
             self.tree.heading(c, text=h)
             self.tree.column(c, width=w, anchor="w")
-        _tree_scrollframe = ttk.Frame(self)
-        _tree_scrollframe.pack(fill="both", expand=True, padx=6, pady=6)
-        _tree_vscroll = ttk.Scrollbar(_tree_scrollframe, orient="vertical", command=self.tree.yview)
-        self.tree.configure(yscrollcommand=_tree_vscroll.set)
-        self.tree.pack(in_=_tree_scrollframe, side="left", fill="both", expand=True)
-        _tree_vscroll.pack(in_=_tree_scrollframe, side="right", fill="y")
+        self.tree.pack(fill="both", expand=True, padx=6, pady=6)
         self.tree.bind("<<TreeviewSelect>>", self._on_select_ligne)
 
         self.total_var = tk.StringVar()
@@ -7785,12 +7546,7 @@ class ReglementTab(ttk.Frame):
         for c, h, w in zip(cols, headers, widths):
             self.tree.heading(c, text=h)
             self.tree.column(c, width=w, anchor="w")
-        _tree_scrollframe = ttk.Frame(self)
-        _tree_scrollframe.pack(fill="both", expand=True, padx=16, pady=8)
-        _tree_vscroll = ttk.Scrollbar(_tree_scrollframe, orient="vertical", command=self.tree.yview)
-        self.tree.configure(yscrollcommand=_tree_vscroll.set)
-        self.tree.pack(in_=_tree_scrollframe, side="left", fill="both", expand=True)
-        _tree_vscroll.pack(in_=_tree_scrollframe, side="right", fill="y")
+        self.tree.pack(fill="both", expand=True, padx=16, pady=8)
         self.tree.bind("<Double-1>", self._on_double_click)
         self._by_iid = {}
         self.refresh()
@@ -7886,12 +7642,7 @@ class ContratsTab(ttk.Frame):
             self.tree.heading(c, text=h)
             self.tree.column(c, width=w, anchor="w")
         self.tree.tag_configure("depasse", foreground="#B00020")
-        _tree_scrollframe = ttk.Frame(self)
-        _tree_scrollframe.pack(fill="both", expand=True, padx=16, pady=8)
-        _tree_vscroll = ttk.Scrollbar(_tree_scrollframe, orient="vertical", command=self.tree.yview)
-        self.tree.configure(yscrollcommand=_tree_vscroll.set)
-        self.tree.pack(in_=_tree_scrollframe, side="left", fill="both", expand=True)
-        _tree_vscroll.pack(in_=_tree_scrollframe, side="right", fill="y")
+        self.tree.pack(fill="both", expand=True, padx=16, pady=8)
         self.tree.bind("<<TreeviewSelect>>", self._on_select)
         self.selected_id = None
         self.refresh()
@@ -8012,12 +7763,7 @@ class ExercicesTab(ttk.Frame):
         self.tree.heading("statut", text="Statut")
         self.tree.column("exercice", width=100, anchor="w")
         self.tree.column("statut", width=150, anchor="w")
-        _ex_frame = ttk.Frame(self)
-        _ex_frame.pack(fill="x", padx=16, pady=8)
-        _ex_scroll = ttk.Scrollbar(_ex_frame, orient="vertical", command=self.tree.yview)
-        self.tree.configure(yscrollcommand=_ex_scroll.set)
-        self.tree.pack(in_=_ex_frame, side="left", fill="both", expand=True)
-        _ex_scroll.pack(in_=_ex_frame, side="right", fill="y")
+        self.tree.pack(fill="x", padx=16, pady=8)
         self.tree.bind("<<TreeviewSelect>>", self._on_select)
 
         self.selected_exercice = None
@@ -8135,12 +7881,7 @@ class PlanComptableTab(ttk.Frame):
         for c, h, w in zip(cols, headers, widths):
             self.tree.heading(c, text=h)
             self.tree.column(c, width=w, anchor="w")
-        _tree_scrollframe = ttk.Frame(self)
-        _tree_scrollframe.pack(fill="both", expand=True, padx=16, pady=8)
-        _tree_vscroll = ttk.Scrollbar(_tree_scrollframe, orient="vertical", command=self.tree.yview)
-        self.tree.configure(yscrollcommand=_tree_vscroll.set)
-        self.tree.pack(in_=_tree_scrollframe, side="left", fill="both", expand=True)
-        _tree_vscroll.pack(in_=_tree_scrollframe, side="right", fill="y")
+        self.tree.pack(fill="both", expand=True, padx=16, pady=8)
         self.tree.bind("<<TreeviewSelect>>", self._on_select)
         self.refresh()
 
@@ -8288,12 +8029,7 @@ class _SimplePlanTab(ttk.Frame):
         for c, h, w in zip(cols, headers, widths):
             self.tree.heading(c, text=h)
             self.tree.column(c, width=w, anchor="w")
-        _tree_scrollframe = ttk.Frame(self)
-        _tree_scrollframe.pack(fill="both", expand=True, padx=16, pady=8)
-        _tree_vscroll = ttk.Scrollbar(_tree_scrollframe, orient="vertical", command=self.tree.yview)
-        self.tree.configure(yscrollcommand=_tree_vscroll.set)
-        self.tree.pack(in_=_tree_scrollframe, side="left", fill="both", expand=True)
-        _tree_vscroll.pack(in_=_tree_scrollframe, side="right", fill="y")
+        self.tree.pack(fill="both", expand=True, padx=16, pady=8)
         self.tree.bind("<<TreeviewSelect>>", self._on_select)
         self.refresh()
 
@@ -8710,12 +8446,7 @@ class UtilisateursTab(ttk.Frame):
         for c, h, w in zip(cols, headers, widths):
             self.tree.heading(c, text=h)
             self.tree.column(c, width=w, anchor="w")
-        _tree_scrollframe = ttk.Frame(self)
-        _tree_scrollframe.pack(fill="both", expand=True, padx=16, pady=8)
-        _tree_vscroll = ttk.Scrollbar(_tree_scrollframe, orient="vertical", command=self.tree.yview)
-        self.tree.configure(yscrollcommand=_tree_vscroll.set)
-        self.tree.pack(in_=_tree_scrollframe, side="left", fill="both", expand=True)
-        _tree_vscroll.pack(in_=_tree_scrollframe, side="right", fill="y")
+        self.tree.pack(fill="both", expand=True, padx=16, pady=8)
         self.tree.bind("<<TreeviewSelect>>", self._on_select)
         self.refresh()
 
@@ -8861,12 +8592,7 @@ class AdminFacturesTab(ttk.Frame):
         for c, h, w in zip(cols, headers, widths):
             self.tree.heading(c, text=h)
             self.tree.column(c, width=w, anchor="w")
-        _tree_scrollframe = ttk.Frame(self)
-        _tree_scrollframe.pack(fill="both", expand=True, padx=16, pady=8)
-        _tree_vscroll = ttk.Scrollbar(_tree_scrollframe, orient="vertical", command=self.tree.yview)
-        self.tree.configure(yscrollcommand=_tree_vscroll.set)
-        self.tree.pack(in_=_tree_scrollframe, side="left", fill="both", expand=True)
-        _tree_vscroll.pack(in_=_tree_scrollframe, side="right", fill="y")
+        self.tree.pack(fill="both", expand=True, padx=16, pady=8)
         self._by_iid = {}
         self.refresh()
 
@@ -8946,12 +8672,7 @@ class PlanBudgetaireTab(ttk.Frame):
         for c, h, w in zip(cols, ["Code budgétaire", "Libellé", "Montant prévu"], [120, 400, 130]):
             self.tree.heading(c, text=h)
             self.tree.column(c, width=w, anchor="w")
-        _tree_scrollframe = ttk.Frame(self)
-        _tree_scrollframe.pack(fill="both", expand=True, padx=16, pady=8)
-        _tree_vscroll = ttk.Scrollbar(_tree_scrollframe, orient="vertical", command=self.tree.yview)
-        self.tree.configure(yscrollcommand=_tree_vscroll.set)
-        self.tree.pack(in_=_tree_scrollframe, side="left", fill="both", expand=True)
-        _tree_vscroll.pack(in_=_tree_scrollframe, side="right", fill="y")
+        self.tree.pack(fill="both", expand=True, padx=16, pady=8)
         self.tree.bind("<<TreeviewSelect>>", self._on_select)
         self.refresh()
 
