@@ -2922,3 +2922,28 @@ Testé : le fichier gabarit actif (celui régénéré automatiquement depuis
 le code source si absent) est bien accessible à cet emplacement, l'export
 et l'écran Bilan SYSCOHADA autonome fonctionnent normalement à partir de
 ce même fichier.
+
+### Vraie différence de rubrique trouvée : racines 13/14/15 doivent être fusionnées
+
+**Question de l'utilisateur** : « pourquoi mon bilan donne quelques
+rubriques différentes du tien ? » — avec le fichier de référence réel
+joint.
+
+**Cause trouvée** : l'écran Bilan SYSCOHADA (`compute_bilan_detaille`,
+code propre à l'application) affichait les racines **13, 14 et 15**
+comme 3 lignes séparées (« Résultat net (avant affectation) »,
+« Subventions d'investissement », « Provisions réglementées »), alors que
+le fichier de référence de l'utilisateur les combine en **une seule
+ligne** : « Résultats antérieurs (13-15) » — confirmé par la formule déjà
+vérifiée `=-CtaCptSolde("13*","15*")`, une PLAGE couvrant les 3 racines
+d'un coup, pas 3 formules séparées.
+
+**Corrigé** : les racines 13, 14 et 15 sont désormais fusionnées en une
+seule ligne « Résultats antérieurs (racines 13-15) », comme la référence.
+La ligne séparée « Résultat net de l'exercice » (calculée depuis les
+classes 6/7/8, pas depuis le solde du compte 13) reste distincte, comme
+dans le fichier de référence.
+
+Testé avec un scénario ciblant précisément ce cas (comptes sur les
+racines 13, 14 et 15) : la fusion tombe juste (100 000+200 000+50 000 =
+350 000 sur une seule ligne), écart resté à 0.

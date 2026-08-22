@@ -3452,15 +3452,19 @@ def _compute_bilan_groupes(conn, exercice, balance=None, resultat_net_override=N
     # comme le rapport de référence ----
     capitaux_labels = {
         "10": "Capital", "11": "Réserves", "12": "Report à nouveau",
-        "13": "Résultat net (avant affectation)", "14": "Subventions d'investissement",
-        "15": "Provisions réglementées et fonds assimilés",
+        "13_14_15": "Résultats antérieurs (racines 13-15)",
         "16_17": "Emprunts bancaires (racines 16-17)",
         "18": "Comptes de liaison des établissements et sociétés en participation",
         "19": "Provisions financières pour risques et charges",
     }
     capitaux_flat = []
     for prefixe in ("10", "11", "12", "13", "14", "15", "16", "17", "18", "19"):
-        cle = "16_17" if prefixe in ("16", "17") else prefixe
+        if prefixe in ("13", "14", "15"):
+            cle = "13_14_15"
+        elif prefixe in ("16", "17"):
+            cle = "16_17"
+        else:
+            cle = prefixe
         for b in _detail_prefix2(balance, "1", prefixe):
             capitaux_flat.append({"label": f"{b['code']} {b['label']}", "montant": -b["solde_cloture"], "prefixe": cle})
     capitaux_propres = _grouper_avec_sous_total(capitaux_flat, "prefixe", capitaux_labels)
