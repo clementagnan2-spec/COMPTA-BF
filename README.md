@@ -3412,3 +3412,21 @@ Trois exécutables Windows générés désormais : `SaisieComptable.exe`
 (application de bureau autonome, inchangée), `SaisieComptableServeur.exe`
 (serveur, mode console pour voir les journaux), `SaisieComptableClient.exe`
 (client réseau).
+
+### Workflow GitHub Actions renommé en main.yml (correction critique)
+
+**Signalé** : "GitHub a construit un seul .exe" malgré le workflow à 3
+builds livré précédemment.
+
+**Cause trouvée** : le fichier de workflow actif dans le dépôt GitHub de
+l'utilisateur s'appelle **`main.yml`**, alors que je l'avais toujours
+travaillé sous le nom `build.yml` — un nom différent depuis le début de
+ce fichier dans mes livraisons. En important le zip, `build.yml`
+s'ajoutait donc À CÔTÉ de l'ancien `main.yml` (qui ne construisait
+qu'un seul exécutable) au lieu de le REMPLACER — c'est cet ancien
+fichier qui continuait de s'exécuter à chaque push.
+
+**Corrigé** : le fichier a été renommé `.github/workflows/main.yml`
+(contenu inchangé — toujours les 3 builds PyInstaller) pour correspondre
+exactement au nom du fichier déjà présent dans le dépôt GitHub de
+l'utilisateur, et le remplacer correctement au prochain import.
