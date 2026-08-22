@@ -8734,9 +8734,9 @@ class UtilisateursTab(ttk.Frame):
         self.selected_id = None
         ttk.Label(self, text="UTILISATEURS", font=("Segoe UI", 14, "bold")).pack(anchor="w", padx=16, pady=(16, 4))
         ttk.Label(self, text=(
-            "Les niveaux d'accès se paramètrent dans le sous-menu « Niveaux d'accès ». Ce module pose la "
-            "base des comptes (mots de passe hachés) ; l'application ne demande pas encore de connexion "
-            "au démarrage."
+            "Les niveaux d'accès se paramètrent dans le sous-menu « Niveaux d'accès » (modules "
+            "autorisés par niveau). Dès qu'au moins un utilisateur existe ici, l'application demande "
+            "une connexion au démarrage, et les menus affichés sont filtrés selon son niveau d'accès."
         ), foreground="#595959", wraplength=1000).pack(anchor="w", padx=16, pady=(0, 8))
 
         form = ttk.LabelFrame(self, text="Utilisateur")
@@ -8751,6 +8751,7 @@ class UtilisateursTab(ttk.Frame):
         self.niveau_var = tk.StringVar()
         self.niveau_combo = ttk.Combobox(form, textvariable=self.niveau_var, width=18, state="readonly")
         self.niveau_combo.grid(row=0, column=5, padx=4)
+        self.niveau_combo.bind("<<ComboboxSelected>>", lambda e: self._refresh_apercu_modules())
         self._refresh_niveaux()
         ttk.Label(form, text="Mot de passe :").grid(row=1, column=0, sticky="w", padx=4, pady=(4, 0))
         self.password_var = tk.StringVar()
@@ -8761,6 +8762,14 @@ class UtilisateursTab(ttk.Frame):
             row=1, column=2, sticky="w", padx=(12, 4), pady=(4, 0))
         ttk.Label(form, text="(laisser le mot de passe vide pour ne pas le changer, lors d'une mise à jour)",
                   foreground="#595959").grid(row=1, column=3, columnspan=3, sticky="w", padx=(12, 4), pady=(4, 0))
+
+        apercu_frame = ttk.LabelFrame(self, text="Modules autorisés pour le niveau sélectionné")
+        apercu_frame.pack(fill="x", padx=16, pady=(0, 4))
+        self.apercu_var = tk.StringVar(value="Choisissez un niveau d'accès ci-dessus pour voir ses modules autorisés.")
+        ttk.Label(apercu_frame, textvariable=self.apercu_var, foreground="#1F4E78", wraplength=1300,
+                  justify="left").pack(anchor="w", padx=8, pady=6)
+        ttk.Button(apercu_frame, text="Modifier les modules de ce niveau (ouvre Niveaux d'accès)",
+                   command=self._ouvrir_niveaux_acces).pack(anchor="w", padx=8, pady=(0, 6))
 
         btns = ttk.Frame(self)
         btns.pack(fill="x", padx=16, pady=6)
@@ -8783,6 +8792,35 @@ class UtilisateursTab(ttk.Frame):
     def _refresh_niveaux(self):
         self.niveau_combo["values"] = [n["nom"] for n in core.list_niveaux_acces(self.conn)]
 
+    def _refresh_apercu_modules(self):
+        niveau = self.niveau_var.get().strip()
+        if not niveau:
+            self.apercu_var.set("Choisissez un niveau d'accès ci-dessus pour voir ses modules autorisés.")
+            return
+        menus = core.get_menus_autorises(self.conn, niveau)
+        if niveau == "Administrateur":
+            self.apercu_var.set("✓ Ce niveau a accès à la totalité des modules de l'application (48/48).")
+            return
+        if not menus:
+            self.apercu_var.set(f"⚠ Aucun module autorisé pour « {niveau} » — cet utilisateur ne verra AUCUN "
+                                 f"menu. Configurez-le via le bouton ci-dessous.")
+            return
+        labels = []
+        for _titre, items in core.MENU_STRUCTURE:
+            for label, key in items:
+                if key in menus:
+                    labels.append(label)
+        self.apercu_var.set(f"{len(menus)} module(s) autorisé(s) : " + ", ".join(labels))
+
+    def _ouvrir_niveaux_acces(self):
+        app = self.winfo_toplevel()
+        if hasattr(app, "show"):
+            app.show("niveaux_acces")
+        else:
+            messagebox.showinfo("Niveaux d'accès",
+                                 "Ouvrez le menu ADMIN > Niveaux d'accès pour configurer les modules.",
+                                 parent=self)
+
     def _on_select(self, event=None):
         sel = self.tree.selection()
         if not sel:
@@ -8792,6 +8830,7 @@ class UtilisateursTab(ttk.Frame):
         self.login_var.set(v[1]); self.nom_complet_var.set(v[2]); self.niveau_var.set(v[3])
         self.actif_var.set(v[4] == "Oui")
         self.password_var.set("")
+        self._refresh_apercu_modules()
 
     def clear_form(self):
         self.selected_id = None
