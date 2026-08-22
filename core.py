@@ -7720,21 +7720,35 @@ def set_menus_autorises(conn, niveau_acces, menu_keys):
 
 
 def ajouter_niveaux_acces_suggeres_menus(conn):
-    """Préconfigure des ensembles de menus raisonnables pour les niveaux
-    suggérés (Administrateur/Comptable/Lecture seule/Saisie seule) —
-    appelée une fois après ajouter_niveaux_acces_suggeres(), UNIQUEMENT si
-    aucune configuration de menus n'existe encore pour ces niveaux (ne
-    écrase jamais une configuration déjà personnalisée par l'utilisateur)."""
+    """Préconfigure des ensembles de menus adaptés à chaque profil métier
+    suggéré (Administrateur/Comptable/Vendeur/Chargé des achats/GRH/
+    Trésorier/Usine) — appelée une fois après
+    ajouter_niveaux_acces_suggeres(), UNIQUEMENT si aucune configuration de
+    menus n'existe encore pour ces niveaux (n'écrase jamais une
+    configuration déjà personnalisée par l'utilisateur)."""
     tous = [key for _titre, items in MENU_STRUCTURE for _label, key in items]
-    admin_menus = ["taux_tva", "taux_retenue", "niveaux_acces", "utilisateurs"]
-    comptable_menus = [key for titre, items in MENU_STRUCTURE
-                        for _label, key in items if titre not in ("ADMIN",)]
-    lecture_seule_menus = [key for titre, items in MENU_STRUCTURE
-                            for _label, key in items if titre in ("RAPPORT FINANCIERS", "TRESORERIE")]
-    saisie_seule_menus = ["saisie", "ouverture", "clients", "facturation", "fournisseurs", "reglements"]
 
-    for niveau, menus in (("Administrateur", tous), ("Comptable", comptable_menus),
-                           ("Lecture seule", lecture_seule_menus), ("Saisie seule", saisie_seule_menus)):
+    comptable_menus = ["saisie", "ouverture", "grand_livre", "balance", "bilan_syscohada",
+                        "compte_resultat_sig", "tft", "situation_financiere", "tresorerie",
+                        "exercices", "plan_comptable", "plan_analytique", "plan_budgetaire",
+                        "plan_bailleur", "synchronisation"]
+    vendeur_menus = ["clients", "recouvrement", "facturation", "stocks", "marges"]
+    charge_achats_menus = ["fournisseurs", "contrats", "expression_besoin", "ep_bon_commande",
+                            "bordereau_livraison", "reglements"]
+    grh_menus = ["grh_personnel", "grh_time_sheet", "grh_kpi", "grh_tableau_bord", "grh_hs"]
+    tresorier_menus = ["tresorerie", "recouvrement", "reglements"]
+    usine_menus = ["stocks", "production", "transport", "missions", "pieces_rechange", "reparations",
+                   "immobilisations", "amortissements", "energie", "maintenance", "rapports_technique"]
+
+    for niveau, menus in (
+        ("Administrateur", tous),
+        ("Comptable", comptable_menus),
+        ("Vendeur", vendeur_menus),
+        ("Chargé des achats", charge_achats_menus),
+        ("GRH", grh_menus),
+        ("Trésorier", tresorier_menus),
+        ("Usine", usine_menus),
+    ):
         deja_configure = conn.execute(
             "SELECT 1 FROM niveau_acces_menus WHERE niveau_acces = ? LIMIT 1", (niveau,)
         ).fetchone()
@@ -7763,9 +7777,13 @@ def niveau_acces_exists(conn, nom):
 
 NIVEAUX_ACCES_SUGGERES = [
     ("Administrateur", "Accès complet à tous les menus, y compris ADMIN et PARAMÈTRES."),
-    ("Comptable", "Accès à la Saisie, aux États et rapports, et aux modules métier — pas à ADMIN."),
-    ("Saisie seule", "Peut saisir des écritures et des documents commerciaux, sans accès aux états ni à l'administration."),
-    ("Lecture seule", "Consultation uniquement, aucune saisie ni modification."),
+    ("Comptable", "Saisie, soldes d'ouverture, tous les rapports financiers, trésorerie et paramètres comptables."),
+    ("Vendeur", "Clients, recouvrement, facturation, stocks et marges bénéficiaires (menu COMMERCE)."),
+    ("Chargé des achats", "Fournisseurs, contrats, expressions de besoin, bons de commande, bordereaux de "
+                          "livraison et règlements (menu ENGAGEMENTS-PROJETS)."),
+    ("GRH", "Personnel, time sheet, KPI, tableau de bord GRH et hygiène santé (menu GRH)."),
+    ("Trésorier", "Trésorerie, recouvrement des créances clients et règlements des dettes fournisseurs."),
+    ("Usine", "Production, transport, immobilisations, maintenance-qualité et rapports technique."),
 ]
 
 

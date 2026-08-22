@@ -3499,3 +3499,35 @@ configuration ; moteur comptable non régressé.
 Testé de bout en bout avec deux profils réels : un niveau restreint
 (« Saisie seule », 3 sous-menus autorisés) ne voit que 2 menus de premier
 niveau (SAISIE, COMMERCE) ; un Administrateur reçoit bien les 48 menus.
+
+### Profils métier précis pour les niveaux d'accès
+
+**Demande** : les niveaux suggérés doivent correspondre à des rôles
+métier réels : Comptable, Vendeur, Chargé des achats, GRH, Trésorier,
+Usine (+ Administrateur).
+
+**Réalisé** — 7 profils désormais proposés via « Ajouter les niveaux
+courants » (menu ADMIN > Niveaux d'accès), avec des autorisations de
+menus adaptées à chaque fonction :
+- **Administrateur** : tous les 48 modules.
+- **Comptable** (15 modules) : Saisie, Soldes d'ouverture, tous les
+  rapports financiers (Grand livre, Balance, Bilan, Compte de résultat,
+  TFT, Situation financière), Trésorerie, et les paramètres comptables
+  (Exercices, Plan comptable, Plan analytique, Plan budgétaire, Plan
+  bailleurs, Synchronisation).
+- **Vendeur** (5 modules) : Clients, Recouvrement, Facturation, Stocks,
+  Marges bénéficiaires (menu COMMERCE).
+- **Chargé des achats** (6 modules) : Fournisseurs, Contrats, Expression
+  de besoin, Bon de commande, Bordereau de livraison, Règlements (menu
+  ENGAGEMENTS-PROJETS).
+- **GRH** (5 modules) : Liste du personnel, Time sheet, KPI, Tableau de
+  bord GRH, HS.
+- **Trésorier** (3 modules) : Trésorerie, Recouvrement (encaissements
+  clients), Règlements (décaissements fournisseurs).
+- **Usine** (11 modules) : Production, Transport, Immobilisations,
+  Maintenance-Qualité, Rapports technique.
+
+Chaque utilisateur créé avec l'un de ces niveaux voit automatiquement,
+sur l'application de bureau ET sur le client réseau, uniquement les
+menus correspondant à sa fonction — testé et vérifié pour les 7 profils
+(comptage et contenu exacts confirmés).
