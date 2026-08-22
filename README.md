@@ -3086,3 +3086,31 @@ partout ailleurs) — aucun autre cas de ce type trouvé (Bilan SYSCOHADA
 
 Testé : compilation propre, Grand livre calculable sans erreur, moteur
 comptable toujours pleinement fonctionnel.
+
+### Crash Trésorerie corrigé — même famille de bug, vérification exhaustive faite cette fois
+
+**Crash signalé** (capture d'écran) : `can't pack
+.!frame2.!tresorerietab.!notebook.!frame.!treeview inside
+.!frame2.!tresorerietab.!frame` à l'ouverture de Trésorerie.
+
+**Cause** : le script automatisé d'ajout de scrollbars (deux réponses
+plus tôt) utilisait systématiquement `ttk.Frame(self)` pour envelopper
+chaque tableau, sans vérifier le VRAI parent Tkinter du tableau
+d'origine. Pour les tableaux créés à l'intérieur d'une méthode
+`_build_xxx(self, parent)` (où `parent` est un onglet de Notebook, pas
+`self` directement — cas de `TresorerieTab` et de la Balance âgée dans
+`RecouvrementTab`), le nouveau conteneur de scrollbar se retrouvait
+attaché au mauvais parent Tkinter, provoquant un plantage à l'ouverture.
+
+**Corrigé** : `TresorerieTab` (2 tableaux) et `self.tree_agee` dans
+`RecouvrementTab` (Balance âgée) corrigés pour utiliser le bon parent.
+
+**Vérification exhaustive automatisée** effectuée cette fois sur les
+**50 scrollbars** ajoutées : un script compare, pour CHAQUE tableau du
+fichier, le parent Tkinter réel utilisé à sa création avec le parent
+utilisé par son conteneur de scrollbar — confirmé zéro incohérence
+restante nulle part dans l'application (recherche faite deux fois, y
+compris sur les tableaux en variable locale, pas seulement `self.xxx`).
+
+Testé : compilation propre, Trésorerie calculable sans erreur, moteur
+comptable toujours pleinement fonctionnel.
