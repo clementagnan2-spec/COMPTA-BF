@@ -3235,3 +3235,31 @@ les deux modules ont aussi été ajoutés explicitement en
 
 Testé : les 3 états se calculent à nouveau sans erreur, Bilan SYSCOHADA
 non régressé.
+
+## CORRECTIF MAJEUR — colonne N-1 des formules …Nm1 corrigée partout (TFT, CR, Situation financière, ET Bilan gabarit)
+
+**Signalé** : la ligne « Trésorerie nette au 1er janvier N-1 » du TFT
+affichait 0 alors que le solde d'ouverture réel existe bien.
+
+**Cause racine** : toutes les formules `…Nm1` (CtaCptSoldeNm1,
+CtaCptSoldeDébitNm1, CtaCptSoldeCréditNm1) étaient alimentées par
+`_soldes_dict(conn, exercice_n1)` — qui calcule le solde de CLÔTURE d'un
+exercice **N-1 complètement séparé** (ex. 2025), avec ses propres
+écritures et son propre solde d'ouverture. Tant que l'utilisateur n'a
+pas créé et alimenté cet exercice 2025 séparément dans l'application (ce
+qui n'est généralement pas le cas — le solde d'ouverture de l'exercice
+courant EST déjà, mathématiquement, le solde de clôture de l'exercice
+précédent), cette colonne renvoyait 0 partout.
+
+**Corrigé** : nouvelle fonction `_soldes_ouverture_dict()` — alimente
+désormais toutes les formules `…Nm1` avec le **solde d'ouverture de
+l'exercice courant** (comme déjà fait pour l'écran Bilan SYSCOHADA
+autonome). Corrige les 5 fonctions concernées : le TFT, le Compte de
+résultat, la Situation financière, **et un bug latent dans l'export
+« gabarit officiel » du Bilan** (`compute_bilan_plat`, utilisée par
+« Visionner »/« Exporter ») qui avait exactement le même défaut.
+
+Testé : TFT affiche maintenant 2 500 000 (solde d'ouverture réel) au
+lieu de 0 pour la trésorerie nette d'ouverture ; Bilan gabarit affiche
+désormais 5 000 000 en Net N-1 (au lieu de 0) sur un scénario identique ;
+Compte de résultat non régressé (41 lignes, 0 erreur).

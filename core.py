@@ -4043,6 +4043,22 @@ def _soldes_dict(conn, exercice):
     return soldes
 
 
+def _soldes_ouverture_dict(conn, exercice):
+    """{code_compte: solde_ouverture} — alimente les formules …Nm1 (« N-1 »)
+    des états financiers (Compte de résultat, TFT, Situation financière)
+    avec le solde d'OUVERTURE de l'exercice courant, PAS un second exercice
+    antérieur distinct (qui n'existe généralement pas dans la base tant que
+    l'utilisateur n'a pas créé et alimenté un exercice N-1 complet — le
+    solde d'ouverture de N correspond déjà mathématiquement au solde de
+    clôture de N-1). Même principe que _balance_solde_ouverture() pour le
+    Bilan."""
+    try:
+        balance = compute_balance(conn, only_with_movement=False, exercice=exercice)
+    except Exception:
+        return {}
+    return {b["code"]: b["solde_ouverture"] for b in balance}
+
+
 def generate_etat_xlsx(conn, etat_id, output_path, exercice=None):
     """Génère UN état financier (Bilan / Compte de Résultat / Situation
     Financière / TFT) à partir de son gabarit officiel
@@ -4056,7 +4072,7 @@ def generate_etat_xlsx(conn, etat_id, output_path, exercice=None):
     exercice = exercice or get_current_exercice(conn)
     exercice_n1 = str(int(exercice) - 1)
     soldes_n = _soldes_dict(conn, exercice)
-    soldes_n1 = _soldes_dict(conn, exercice_n1)
+    soldes_n1 = _soldes_ouverture_dict(conn, exercice)
 
     wb = open_template_workbook(info["path"])
     actual_sheet = _guess_etat_sheet(wb, preferred=info["sheet_hint"])
@@ -4082,7 +4098,7 @@ def compute_etat_formule_generique(conn, template_path_getter, exercice=None):
     exercice = exercice or get_current_exercice(conn)
     exercice_n1 = str(int(exercice) - 1)
     soldes_n = _soldes_dict(conn, exercice)
-    soldes_n1 = _soldes_dict(conn, exercice_n1)
+    soldes_n1 = _soldes_ouverture_dict(conn, exercice)
 
     wb = open_template_workbook(template_path_getter())
     ws = wb[wb.sheetnames[0]]
@@ -4147,7 +4163,7 @@ def compute_bilan_plat(conn, exercice=None):
     exercice = exercice or get_current_exercice(conn)
     exercice_n1 = str(int(exercice) - 1)
     soldes_n = _soldes_dict(conn, exercice)
-    soldes_n1 = _soldes_dict(conn, exercice_n1)
+    soldes_n1 = _soldes_ouverture_dict(conn, exercice)
 
     info = ETATS_TEMPLATES["bilan"]
     try:
@@ -4204,7 +4220,7 @@ def export_etat_formule_xls(conn, template_path_getter, path, exercice=None):
     exercice = exercice or get_current_exercice(conn)
     exercice_n1 = str(int(exercice) - 1)
     soldes_n = _soldes_dict(conn, exercice)
-    soldes_n1 = _soldes_dict(conn, exercice_n1)
+    soldes_n1 = _soldes_ouverture_dict(conn, exercice)
 
     with open(template_path_getter(), encoding="utf-8") as f:
         content = f.read()
@@ -4272,7 +4288,7 @@ def export_bilan_gabarit_xlsx(conn, path, exercice=None):
         exercice = exercice or get_current_exercice(conn)
         exercice_n1 = str(int(exercice) - 1)
         soldes_n = _soldes_dict(conn, exercice)
-        soldes_n1 = _soldes_dict(conn, exercice_n1)
+        soldes_n1 = _soldes_ouverture_dict(conn, exercice)
 
         with open(BILAN_TEMPLATE_PATH or _bilan_template_path(), encoding="utf-8") as f:
             content = f.read()
