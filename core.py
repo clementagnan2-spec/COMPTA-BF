@@ -3629,6 +3629,23 @@ def compute_bilan_detaille(conn, exercice=None):
 # adapté pour lire les soldes directement depuis CETTE application (Balance
 # SQLite) au lieu d'exiger l'import de deux fichiers de balance externes.
 # ---------------------------------------------------------------------------
+def _generer_template_depuis_b64(nom_fichier, module_name, attr_name):
+    """Régénère un gabarit Excel à la volée depuis des données encodées en
+    base64 dans un module Python — voir _bilan_template_path() pour le
+    principe complet (élimine toute dépendance au bundle PyInstaller)."""
+    base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
+    folder = os.path.join(base, "SaisieComptable")
+    os.makedirs(folder, exist_ok=True)
+    path = os.path.join(folder, nom_fichier)
+    if not os.path.exists(path):
+        import base64
+        import importlib
+        module = importlib.import_module(module_name)
+        with open(path, "wb") as f:
+            f.write(base64.b64decode(getattr(module, attr_name)))
+    return path
+
+
 def _bilan_template_path():
     """Emplacement du gabarit Bilan — régénéré à la volée depuis les
     données encodées en base64 dans bilan_template_data.py si le fichier
@@ -3638,16 +3655,25 @@ def _bilan_template_path():
     PyInstaller — élimine TOUTE dépendance au bundle --add-data du build,
     qui s'est révélé peu fiable en pratique (fichier absent de
     l'exécutable compilé malgré une configuration correcte)."""
-    base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
-    folder = os.path.join(base, "SaisieComptable")
-    os.makedirs(folder, exist_ok=True)
-    path = os.path.join(folder, "bilan_template.xls")
-    if not os.path.exists(path):
-        import base64
-        import bilan_template_data
-        with open(path, "wb") as f:
-            f.write(base64.b64decode(bilan_template_data.BILAN_TEMPLATE_B64))
-    return path
+    return _generer_template_depuis_b64("bilan_template.xls", "bilan_template_data", "BILAN_TEMPLATE_B64")
+
+
+def _cr_template_path():
+    """Emplacement du gabarit Compte de résultat (SIG) — même principe que
+    _bilan_template_path()."""
+    return _generer_template_depuis_b64("resultat_template.xls", "etats_financiers_data", "CR_TEMPLATE_B64")
+
+
+def _tft_template_path():
+    """Emplacement du gabarit TFT (Tableau des flux de trésorerie) — même
+    principe que _bilan_template_path()."""
+    return _generer_template_depuis_b64("tft_template.xls", "etats_financiers_data", "TFT_TEMPLATE_B64")
+
+
+def _situation_template_path():
+    """Emplacement du gabarit Situation financière (FR-BFR-TN) — même
+    principe que _bilan_template_path()."""
+    return _generer_template_depuis_b64("situation_template.xls", "etats_financiers_data", "SITUATION_TEMPLATE_B64")
 
 
 def import_bilan_template(path_source):
@@ -3759,6 +3785,8 @@ _FUNC_TOKENS = [
     ("CtaCptSoldeDébit", "__F_DEBIT__"), ("CtaCptSoldeDebit", "__F_DEBIT__"),
     ("CtaCptSoldeCrédit", "__F_CREDIT__"), ("CtaCptSoldeCredit", "__F_CREDIT__"),
     ("CtaCptSolde", "__F_SOLDE__"),
+    ("Ratio(", "__F_RATIO__("),
+    ("kNum1", "1"),  # simple constante numérique de mise en forme (nombre de décimales) — sans effet sur le calcul
 ]
 _RUBRIQUE_REF_RE = re.compile(r"\[([A-Za-z0-9_]+)\.EtLoc\]")
 _RUBRIQUE_ASSIGN_RE = re.compile(r"^\[([A-Za-z0-9_]+)\.EtLoc\]=(.*)$")
@@ -3823,6 +3851,7 @@ def _make_namespace(soldes_n, soldes_n1, rubrique_values, defined_ids=None, miss
         "__F_DEBIT_NM1__": lambda *p: cta_cpt_solde_debit(soldes_n1, *p),
         "__F_CREDIT_NM1__": lambda *p: cta_cpt_solde_credit(soldes_n1, *p),
         "__F_SOLDE_NM1__": lambda *p: cta_cpt_solde(soldes_n1, *p),
+        "__F_RATIO__": lambda value, *rest: value,  # Ratio(valeur, décimales, unité...) — mise en forme d'affichage, ignorée ici
         "__RUB__": RUB,
     }
 
@@ -4038,6 +4067,67 @@ def generate_etat_xlsx(conn, etat_id, output_path, exercice=None):
     return {"cells_ok": len(results), "cells_error": errors, "cells_warning": warnings}
 
 
+def compute_etat_formule_generique(conn, template_path_getter, exercice=None):
+    """Lit un gabarit à une seule colonne de libellés (A) suivie de 1 à 3
+    colonnes de valeurs (détectées via la ligne d'en-tête : « N », « N-1 »,
+    « % ») et évalue chaque formule avec le moteur CtaCptSolde/…Nm1 — même
+    principe que compute_bilan_plat(), généralisé pour être réutilisé par
+    le Compte de résultat (SIG), le TFT et la Situation financière, qui
+    partagent tous cette même structure « RUBRIQUE | N (| N-1 | %) »."""
+    exercice = exercice or get_current_exercice(conn)
+    exercice_n1 = str(int(exercice) - 1)
+    soldes_n = _soldes_dict(conn, exercice)
+    soldes_n1 = _soldes_dict(conn, exercice_n1)
+
+    wb = open_template_workbook(template_path_getter())
+    ws = wb[wb.sheetnames[0]]
+
+    # Repère la ligne d'en-tête (« RUBRIQUE » en colonne A) pour savoir
+    # quelles colonnes de valeurs existent dans CE gabarit précis.
+    header_row = None
+    for r in range(1, min(ws.max_row, 15) + 1):
+        if isinstance(ws.cell(row=r, column=1).value, str) and \
+                ws.cell(row=r, column=1).value.strip().upper() == "RUBRIQUE":
+            header_row = r
+            break
+    value_cols = []  # [(lettre_colonne, libelle_colonne), ...]
+    if header_row:
+        for col_idx in range(2, 6):
+            h = ws.cell(row=header_row, column=col_idx).value
+            if isinstance(h, str) and h.strip():
+                value_cols.append((openpyxl_col_letter(col_idx), h.strip()))
+    if not value_cols:
+        value_cols = [("B", "N")]
+
+    results, errors, warnings = evaluate_sheet_formulas(ws, soldes_n, soldes_n1)
+
+    def cellval(col, row):
+        coord = f"{col}{row}"
+        if coord in results:
+            return results[coord]
+        v = ws[coord].value
+        return v if isinstance(v, (int, float)) else None
+
+    lignes = []
+    start_row = (header_row + 1) if header_row else 1
+    for r in range(start_row, ws.max_row + 1):
+        libelle = ws.cell(row=r, column=1).value
+        if not (isinstance(libelle, str) and libelle.strip()):
+            continue
+        valeurs = {label: cellval(col, r) for col, label in value_cols}
+        if not any(v not in (None, "") for v in valeurs.values()):
+            continue
+        lignes.append({"libelle": libelle.strip(), **valeurs})
+
+    return {"exercice": exercice, "exercice_n1": exercice_n1, "colonnes": [label for _, label in value_cols],
+            "lignes": lignes, "errors": errors}
+
+
+def openpyxl_col_letter(idx):
+    import openpyxl.utils
+    return openpyxl.utils.get_column_letter(idx)
+
+
 def compute_bilan_plat(conn, exercice=None):
     """Bilan « plat » — relit DIRECTEMENT le gabarit officiel
     (templates/modele_bilan.xlsx, ou à défaut bilan_template.xls) ligne
@@ -4099,6 +4189,65 @@ def compute_bilan_plat(conn, exercice=None):
 
     return {"exercice": exercice, "exercice_n1": exercice_n1, "actif": rows_actif, "passif": rows_passif,
             "errors": errors}
+
+
+def export_etat_formule_xls(conn, template_path_getter, path, exercice=None):
+    """Exporte un état basé sur un gabarit à formules CtaCptSolde... (voir
+    compute_etat_formule_generique()) par SUBSTITUTION DE TEXTE DIRECTE sur
+    le XML brut (même mécanisme robuste que export_bilan_gabarit_xlsx) —
+    préserve intégralement la mise en forme d'origine."""
+    exercice = exercice or get_current_exercice(conn)
+    exercice_n1 = str(int(exercice) - 1)
+    soldes_n = _soldes_dict(conn, exercice)
+    soldes_n1 = _soldes_dict(conn, exercice_n1)
+
+    with open(template_path_getter(), encoding="utf-8") as f:
+        content = f.read()
+
+    # Pré-scan des rubriques réellement définies quelque part dans le
+    # gabarit — comme evaluate_sheet_formulas(), pour distinguer une
+    # rubrique référencée AVANT sa définition (à réessayer plus tard,
+    # ordre du document) d'une rubrique jamais définie nulle part (0,
+    # sans erreur — cas de références orphelines déjà présentes dans le
+    # gabarit d'origine).
+    raw_formulas = re.findall(r'<Data ss:Type="String"[^>]*>(=[^<]*)</Data>', content)
+    defined_ids = set()
+    for raw in raw_formulas:
+        unescaped = (raw.replace("&quot;", '"').replace("&amp;", "&")
+                     .replace("&lt;", "<").replace("&gt;", ">").replace("&apos;", "'"))
+        m = _RUBRIQUE_ASSIGN_RE.match(unescaped[1:] if unescaped.startswith("=") else unescaped)
+        if m:
+            defined_ids.add(m.group(1))
+
+    named_refs = {}
+    pattern = re.compile(r'<Data ss:Type="String"[^>]*>(=[^<]*)</Data>')
+
+    def repl(m):
+        raw = m.group(1)
+        unescaped = (raw.replace("&quot;", '"').replace("&amp;", "&")
+                     .replace("&lt;", "<").replace("&gt;", ">").replace("&apos;", "'"))
+        try:
+            value, defined_name = evaluate_formula(unescaped, soldes_n, soldes_n1, rubrique_values=named_refs,
+                                                     defined_ids=defined_ids)
+        except RubriqueNotReady:
+            return m.group(0)  # sera résolu à une passe ultérieure
+        except Exception:
+            return m.group(0)
+        if defined_name:
+            named_refs[defined_name] = value
+        return f'<Data ss:Type="Number">{value:.4f}</Data>'
+
+    # Plusieurs passes (comme evaluate_sheet_formulas) : une rubrique peut
+    # être référencée avant d'être définie plus bas dans le document.
+    new_content = content
+    for _ in range(5):
+        previous = new_content
+        new_content = pattern.sub(repl, previous)
+        if new_content == previous:
+            break
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(new_content)
+    return path
 
 
 def export_bilan_gabarit_xlsx(conn, path, exercice=None):

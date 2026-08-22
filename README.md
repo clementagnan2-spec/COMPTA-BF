@@ -3180,3 +3180,35 @@ cette conversation** — pas des soldes d'ouverture réellement incomplets.
 ET affichés (au lieu de 113 avant le correctif) ; Total Débit = Total
 Crédit = 38 991 589 074 (écart 0, au lieu de ~9 milliards) ; Bilan
 parfaitement équilibré (37 789 564 389 des deux côtés).
+
+## Trois nouveaux sous-menus dans RAPPORT FINANCIERS : Compte de résultat (SIG), TFT, Situation financière
+
+**Réalisé** :
+- **3 fichiers gabarits fournis** (Compte de résultat SIG, TFT, Situation
+  financière FR-BFR-TN) — même format que le Bilan, **encodés directement
+  dans le code source** (`etats_financiers_data.py`) selon le même
+  principe que `bilan_template_data.py` : plus aucune dépendance au
+  bundle PyInstaller, régénérés automatiquement si besoin.
+- **Nouvelle fonction générique `compute_etat_formule_generique()`** :
+  lit n'importe lequel de ces 3 gabarits (structure commune « RUBRIQUE |
+  N (| N-1 | %) », détectée automatiquement via la ligne d'en-tête) et
+  évalue ses formules avec le même moteur CtaCptSolde que le Bilan — zéro
+  duplication de code entre les 3 états.
+- **Nouvelle fonction `Ratio(valeur, décimales, unité...)`** ajoutée au
+  moteur de formules (rencontrée dans la Situation financière) — mise en
+  forme d'affichage sans effet sur le calcul, ignorée proprement.
+- **Écran générique `EtatFormuleTab`** (réutilisé pour les 3) : Actualiser,
+  Modifier les formules du template (ouvre le fichier figé dans Excel,
+  même principe que le Bilan), Exporter (.xls, préservant la mise en
+  forme d'origine).
+- **3 sous-menus ajoutés** à RAPPORT FINANCIERS : Compte de résultat
+  (SIG), TFT, Situation financière.
+
+Testé de bout en bout avec un scénario réaliste (vente + achat) : Compte
+de résultat (41 lignes, 0 erreur), TFT (31 lignes, 0 erreur), Situation
+financière (34 lignes, 2 erreurs de division par zéro attendues — ratios
+de rentabilité quand les capitaux propres sont nuls dans le jeu de test
+minimal, pas un bug). Export des 3 états vérifié (mise en forme
+préservée, formules correctement résolues même avec des dépendances
+inter-rubriques en plusieurs passes). Non-régression du Bilan SYSCOHADA
+confirmée.

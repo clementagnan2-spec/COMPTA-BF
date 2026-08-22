@@ -119,6 +119,10 @@ class App(tk.Tk):
         register("grand_livre", GrandLivreTab)
         register("balance", BalanceTab)
         register("bilan_syscohada", BilanSyscohadaTab)
+        register("compte_resultat_sig", EtatFormuleTab, "Compte de résultat (SIG)", core._cr_template_path)
+        register("tft", EtatFormuleTab, "Tableau des flux de trésorerie (TFT)", core._tft_template_path)
+        register("situation_financiere", EtatFormuleTab, "Situation financière (FR-BFR-TN)",
+                 core._situation_template_path)
         register("grh_personnel", PersonnelTab)
         register("grh_time_sheet", TimeSheetTab)
         register("grh_kpi", KpiTab)
@@ -186,6 +190,9 @@ class App(tk.Tk):
             ("Grand livre", "grand_livre"),
             ("Balance", "balance"),
             ("Bilan SYSCOHADA", "bilan_syscohada"),
+            ("Compte de résultat (SIG)", "compte_resultat_sig"),
+            ("TFT", "tft"),
+            ("Situation financière", "situation_financiere"),
         ])
         add_top_menu("ENGAGEMENTS-PROJETS", [
             ("Fournisseurs", "fournisseurs"),
@@ -1545,6 +1552,112 @@ class CompteResultatTab(ttk.Frame):
         self._row("hao", "- Participation des salariés", cr["RQ"])
         self._row("hao", "- Impôts sur les bénéfices", cr["RS"])
         self.tree.insert("", "end", tags=("total",), values=("RÉSULTAT NET COMPTABLE", f"{fmt_cfa(cr['XI'])}"))
+
+
+class EtatFormuleTab(ttk.Frame):
+    """Écran générique pour un état financier basé sur un gabarit à
+    formules CtaCptSolde... (Compte de résultat SIG, TFT, Situation
+    financière) — réutilise core.compute_etat_formule_generique() pour ne
+    pas dupliquer la logique entre ces 3 états, qui partagent tous la même
+    structure « RUBRIQUE | N (| N-1 | %) »."""
+
+    def __init__(self, parent, conn, titre, template_path_getter):
+        super().__init__(parent)
+        self.conn = conn
+        self.titre = titre
+        self.template_path_getter = template_path_getter
+
+        ttk.Label(self, text=titre, font=("Segoe UI", 14, "bold")).pack(anchor="w", padx=8, pady=(8, 0))
+        ttk.Label(self, text=(
+            "Calculé avec les formules CtaCptSolde/CtaCptSoldeDébit/CtaCptSoldeCrédit (et leurs variantes "
+            "…Nm1 pour l'exercice N-1) du gabarit officiel — entièrement autonome, aucun fichier externe requis."
+        ), foreground="#595959", wraplength=1300, justify="left").pack(anchor="w", padx=8, pady=(0, 4))
+
+        btn_bar = ttk.Frame(self)
+        btn_bar.pack(fill="x", padx=8, pady=(0, 4))
+        ttk.Button(btn_bar, text="Actualiser", command=self.refresh).pack(side="left")
+        ttk.Button(btn_bar, text="Modifier les formules du template",
+                   command=self.modifier_template).pack(side="left", padx=8)
+        ttk.Button(btn_bar, text="Exporter (.xls)", command=self.export_xls).pack(side="left", padx=8)
+
+        self.cols = ("libelle", "n", "n1", "pct")
+        self.tree = ttk.Treeview(self, columns=self.cols, show="headings", height=32)
+        self.tree.heading("libelle", text="Rubrique")
+        self.tree.column("libelle", width=460, anchor="w", stretch=True)
+        for c in ("n", "n1", "pct"):
+            self.tree.column(c, width=140, anchor="e")
+        self.tree.tag_configure("total", background="#FFCC00", foreground="black", font=("Segoe UI", 10, "bold"))
+        self.tree.pack(fill="both", expand=True, padx=8, pady=(0, 8))
+
+        self.refresh()
+
+    def refresh(self):
+        for row in self.tree.get_children():
+            self.tree.delete(row)
+        try:
+            d = core.compute_etat_formule_generique(self.conn, self.template_path_getter)
+        except Exception as exc:
+            messagebox.showerror(
+                "Erreur",
+                f"Impossible de calculer « {self.titre} » :\n\n{exc}\n\n"
+                f"Cet écran ne dépend d'aucun fichier externe — réessayez après avoir relancé "
+                f"l'application ; si l'erreur persiste, contactez le support.",
+            )
+            return
+
+        headers = {"N": "Exercice N", "N-1": "Exercice N-1", "%": "%"}
+        display_cols = [c for c in ("n", "n1", "pct")]
+        for col_key, label in zip(display_cols, d["colonnes"] + [""] * 3):
+            self.tree.heading(col_key, text=headers.get(label, label) if label else "")
+
+        def fmt(v):
+            return fmt_cfa(v) if isinstance(v, (int, float)) else ""
+
+        for l in d["lignes"]:
+            valeurs = [l.get(c, None) for c in d["colonnes"]]
+            while len(valeurs) < 3:
+                valeurs.append(None)
+            tag = ("total",) if any(mot in l["libelle"].upper() for mot in
+                                     ("TOTAL", "RESULTAT NET", "MARGE COMMERCIALE", "CAFG",
+                                      "TRESORERIE NETTE", "VARIATION DE LA TRÉSORERIE",
+                                      "VARIATION DE LA TRESORERIE")) else ()
+            self.tree.insert("", "end", tags=tag, values=(l["libelle"], fmt(valeurs[0]), fmt(valeurs[1]),
+                                                           fmt(valeurs[2])))
+
+        if d["errors"]:
+            messagebox.showwarning(
+                "Formules en erreur",
+                f"{len(d['errors'])} formule(s) du gabarit n'ont pas pu être évaluées (souvent une "
+                f"division par zéro — ex. un ratio quand les capitaux propres sont nuls). Les autres "
+                f"lignes restent correctes.",
+            )
+
+    def modifier_template(self):
+        path = self.template_path_getter()
+        if not messagebox.askyesno(
+            "Modifier les formules du template",
+            "Le gabarit va s'ouvrir dans Excel. Toute formule que vous modifiez ET ENREGISTREZ (Ctrl+S, "
+            "en gardant le même format) sera directement utilisée par l'application au prochain calcul.\n\n"
+            "Continuer ?",
+        ):
+            return
+        if not _ouvrir_fichier(path):
+            messagebox.showinfo("Ouverture impossible",
+                                 f"Ouvrez-le manuellement dans Excel :\n{path}")
+
+    def export_xls(self):
+        path = filedialog.asksaveasfilename(
+            defaultextension=".xls", filetypes=[("Classeur Excel", "*.xls")],
+            initialfile=f"{self.titre.replace(' ', '_')}.xls", title=f"Exporter {self.titre}",
+        )
+        if not path:
+            return
+        try:
+            core.export_etat_formule_xls(self.conn, self.template_path_getter, path)
+        except Exception as exc:
+            messagebox.showerror("Erreur", f"Échec de l'export : {exc}")
+            return
+        messagebox.showinfo("Export terminé", f"{self.titre} exporté :\n{path}")
 
 
 class BilanSyscohadaTab(ttk.Frame):
