@@ -1014,10 +1014,16 @@ def set_opening_balance(conn, code, value, exercice=None):
 
 
 def list_opening_balances(conn, exercice=None):
+    """IMPORTANT : jointure LEFT (pas INNER) avec le Plan comptable — un
+    compte présent dans les soldes d'ouverture mais absent du Plan
+    comptable doit rester visible (avec un libellé de repli), sous peine
+    de fausser silencieusement le total affiché à l'écran alors que les
+    données réellement enregistrées sont équilibrées."""
     exercice = exercice or get_current_exercice(conn)
     rows = conn.execute("""
-        SELECT o.code, a.label, a.classe, o.solde
-        FROM opening_balances o JOIN accounts a ON a.code = o.code
+        SELECT o.code, COALESCE(a.label, o.code || ' (hors Plan comptable)') AS label,
+               COALESCE(a.classe, substr(o.code, 1, 1)) AS classe, o.solde
+        FROM opening_balances o LEFT JOIN accounts a ON a.code = o.code
         WHERE o.solde != 0 AND o.exercice = ?
         ORDER BY o.code
     """, (exercice,)).fetchall()
@@ -2680,28 +2686,50 @@ def import_entries_from_xlsx(conn, path):
 # Balance
 # ---------------------------------------------------------------------------
 def compute_balance(conn, only_with_movement=True, include_zero_opening=True, exercice=None):
+    """IMPORTANT : parcourt l'UNION des comptes du Plan comptable, des
+    comptes ayant un solde d'ouverture et des comptes ayant reçu au moins
+    une écriture — PAS seulement le Plan comptable. Un compte présent dans
+    les soldes d'ouverture ou dans les écritures mais ABSENT du Plan
+    comptable (ex. plan comptable de l'utilisateur plus détaillé que celui
+    bundlé avec l'application) doit être inclus quand même, sous peine de
+    faire disparaître silencieusement son solde de TOUS les calculs
+    (Bilan, Balance, Grand livre...) et de créer un faux écart Actif/Passif."""
     exercice = exercice or get_current_exercice(conn)
     date_from, date_to = f"{exercice}-01-01", f"{exercice}-12-31"
-    rows = conn.execute("""
-        SELECT a.code, a.label, a.classe,
-               COALESCE(SUM(CASE WHEN e.date BETWEEN ? AND ? THEN e.debit ELSE 0 END), 0)  AS debit,
-               COALESCE(SUM(CASE WHEN e.date BETWEEN ? AND ? THEN e.credit ELSE 0 END), 0) AS credit
-        FROM accounts a
-        LEFT JOIN entries e ON e.compte = a.code
-        GROUP BY a.code, a.label, a.classe
-        ORDER BY a.code
-    """, (date_from, date_to, date_from, date_to)).fetchall()
+
+    mouvements = {}
+    for r in conn.execute("""
+        SELECT compte,
+               COALESCE(SUM(CASE WHEN date BETWEEN ? AND ? THEN debit ELSE 0 END), 0)  AS debit,
+               COALESCE(SUM(CASE WHEN date BETWEEN ? AND ? THEN credit ELSE 0 END), 0) AS credit
+        FROM entries GROUP BY compte
+    """, (date_from, date_to, date_from, date_to)):
+        mouvements[r["compte"]] = (r["debit"], r["credit"])
+
     openings = {r["code"]: r["solde"] for r in conn.execute(
         "SELECT code, solde FROM opening_balances WHERE exercice = ?", (exercice,))}
+
+    accounts_info = {r["code"]: (r["label"], r["classe"]) for r in conn.execute(
+        "SELECT code, label, classe FROM accounts")}
+
+    tous_les_codes = set(accounts_info) | set(openings) | set(mouvements)
+
     result = []
-    for r in rows:
-        debit, credit = r["debit"], r["credit"]
-        ouverture = openings.get(r["code"], 0.0)
+    for code in sorted(tous_les_codes):
+        if code in accounts_info:
+            label, classe = accounts_info[code]
+        else:
+            # Compte absent du Plan comptable mais utilisé (solde d'ouverture
+            # ou écriture) — inclus quand même, avec un libellé de repli et
+            # une classe déduite du premier chiffre du code.
+            label, classe = f"{code} (hors Plan comptable)", (code[:1] if code else "")
+        debit, credit = mouvements.get(code, (0, 0))
+        ouverture = openings.get(code, 0.0)
         if only_with_movement and debit == 0 and credit == 0 and ouverture == 0:
             continue
         solde_mouvement = debit - credit
         result.append({
-            "code": r["code"], "label": r["label"], "classe": r["classe"],
+            "code": code, "label": label, "classe": classe,
             "debit": debit, "credit": credit, "solde": solde_mouvement,
             "solde_ouverture": ouverture,
             "solde_cloture": ouverture + solde_mouvement,
@@ -4523,8 +4551,8 @@ def compute_mouvements_stocks(conn, exercice=None):
     result = []
     for code in COMPTES_STOCK:
         rows = conn.execute(
-            """SELECT e.*, a.label AS compte_label FROM entries e
-               JOIN accounts a ON a.code = e.compte
+            """SELECT e.*, COALESCE(a.label, e.compte) AS compte_label FROM entries e
+               LEFT JOIN accounts a ON a.code = e.compte
                WHERE e.compte = ? AND e.date >= ? AND e.date <= ?
                ORDER BY e.date, e.id""",
             (code, date_from, date_to),
@@ -4613,16 +4641,16 @@ def compute_couts_analytiques_categorie(conn, prefix, date_from=None, date_to=No
         code = c["code"]
         avant = conn.execute(
             """SELECT COALESCE(SUM(e.debit), 0) d, COALESCE(SUM(e.credit), 0) c
-               FROM entries e JOIN accounts a ON a.code = e.compte
-               WHERE e.analytic_code = ? AND a.classe = '6' AND e.date >= ? AND e.date < ?""",
+               FROM entries e
+               WHERE e.analytic_code = ? AND substr(e.compte, 1, 1) = '6' AND e.date >= ? AND e.date < ?""",
             (code, exercice_debut, date_from),
         ).fetchone()
         charge_avant = avant["d"] - avant["c"]
 
         periode = conn.execute(
             """SELECT COALESCE(SUM(e.debit), 0) d, COALESCE(SUM(e.credit), 0) c
-               FROM entries e JOIN accounts a ON a.code = e.compte
-               WHERE e.analytic_code = ? AND a.classe = '6' AND e.date >= ? AND e.date <= ?""",
+               FROM entries e
+               WHERE e.analytic_code = ? AND substr(e.compte, 1, 1) = '6' AND e.date >= ? AND e.date <= ?""",
             (code, date_from, date_to),
         ).fetchone()
         debit_periode, credit_periode = periode["d"], periode["c"]
@@ -4664,8 +4692,8 @@ def compute_cout_unitaire_moyen_analytique(conn, analytic_code, exercice=None, t
     row = conn.execute(
         f"""SELECT COALESCE(SUM(e.debit), 0) d, COALESCE(SUM(e.credit), 0) c,
                    COALESCE(SUM(e.quantite), 0) q
-            FROM entries e JOIN accounts a ON a.code = e.compte
-            WHERE e.analytic_code = ? AND a.classe = '6'{date_filter}""",
+            FROM entries e
+            WHERE e.analytic_code = ? AND substr(e.compte, 1, 1) = '6'{date_filter}""",
         params,
     ).fetchone()
     if not row["q"]:

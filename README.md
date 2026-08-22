@@ -3137,3 +3137,46 @@ Testé : compilation propre sur les 46 écrans concernés, moteur comptable
 et Grand livre pleinement fonctionnels, Soldes d'ouverture (colonnes
 Débit/Crédit avec totaux, ajoutées dans une réponse précédente et non
 liées au bug) toujours opérationnels.
+
+## CORRECTIF MAJEUR — cause racine de l'écart Actif/Passif enfin trouvée et corrigée
+
+**Symptôme signalé** : après import de la balance N-1 (fichier joint,
+parfaitement équilibré dans Excel — somme exactement 0), le logiciel
+affichait « NON ÉQUILIBRÉ » avec un écart de plusieurs milliards.
+
+**Cause racine trouvée** (après investigation approfondie) :
+`compute_balance()` — la fonction utilisée PARTOUT dans l'application
+(Bilan, Balance générale, Grand livre, Soldes d'ouverture) — parcourait
+la table `accounts` (le Plan comptable bundlé) puis cherchait le solde
+d'ouverture de CHAQUE compte listé. **Tout compte présent dans les
+soldes d'ouverture ou dans les écritures mais ABSENT du Plan comptable
+bundlé (plan comptable réel de l'utilisateur plus détaillé, avec des
+sous-comptes non prévus) était silencieusement IGNORÉ** — dans le
+fichier de l'utilisateur, 19 comptes sur 132 (ex. `231102`, `234102`,
+`471108`...) n'existaient pas dans le Plan comptable de l'application,
+et leur solde disparaissait de tous les calculs. Cette **même faille**
+touchait `list_opening_balances()` (jointure INNER au lieu de LEFT) et 4
+autres requêtes (calcul du coût unitaire moyen analytique, budget par
+code analytique).
+
+**C'est la cause de l'écart Actif/Passif chassé depuis le tout début de
+cette conversation** — pas des soldes d'ouverture réellement incomplets.
+
+**Corrigé** :
+- `compute_balance()` parcourt désormais l'**union** des comptes du Plan
+  comptable, des comptes ayant un solde d'ouverture et des comptes ayant
+  reçu au moins une écriture — plus aucun compte ne peut disparaître
+  silencieusement. Un compte absent du Plan comptable reçoit un libellé
+  de repli (« CODE (hors Plan comptable) ») et sa classe est déduite du
+  premier chiffre de son code.
+- `list_opening_balances()` : jointure LEFT au lieu de INNER, avec le
+  même repli.
+- 4 requêtes analytiques (coût unitaire moyen, budget par code
+  analytique) : filtre par classe de compte fait directement sur le code
+  (`substr(compte,1,1)='6'`) au lieu de passer par une jointure qui
+  pouvait exclure des comptes non répertoriés.
+
+**Testé avec le fichier réel de l'utilisateur** : 132 comptes importés
+ET affichés (au lieu de 113 avant le correctif) ; Total Débit = Total
+Crédit = 38 991 589 074 (écart 0, au lieu de ~9 milliards) ; Bilan
+parfaitement équilibré (37 789 564 389 des deux côtés).
