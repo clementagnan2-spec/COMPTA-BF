@@ -60,6 +60,67 @@ def export_etat_gabarit(parent, conn, etat_id, nom_fichier, titre):
     messagebox.showinfo("Export terminé", msg, parent=parent)
 
 
+class LoginDialog(tk.Toplevel):
+    """Écran de connexion obligatoire au démarrage de l'application, DÈS
+    QU'AU MOINS UN UTILISATEUR EXISTE dans la base (menu ADMIN >
+    Utilisateurs) — voir App.__init__. Tant qu'aucun utilisateur n'a
+    encore été créé, l'application démarre normalement sans connexion
+    (mode amorçage), pour ne jamais bloquer l'accès à sa propre
+    installation."""
+
+    def __init__(self, parent, conn):
+        super().__init__(parent)
+        self.conn = conn
+        self.utilisateur = None  # rempli si connexion réussie
+        self.title("Connexion")
+        self.geometry("380x260")
+        self.resizable(False, False)
+        self.transient(parent)
+        self.grab_set()
+        self.protocol("WM_DELETE_WINDOW", self._annuler)
+
+        frame = ttk.Frame(self, padding=20)
+        frame.pack(fill="both", expand=True)
+        ttk.Label(frame, text="Connexion requise", font=("Segoe UI", 13, "bold")).pack(anchor="w", pady=(0, 12))
+
+        ttk.Label(frame, text="Identifiant :").pack(anchor="w")
+        self.user_var = tk.StringVar()
+        user_entry = ttk.Entry(frame, textvariable=self.user_var, width=30)
+        user_entry.pack(fill="x", pady=(2, 10))
+        user_entry.focus_set()
+
+        ttk.Label(frame, text="Mot de passe :").pack(anchor="w")
+        self.pwd_var = tk.StringVar()
+        pwd_entry = ttk.Entry(frame, textvariable=self.pwd_var, width=30, show="•")
+        pwd_entry.pack(fill="x", pady=(2, 10))
+        pwd_entry.bind("<Return>", lambda e: self._connecter())
+
+        self.status_var = tk.StringVar()
+        ttk.Label(frame, textvariable=self.status_var, foreground="#B00020", wraplength=330).pack(
+            anchor="w", pady=(0, 8))
+
+        ttk.Button(frame, text="Se connecter", command=self._connecter).pack(anchor="w")
+
+        self.wait_window(self)
+
+    def _connecter(self):
+        nom_utilisateur = self.user_var.get().strip()
+        mot_de_passe = self.pwd_var.get()
+        if not nom_utilisateur or not mot_de_passe:
+            self.status_var.set("Identifiant et mot de passe obligatoires.")
+            return
+        utilisateur = core.verify_password(self.conn, nom_utilisateur, mot_de_passe)
+        if not utilisateur:
+            self.status_var.set("Identifiant ou mot de passe incorrect.")
+            return
+        self.utilisateur = utilisateur
+        self.destroy()
+
+    def _annuler(self):
+        self.utilisateur = None
+        self.destroy()
+
+
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
@@ -76,6 +137,19 @@ class App(tk.Tk):
             pass
         self.conn = core.get_connection()
 
+        # ---- Connexion obligatoire DÈS QU'AU MOINS UN UTILISATEUR EXISTE
+        # (menu ADMIN > Utilisateurs) — sinon démarrage libre (amorçage),
+        # pour ne jamais verrouiller l'accès à une installation neuve. ----
+        self.utilisateur_connecte = None
+        self.niveau_acces_connecte = "Administrateur"  # par défaut tant qu'aucune connexion n'est requise
+        if core.list_utilisateurs(self.conn):
+            login = LoginDialog(self, self.conn)
+            if not login.utilisateur:
+                self.destroy()
+                return
+            self.utilisateur_connecte = login.utilisateur["nom_utilisateur"]
+            self.niveau_acces_connecte = login.utilisateur["niveau_acces"]
+
         # ---- Barre d'exercice comptable (toujours visible, en haut) ----
         top_bar = ttk.Frame(self, relief="raised", padding=4)
         top_bar.pack(fill="x", side="top")
@@ -88,6 +162,9 @@ class App(tk.Tk):
         self.exercice_status_var = tk.StringVar()
         ttk.Label(top_bar, textvariable=self.exercice_status_var, foreground="#B00020",
                   font=("Segoe UI", 9, "bold")).pack(side="left", padx=12)
+        if self.utilisateur_connecte:
+            ttk.Label(top_bar, text=f"Connecté : {self.utilisateur_connecte} ({self.niveau_acces_connecte})",
+                      foreground="#1F4E78", font=("Segoe UI", 9, "bold")).pack(side="right", padx=12)
         self._refresh_exercice_list()
 
         self.content = ttk.Frame(self)
@@ -164,13 +241,20 @@ class App(tk.Tk):
                                 "des recettes de Fabrication qui leur sont associées.",
                  core.PREFIX_MAINTENANCE, core.SUGGESTIONS_MAINTENANCE)
 
-        # ---- Barre de menu ----
+        # ---- Barre de menu — filtrée selon le niveau d'accès connecté
+        # (core.get_menus_autorises) : un sous-menu non autorisé n'apparaît
+        # tout simplement pas ; si AUCUN sous-menu d'un menu de premier
+        # niveau n'est autorisé, ce menu entier est masqué. ----
         menubar = tk.Menu(self)
         bold = ("Segoe UI", 9, "bold")
+        menus_autorises = core.get_menus_autorises(self.conn, self.niveau_acces_connecte)
 
         def add_top_menu(label, items):
+            items_autorises = [(item_label, key) for item_label, key in items if key in menus_autorises]
+            if not items_autorises:
+                return
             m = tk.Menu(menubar, tearoff=0)
-            for item_label, key in items:
+            for item_label, key in items_autorises:
                 m.add_command(label=item_label, command=lambda k=key: self.show(k))
             menubar.add_cascade(label=label, menu=m)
             menubar.entryconfig(menubar.index("end"), font=bold)
@@ -8400,28 +8484,156 @@ class SynchronisationTab(ttk.Frame):
                              f"{rapport['nb_tables']} tables vérifiées et à jour.\nAucune donnée n'a été modifiée.")
 
 
-class NiveauxAccesTab(_SimplePlanTab):
+class NiveauxAccesTab(ttk.Frame):
     """Niveaux d'accès paramétrables (menu ADMIN) — utilisés lors de la
-    création d'un utilisateur."""
-    TITLE = "NIVEAUX D'ACCÈS"
-    CODE_LABEL = "Nom du niveau"
-    SUGGESTIONS_FN = staticmethod(core.ajouter_niveaux_acces_suggeres)
-    SUGGESTIONS_LABEL = "Ajouter les niveaux courants (Administrateur, Comptable...)"
+    création d'un utilisateur, ET désormais pour restreindre les menus
+    (et sous-menus) réellement accessibles à chaque niveau, via une
+    case à cocher par sous-menu (voir core.MENU_STRUCTURE)."""
 
-    def list_fn(self, conn):
-        return [{"code": n["nom"], "label": n["description"]} for n in core.list_niveaux_acces(conn)]
+    def __init__(self, parent, conn):
+        super().__init__(parent)
+        self.conn = conn
+        self.selected_niveau = None
+        self.check_vars = {}  # {menu_key: tk.BooleanVar}
 
-    def add_fn(self, conn, code, label):
-        core.add_niveau_acces(conn, code, label)
+        ttk.Label(self, text="NIVEAUX D'ACCÈS", font=("Segoe UI", 14, "bold")).pack(anchor="w", padx=16, pady=(16, 4))
+        ttk.Label(self, text=(
+            "Chaque niveau détermine les sous-menus visibles pour les utilisateurs qui lui sont rattachés — "
+            "sélectionnez un niveau ci-dessous pour cocher/décocher ses autorisations. Le niveau "
+            "« Administrateur » a toujours accès à tout, quelle que soit la configuration."
+        ), foreground="#595959", wraplength=1200, justify="left").pack(anchor="w", padx=16, pady=(0, 8))
 
-    def delete_fn(self, conn, code):
-        core.delete_niveau_acces(conn, code)
+        btn_bar = ttk.Frame(self)
+        btn_bar.pack(fill="x", padx=16, pady=(0, 4))
+        ttk.Button(btn_bar, text="Ajouter les niveaux courants (Administrateur, Comptable...)",
+                   command=self._add_suggestions).pack(side="left")
 
-    def export_fn(self, conn, path):
-        core.export_niveaux_acces_xlsx(conn, path)
+        form = ttk.Frame(self)
+        form.pack(fill="x", padx=16, pady=6)
+        ttk.Label(form, text="Nom du niveau :").grid(row=0, column=0, sticky="w")
+        self.code_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.code_var, width=24).grid(row=0, column=1, padx=6)
+        ttk.Label(form, text="Description :").grid(row=0, column=2, sticky="w", padx=(16, 0))
+        self.label_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.label_var, width=60).grid(row=0, column=3, padx=6)
+        ttk.Button(form, text="Ajouter", command=self.add).grid(row=0, column=4, padx=8)
+        ttk.Button(form, text="Mettre à jour la description", command=self.update_sel).grid(row=0, column=5, padx=4)
+        ttk.Button(form, text="Supprimer", command=self.delete_sel).grid(row=0, column=6, padx=4)
 
-    def import_fn(self, conn, path):
-        return core.import_niveaux_acces_xlsx(conn, path)
+        body = ttk.Frame(self)
+        body.pack(fill="both", expand=True, padx=16, pady=(4, 16))
+        body.columnconfigure(0, weight=1)
+        body.columnconfigure(1, weight=2)
+        body.rowconfigure(0, weight=1)
+
+        list_frame = ttk.Frame(body)
+        list_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
+        cols = ("nom", "description")
+        self.tree = ttk.Treeview(list_frame, columns=cols, show="headings", height=20)
+        for c, h, w in zip(cols, ["Niveau", "Description"], [140, 260]):
+            self.tree.heading(c, text=h)
+            self.tree.column(c, width=w, anchor="w")
+        self.tree.pack(fill="both", expand=True)
+        self.tree.bind("<<TreeviewSelect>>", self._on_select)
+
+        self.menus_frame = ttk.LabelFrame(body, text="Sous-menus autorisés — sélectionnez un niveau à gauche")
+        self.menus_frame.grid(row=0, column=1, sticky="nsew")
+        self.menus_canvas = tk.Canvas(self.menus_frame, highlightthickness=0)
+        menus_scroll = ttk.Scrollbar(self.menus_frame, orient="vertical", command=self.menus_canvas.yview)
+        self.menus_inner = ttk.Frame(self.menus_canvas)
+        self.menus_inner.bind("<Configure>", lambda e: self.menus_canvas.configure(
+            scrollregion=self.menus_canvas.bbox("all")))
+        self.menus_canvas.create_window((0, 0), window=self.menus_inner, anchor="nw")
+        self.menus_canvas.configure(yscrollcommand=menus_scroll.set)
+        self.menus_canvas.pack(side="left", fill="both", expand=True)
+        menus_scroll.pack(side="right", fill="y")
+
+        self.save_menus_btn = ttk.Button(self, text="Enregistrer les autorisations de ce niveau",
+                                          command=self.save_menus, state="disabled")
+        self.save_menus_btn.pack(anchor="w", padx=16, pady=(0, 16))
+
+        self.refresh()
+
+    def _add_suggestions(self):
+        core.ajouter_niveaux_acces_suggeres(self.conn)
+        core.ajouter_niveaux_acces_suggeres_menus(self.conn)
+        self.refresh()
+        messagebox.showinfo("Ajouté", "Niveaux courants et leurs autorisations par défaut ajoutés.", parent=self)
+
+    def add(self):
+        nom = self.code_var.get().strip()
+        if not nom:
+            messagebox.showwarning("Champ manquant", "Le nom du niveau est obligatoire.", parent=self)
+            return
+        core.add_niveau_acces(self.conn, nom, self.label_var.get().strip())
+        self.code_var.set(""); self.label_var.set("")
+        self.refresh()
+
+    def update_sel(self):
+        if not self.selected_niveau:
+            messagebox.showinfo("Info", "Sélectionnez d'abord un niveau.", parent=self)
+            return
+        core.add_niveau_acces(self.conn, self.selected_niveau, self.label_var.get().strip())
+        self.refresh()
+
+    def delete_sel(self):
+        if not self.selected_niveau:
+            messagebox.showinfo("Info", "Sélectionnez d'abord un niveau.", parent=self)
+            return
+        if messagebox.askyesno("Confirmer", f"Supprimer le niveau « {self.selected_niveau} » ?", parent=self):
+            core.delete_niveau_acces(self.conn, self.selected_niveau)
+            self.selected_niveau = None
+            self.code_var.set(""); self.label_var.set("")
+            self.refresh()
+
+    def _on_select(self, event=None):
+        sel = self.tree.selection()
+        if not sel:
+            return
+        values = self.tree.item(sel[0], "values")
+        self.selected_niveau = values[0]
+        self.code_var.set(values[0])
+        self.label_var.set(values[1])
+        self._build_menu_checklist()
+
+    def _build_menu_checklist(self):
+        for w in self.menus_inner.winfo_children():
+            w.destroy()
+        self.check_vars = {}
+
+        if self.selected_niveau == "Administrateur":
+            self.menus_frame.configure(text="Sous-menus autorisés — Administrateur a toujours accès à tout")
+            ttk.Label(self.menus_inner, text="✓ Ce niveau a systématiquement accès à la totalité des menus — "
+                                              "rien à configurer.", foreground="#1F7A1F").pack(anchor="w", padx=8, pady=8)
+            self.save_menus_btn.configure(state="disabled")
+            return
+
+        self.menus_frame.configure(text=f"Sous-menus autorisés — {self.selected_niveau}")
+        autorises = core.get_menus_autorises(self.conn, self.selected_niveau)
+        for titre, items in core.MENU_STRUCTURE:
+            ttk.Label(self.menus_inner, text=titre, font=("Segoe UI", 9, "bold")).pack(
+                anchor="w", padx=8, pady=(8, 2))
+            for label, key in items:
+                if key in self.check_vars:
+                    continue  # certaines clés sont partagées entre menus (ex. "stocks") — une seule case suffit
+                var = tk.BooleanVar(value=(key in autorises))
+                self.check_vars[key] = var
+                ttk.Checkbutton(self.menus_inner, text=label, variable=var).pack(anchor="w", padx=24)
+        self.save_menus_btn.configure(state="normal")
+
+    def save_menus(self):
+        if not self.selected_niveau or self.selected_niveau == "Administrateur":
+            return
+        menu_keys = [key for key, var in self.check_vars.items() if var.get()]
+        core.set_menus_autorises(self.conn, self.selected_niveau, menu_keys)
+        messagebox.showinfo("Enregistré", f"Autorisations mises à jour pour « {self.selected_niveau} ».",
+                             parent=self)
+
+    def refresh(self):
+        for row in self.tree.get_children():
+            self.tree.delete(row)
+        for n in core.list_niveaux_acces(self.conn):
+            self.tree.insert("", "end", values=(n["nom"], n["description"] or ""))
 
 
 class ReinitialisationTab(ttk.Frame):
@@ -8866,4 +9078,6 @@ class PlanBudgetaireTab(ttk.Frame):
 
 
 if __name__ == "__main__":
-    App().mainloop()
+    app = App()
+    if app.winfo_exists():
+        app.mainloop()

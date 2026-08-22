@@ -784,6 +784,13 @@ def init_db(conn):
         )
     """)
     conn.execute("""
+        CREATE TABLE IF NOT EXISTS niveau_acces_menus (
+            niveau_acces TEXT NOT NULL,
+            menu_key TEXT NOT NULL,
+            PRIMARY KEY (niveau_acces, menu_key)
+        )
+    """)
+    conn.execute("""
         CREATE TABLE IF NOT EXISTS utilisateurs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             nom_utilisateur TEXT NOT NULL UNIQUE,
@@ -7650,6 +7657,91 @@ def synchroniser_base(conn):
 # de connexion au démarrage : cet écran pose la base (comptes, mots de
 # passe, niveaux) en vue d'un futur contrôle d'accès par écran/action.
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# STRUCTURE CANONIQUE DES MENUS — source UNIQUE de vérité pour :
+# (1) l'écran ADMIN > Niveaux d'accès (case à cocher par sous-menu),
+# (2) le filtrage réel des menus affichés selon le niveau d'accès connecté.
+# Toute modification de la structure des menus dans main.py (add_top_menu)
+# doit être répercutée ici pour rester synchronisée.
+# ---------------------------------------------------------------------------
+MENU_STRUCTURE = [
+    ("SAISIE", [("Saisie des écritures", "saisie"), ("Soldes d'ouverture", "ouverture")]),
+    ("COMMERCE", [("Clients", "clients"), ("Recouvrement", "recouvrement"), ("Facturation", "facturation"),
+                  ("Stocks", "stocks"), ("Marges bénéficiaires", "marges")]),
+    ("PRODUCTION", [("Matières premières", "stocks"), ("Fabrication", "production"),
+                     ("Produits finis", "stocks")]),
+    ("RAPPORT FINANCIERS", [("Grand livre", "grand_livre"), ("Balance", "balance"),
+                             ("Bilan SYSCOHADA", "bilan_syscohada"),
+                             ("Compte de résultat (SIG)", "compte_resultat_sig"), ("TFT", "tft"),
+                             ("Situation financière", "situation_financiere")]),
+    ("ENGAGEMENTS-PROJETS", [("Fournisseurs", "fournisseurs"), ("Contrats", "contrats"),
+                              ("Expression de besoin", "expression_besoin"),
+                              ("Bon de commande", "ep_bon_commande"),
+                              ("Bordereau de livraison", "bordereau_livraison"),
+                              ("Règlements", "reglements")]),
+    ("GRH", [("Liste du personnel", "grh_personnel"), ("Time sheet", "grh_time_sheet"), ("KPI", "grh_kpi"),
+             ("Tableau de bord GRH", "grh_tableau_bord"), ("HS (hygiène santé)", "grh_hs")]),
+    ("TRESORERIE", [("Trésorerie", "tresorerie")]),
+    ("TRANSPORT", [("Parc auto", "transport"), ("Missions", "missions"),
+                    ("Pièces de rechange", "pieces_rechange"), ("Réparations", "reparations")]),
+    ("IMMOBILISATIONS", [("Immobilisations", "immobilisations"), ("Amortissements", "amortissements")]),
+    ("RAPPORTS TECHNIQUE", [("Rapports technique", "rapports_technique")]),
+    ("MAINTENANCE-QUALITÉ", [("Énergie", "energie"), ("Maintenance", "maintenance"),
+                              ("Pièces de rechange", "pieces_rechange")]),
+    ("PARAMÈTRES", [("Exercices comptables (clôture)", "exercices"), ("Plan comptable", "plan_comptable"),
+                     ("Plan analytique", "plan_analytique"), ("Plan budgétaire", "plan_budgetaire"),
+                     ("Plan bailleurs de fonds", "plan_bailleur"), ("Synchronisation", "synchronisation")]),
+    ("ADMIN", [("Taux de TVA", "taux_tva"), ("Taux de retenue à la source", "taux_retenue"),
+               ("Modification des factures", "admin_factures"),
+               ("Modèle de bon de commande", "admin_modele_bon_commande"),
+               ("Niveaux d'accès", "niveaux_acces"), ("Utilisateurs", "utilisateurs"),
+               ("Réinitialisation des données", "reinitialisation")]),
+]
+
+
+def get_menus_autorises(conn, niveau_acces):
+    """Renvoie l'ensemble des clés de sous-menu (ex. "saisie", "bilan_syscohada")
+    autorisées pour un niveau d'accès donné. Le niveau « Administrateur »
+    a TOUJOURS accès à tout (garde-fou — même si la table est vide ou mal
+    configurée, jamais de risque de verrouillage total de
+    l'administration)."""
+    if niveau_acces == "Administrateur":
+        return {key for _titre, items in MENU_STRUCTURE for _label, key in items}
+    rows = conn.execute("SELECT menu_key FROM niveau_acces_menus WHERE niveau_acces = ?", (niveau_acces,))
+    return {r["menu_key"] for r in rows}
+
+
+def set_menus_autorises(conn, niveau_acces, menu_keys):
+    """Remplace la liste des sous-menus autorisés pour un niveau d'accès."""
+    conn.execute("DELETE FROM niveau_acces_menus WHERE niveau_acces = ?", (niveau_acces,))
+    conn.executemany("INSERT OR IGNORE INTO niveau_acces_menus (niveau_acces, menu_key) VALUES (?, ?)",
+                      [(niveau_acces, k) for k in menu_keys])
+    conn.commit()
+
+
+def ajouter_niveaux_acces_suggeres_menus(conn):
+    """Préconfigure des ensembles de menus raisonnables pour les niveaux
+    suggérés (Administrateur/Comptable/Lecture seule/Saisie seule) —
+    appelée une fois après ajouter_niveaux_acces_suggeres(), UNIQUEMENT si
+    aucune configuration de menus n'existe encore pour ces niveaux (ne
+    écrase jamais une configuration déjà personnalisée par l'utilisateur)."""
+    tous = [key for _titre, items in MENU_STRUCTURE for _label, key in items]
+    admin_menus = ["taux_tva", "taux_retenue", "niveaux_acces", "utilisateurs"]
+    comptable_menus = [key for titre, items in MENU_STRUCTURE
+                        for _label, key in items if titre not in ("ADMIN",)]
+    lecture_seule_menus = [key for titre, items in MENU_STRUCTURE
+                            for _label, key in items if titre in ("RAPPORT FINANCIERS", "TRESORERIE")]
+    saisie_seule_menus = ["saisie", "ouverture", "clients", "facturation", "fournisseurs", "reglements"]
+
+    for niveau, menus in (("Administrateur", tous), ("Comptable", comptable_menus),
+                           ("Lecture seule", lecture_seule_menus), ("Saisie seule", saisie_seule_menus)):
+        deja_configure = conn.execute(
+            "SELECT 1 FROM niveau_acces_menus WHERE niveau_acces = ? LIMIT 1", (niveau,)
+        ).fetchone()
+        if not deja_configure:
+            set_menus_autorises(conn, niveau, menus)
+
+
 def list_niveaux_acces(conn):
     return [dict(r) for r in conn.execute("SELECT * FROM niveaux_acces ORDER BY nom").fetchall()]
 

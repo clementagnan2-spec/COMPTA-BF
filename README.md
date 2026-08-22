@@ -3430,3 +3430,46 @@ fichier qui continuait de s'exécuter à chaque push.
 (contenu inchangé — toujours les 3 builds PyInstaller) pour correspondre
 exactement au nom du fichier déjà présent dans le dépôt GitHub de
 l'utilisateur, et le remplacer correctement au prochain import.
+
+## Contrôle d'accès réel — niveaux d'accès liés aux menus, connexion obligatoire
+
+**Demande** : les niveaux d'accès doivent réellement restreindre les
+menus et sous-menus (Saisie, Production, Rapport financiers,
+Engagements, GRH, Trésorerie, Transport, Immobilisations, etc.), pas
+juste exister comme référentiel.
+
+**Réalisé** :
+- **`core.MENU_STRUCTURE`** (nouveau) : structure canonique des 48
+  sous-menus de l'application, source unique de vérité — vérifié qu'elle
+  correspond exactement aux `register()` réels de `main.py` (zéro
+  divergence).
+- **Table `niveau_acces_menus`** (nouvelle) : associe à chaque niveau
+  d'accès la liste des sous-menus qu'il autorise.
+  `core.get_menus_autorises()`/`set_menus_autorises()` pour lire/écrire
+  cette association. Le niveau **« Administrateur » a toujours accès à
+  tout**, même sans configuration explicite — garde-fou pour ne jamais
+  risquer un verrouillage total de l'administration.
+- **Écran « Niveaux d'accès » reconstruit** (menu ADMIN) : en
+  sélectionnant un niveau, une liste à cocher de tous les sous-menus
+  apparaît à droite (groupés par menu principal), avec un bouton
+  « Enregistrer les autorisations ».
+- **Connexion obligatoire au démarrage** — mais **seulement dès qu'au
+  moins un utilisateur existe** dans la base (menu ADMIN > Utilisateurs).
+  Tant qu'aucun utilisateur n'a été créé, l'application démarre librement
+  (mode amorçage), pour ne jamais bloquer l'accès à une installation
+  neuve. Une fois connecté, les menus affichés sont filtrés en temps
+  réel selon les autorisations du niveau d'accès de l'utilisateur — un
+  menu de premier niveau sans aucun sous-menu autorisé est masqué
+  entièrement. L'identité connectée s'affiche dans la barre du haut.
+- `ajouter_niveaux_acces_suggeres_menus()` : préconfigure des ensembles
+  raisonnables pour les niveaux courants (Administrateur = tout,
+  Comptable = tout sauf ADMIN, Lecture seule = rapports financiers et
+  trésorerie uniquement, Saisie seule = saisie et documents commerciaux
+  de base) — sans jamais écraser une configuration déjà personnalisée.
+
+Testé de bout en bout : garde-fou vérifié (aucun utilisateur → pas de
+connexion requise ; dès qu'un utilisateur existe → connexion exigée) ;
+authentification et filtrage réel des menus selon le niveau (un niveau
+« Saisie seule » restreint à 2 sous-menus voit bien disparaître Bilan et
+tous les autres) ; Administrateur conserve l'accès total même sans
+configuration ; moteur comptable non régressé.
