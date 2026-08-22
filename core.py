@@ -3681,6 +3681,15 @@ def _situation_template_path():
     return _generer_template_depuis_b64("situation_template.xls", etats_financiers_data.SITUATION_TEMPLATE_B64)
 
 
+def get_app_icon_path():
+    """Emplacement de l'icône de l'application (usine) — régénérée à la
+    volée depuis les données encodées en base64 dans factory_icon_data.py,
+    même principe que les gabarits d'états financiers (élimine toute
+    dépendance au bundle PyInstaller)."""
+    import factory_icon_data
+    return _generer_template_depuis_b64("factory_icon.ico", factory_icon_data.FACTORY_ICON_B64)
+
+
 def import_bilan_template(path_source):
     """Remplace le gabarit Bilan ACTIF par un fichier fourni par
     l'utilisateur (ses formules modifiées/corrigées) — validé au préalable

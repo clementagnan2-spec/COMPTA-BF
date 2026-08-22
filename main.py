@@ -63,7 +63,12 @@ def export_etat_gabarit(parent, conn, etat_id, nom_fichier, titre):
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("Saisie Comptable SYSCOHADA")
+        self.title("PLATEFORME INTEGREE DE GESTION")
+        try:
+            icon_path = core.get_app_icon_path()
+            self.iconbitmap(icon_path)
+        except Exception:
+            pass  # icône facultative — ne doit jamais empêcher le démarrage de l'application
         self.geometry("1400x820")
         try:
             self.state("zoomed")  # démarre maximisée (Windows) — plus de place pour les Bilan/Balance denses en chiffres

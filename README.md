@@ -3263,3 +3263,27 @@ Testé : TFT affiche maintenant 2 500 000 (solde d'ouverture réel) au
 lieu de 0 pour la trésorerie nette d'ouverture ; Bilan gabarit affiche
 désormais 5 000 000 en Net N-1 (au lieu de 0) sur un scénario identique ;
 Compte de résultat non régressé (41 lignes, 0 erreur).
+
+### Nom du logiciel changé + icône d'usine
+
+**Demande** : renommer "Saisie Comptable SYSCOHADA" en "PLATEFORME
+INTEGREE DE GESTION", et remplacer l'icône (une plume) par une icône
+d'usine.
+
+**Réalisé** :
+- Titre de la fenêtre changé en **« PLATEFORME INTEGREE DE GESTION »**.
+- **Icône d'usine créée** (bâtiment bleu avec deux cheminées fumantes,
+  toit en dents de scie) et appliquée à la fois à la fenêtre de
+  l'application (`self.iconbitmap()`) et à l'exécutable lui-même
+  (`--icon` dans le workflow de build, pour l'icône du fichier `.exe` et
+  de la barre des tâches Windows).
+- **Encodée en base64 dans le code source** (`factory_icon_data.py`),
+  exactement comme les gabarits de rapports financiers — évite la même
+  classe de bug rencontrée plusieurs fois (fichier absent du bundle
+  PyInstaller malgré une configuration `--add-data` correcte). Régénérée
+  automatiquement au démarrage si besoin, dans le dossier persistant de
+  l'application.
+
+Testé : icône régénérée correctement à partir des données encodées
+(14 599 octets, identique à l'original), titre de fenêtre mis à jour,
+moteur comptable non régressé.
