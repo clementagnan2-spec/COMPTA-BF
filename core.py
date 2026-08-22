@@ -3214,7 +3214,7 @@ IMMO_CATEGORIES = [
     ("Brevets, licences, logiciels et immobilisations incorporelles",
      [(210000, 219999)], [(281000, 281999), (291000, 291999)]),
     ("Terrains", [(220000, 229999)], [(282000, 282999), (292000, 292999)]),
-    ("Bâtiments", [(231000, 233999)], [(283100, 283399), (293100, 293399)]),
+    ("Bâtiments", [(230000, 233999)], [(283100, 283399), (293100, 293399)]),
     ("Installations, agencements et aménagements",
      [(234000, 239999)], [(283400, 283999), (293400, 293999)]),
     ("Matériel", [(240000, 244999)], [(284000, 284499), (294000, 294499)]),
@@ -3256,10 +3256,14 @@ def _cle_racine_bilan(racine):
     return racine
 
 
-def _cle_prefixe_treso(prefixe):
-    """Regroupement Trésorerie exact du rapport de référence : racines 50
-    à 56 combinées (banques), racines 57 à 59 combinées (caisse)."""
-    if prefixe in ("50", "51", "52", "53", "54", "56"):
+def _cle_prefixe_treso(code_compte):
+    """Regroupement Trésorerie exact du rapport de référence : racines 50 à
+    56 combinées (banques, CtaCptSolde("50*","56*") — une PLAGE NUMÉRIQUE
+    continue 500000-569999, pas une liste de racines choisies une par une,
+    pour ne jamais oublier une racine intermédiaire comme 55), racines 57 à
+    59 combinées (caisse, plage 570000-599999)."""
+    code_int = int(code_compte)
+    if 500000 <= code_int <= 569999:
         return "50_56"
     return "57_59"
 
@@ -3439,11 +3443,11 @@ def _compute_bilan_groupes(conn, exercice, balance=None, resultat_net_override=N
     # comme le rapport de référence ----
     treso_lignes, _ = compute_tresorerie_detail(conn, exercice=exercice, balance=balance)
     treso_actif_flat = [{"label": f"{t['code']} {t['label']}", "montant": t["solde_cloture"],
-                          "prefixe": _cle_prefixe_treso(t["code"][:2])}
+                          "prefixe": _cle_prefixe_treso(t["code"])}
                         for t in treso_lignes if t["solde_cloture"] > 0]
     treso_actif = _grouper_avec_sous_total(treso_actif_flat, "prefixe", TRESO_LABELS)
     treso_passif_flat = [{"label": f"{t['code']} {t['label']}", "montant": -t["solde_cloture"],
-                           "prefixe": _cle_prefixe_treso(t["code"][:2])}
+                           "prefixe": _cle_prefixe_treso(t["code"])}
                          for t in treso_lignes if t["solde_cloture"] < 0]
     treso_passif = _grouper_avec_sous_total(treso_passif_flat, "prefixe", TRESO_LABELS)
 

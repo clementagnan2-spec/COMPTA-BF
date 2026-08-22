@@ -2947,3 +2947,54 @@ dans le fichier de référence.
 Testé avec un scénario ciblant précisément ce cas (comptes sur les
 racines 13, 14 et 15) : la fusion tombe juste (100 000+200 000+50 000 =
 350 000 sur une seule ligne), écart resté à 0.
+
+### Bug confirmé et corrigé : racine 55 (Trésorerie) manquante dans "Banques créditrices"
+
+**Écart signalé par l'utilisateur** : sa "Banque créditrice *50-56*"
+donnait 1 milliard, l'application n'en affichait que 643 379 329.
+
+**Cause trouvée** : `_cle_prefixe_treso()` utilisait une liste discrète
+de racines `("50","51","52","53","54","56")` — **oubliant la racine
+« 55 »** entre 54 et 56. Or la formule de référence
+`CtaCptSolde("50*","56*")` est une vraie **plage numérique continue**
+(500000 à 569999), qui inclut forcément tout compte 551xxx-559xxx s'il
+existe. Tout compte sur cette racine tombait donc à tort dans « Caisse »
+au lieu de « Banques ».
+
+**Corrigé** : `_cle_prefixe_treso()` fonctionne désormais par comparaison
+numérique de plage (500000 ≤ code ≤ 569999), exactement comme la formule
+de référence — ne peut plus jamais oublier de racine intermédiaire.
+
+Testé avec un compte sur la racine 55 (200 000 000) : correctement compté
+dans « Banques créditrices/débitrices » (total 600 000 000 = 400M+200M)
+au lieu de « Caisse ». Écart resté à 0.
+
+**En attente** : pour le poste Installations/Agencements (17 Md attendu
+vs 12,5 Md affiché), en attente de la liste des comptes sous « Autres
+immobilisations non classées » (visible en faisant défiler l'écran
+Bilan) pour identifier précisément la cause.
+
+### Bug corrigé : compte racine 230 absent de toute catégorie (Bilan ET menu Immobilisations)
+
+**Suite du point Installations/Agencements** : en réexaminant
+`IMMO_CATEGORIES` (partagée entre l'écran Bilan et le menu
+IMMOBILISATIONS > Immobilisations), un vrai trou trouvé : la racine
+**230** (le compte « Bâtiments » racine, avant sa subdivision officielle
+en 231-234) n'appartenait à AUCUNE catégorie — ni Terrains (220-229), ni
+Bâtiments (231-233 seulement) — et tombait donc dans « Autres
+immobilisations non classées » au lieu de rejoindre Bâtiments.
+
+**Corrigé** : la plage Bâtiments élargie à (230000-233999), comblant ce
+trou — comme les deux écrans partagent la même fonction
+`categorie_immobilisation()`/`IMMO_CATEGORIES`, ce correctif s'applique
+automatiquement aux deux à la fois.
+
+Testé : un compte 230000 (2 000 000) rejoint maintenant correctement
+« Bâtiments » aux côtés d'un compte 231100 (3 000 000), sur le Bilan
+comme sur le menu Immobilisations (total 5 000 000 sur une seule ligne
+au lieu d'être scindé). Écart resté à 0.
+
+**Toujours en attente** pour le point précis Installations/Agencements
+(17 Md attendu vs 12,5 Md affiché) : la liste des comptes exacts sous
+« Autres immobilisations non classées » sur la vraie base de
+l'utilisateur, pour identifier s'il reste un autre trou de plage.
