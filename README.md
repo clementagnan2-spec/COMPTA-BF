@@ -3313,3 +3313,102 @@ Testé : reproduit le crash exact avec des niveaux d'accès réels
 (Administrateur, Comptable, Lecture seule, Saisie seule), confirmé
 corrigé ; l'autre appelant de `list_niveaux_acces()` reste inchangé et
 fonctionnel.
+
+## NOUVELLE ARCHITECTURE — Serveur + Client réseau (multi-utilisateur simultané)
+
+**Demande** : transformer ce logiciel en serveur, et créer une
+application « client » qui s'y connecte par réseau local ou Internet,
+avec plusieurs utilisateurs travaillant réellement en même temps.
+
+### Vue d'ensemble
+
+Trois programmes distincts désormais dans le projet :
+
+1. **`main.py`** (inchangé) — l'application de bureau autonome
+   existante, qui ouvre directement un fichier SQLite local. Continue de
+   fonctionner exactement comme avant, pour un usage mono-poste.
+2. **`server.py`** (nouveau) — le **SERVEUR** : héberge la base de
+   données partagée et expose le moteur comptable (`core.py`) sur le
+   réseau (HTTP + JSON, bibliothèque standard uniquement, aucune
+   dépendance supplémentaire).
+3. **`client_main.py`** (nouveau) — le **CLIENT** : une application de
+   bureau séparée, qui ne touche à AUCUN fichier local — elle se connecte
+   au serveur (adresse IP + port) et travaille entièrement à distance.
+
+### Comment ça marche
+
+- Le serveur ouvre la base SQLite en **mode WAL** (meilleure gestion de
+  la lecture/écriture simultanée) et sérialise les écritures avec un
+  verrou global — plusieurs utilisateurs peuvent travailler EN MÊME
+  TEMPS sans se marcher dessus ni corrompre les données (testé avec deux
+  utilisateurs écrivant en parallèle via de vrais threads simultanés :
+  aucune perte, Bilan resté équilibré).
+- **Authentification** : réutilise la table `utilisateurs` déjà
+  existante (menu ADMIN) — chaque utilisateur se connecte avec son
+  identifiant/mot de passe habituel, reçoit un jeton de session (8h de
+  validité).
+- **Sécurité** : liste blanche explicite des fonctions accessibles à
+  distance (`RPC_WHITELIST` dans `server.py`) — impossible d'exécuter du
+  code arbitraire sur le serveur. Actuellement : Saisie comptable
+  (multi-lignes), Ventes (clients/factures), Achats (fournisseurs/
+  règlements/bons de commande), Stocks — le circuit commercial demandé
+  en priorité.
+- **`client_core.py`** : module miroir de `core.py` côté client — chaque
+  fonction transforme automatiquement l'appel en requête réseau vers le
+  serveur, ce qui permet de réutiliser (presque) le même style de code
+  que l'application de bureau existante.
+
+### Premier écran client entièrement fonctionnel : la SAISIE
+
+L'écran de Saisie comptable multi-lignes du client est **pleinement
+opérationnel de bout en bout** — testé avec le vrai moteur (formulaire
+multi-lignes, contrôle d'équilibre en temps réel, envoi au serveur,
+refus propre d'une écriture déséquilibrée, actualisation de la liste des
+dernières écritures).
+
+**Les écrans Ventes / Achats / Stocks** restent à construire côté client
+(un onglet « À VENIR » les liste) — le serveur les expose déjà
+(`RPC_WHITELIST`), donc leur ajout suit exactement le même modèle que la
+Saisie, sans travail d'architecture supplémentaire.
+
+### Utilisation
+
+**Sur le poste serveur** (celui qui héberge les données) :
+```
+python server.py --port 8765
+```
+(ou l'exécutable `SaisieComptableServeur.exe` une fois compilé). Le
+port par défaut est 8765 ; la base de données utilisée est celle de
+l'installation standard (`%LOCALAPPDATA%\SaisieComptable\comptabilite.db`),
+sauf `--db chemin_personnalisé.db`.
+
+**Sur chaque poste client** : lancer `client_main.py` (ou
+`SaisieComptableClient.exe`), saisir l'adresse IP du poste serveur
+(visible avec `ipconfig` sur le poste serveur, réseau local) et le port,
+puis se connecter avec un identifiant/mot de passe existant.
+
+**Accès depuis Internet** (hors réseau local) : nécessite soit une
+redirection de port sur le routeur du poste serveur (le trafic reste en
+clair, réservé à un usage de confiance), soit un VPN d'entreprise
+(solution recommandée pour un accès distant sécurisé) — ce serveur
+n'implémente pas le chiffrement HTTPS par défaut.
+
+### Testé de bout en bout
+
+- Connexion, refus de mauvais mot de passe, refus d'accès sans session,
+  refus d'une fonction non autorisée.
+- Écriture comptable multi-lignes postée via le réseau, correctement
+  persistée et équilibrée.
+- Refus propre d'une écriture déséquilibrée envoyée par le client.
+- **Deux utilisateurs différents écrivant réellement en même temps**
+  (threads parallèles) : 100 écritures créées sans perte ni corruption,
+  Bilan resté équilibré.
+- Non-régression complète de l'application de bureau existante
+  (`main.py`), totalement indépendante de cette nouvelle architecture.
+
+### Workflow de build mis à jour
+
+Trois exécutables Windows générés désormais : `SaisieComptable.exe`
+(application de bureau autonome, inchangée), `SaisieComptableServeur.exe`
+(serveur, mode console pour voir les journaux), `SaisieComptableClient.exe`
+(client réseau).
