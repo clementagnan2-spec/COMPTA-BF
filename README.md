@@ -3287,3 +3287,29 @@ d'usine.
 Testé : icône régénérée correctement à partir des données encodées
 (14 599 octets, identique à l'original), titre de fenêtre mis à jour,
 moteur comptable non régressé.
+
+### Crash au démarrage corrigé — NiveauxAccesTab (KeyError: 'code')
+
+**Crash signalé** (capture d'écran) : `KeyError: 'code'` dans `refresh()`
+de `NiveauxAccesTab`, empêchant l'application de démarrer dès qu'au
+moins un niveau d'accès existe dans la base (menu ADMIN > Niveaux
+d'accès) — bug préexistant, sans rapport avec le changement de nom/icône
+de la réponse précédente, révélé simplement parce que toutes les pages
+s'instancient d'un coup au démarrage.
+
+**Cause** : `core.list_niveaux_acces()` renvoie des dictionnaires avec
+les clés `nom`/`description` (colonnes réelles de la table
+`niveaux_acces`), alors que l'écran générique `_SimplePlanTab` (dont
+hérite `NiveauxAccesTab`) attend des clés `code`/`label`.
+
+**Corrigé** : `NiveauxAccesTab.list_fn()` transforme désormais
+explicitement `nom`→`code` et `description`→`label` avant de les
+transmettre à l'écran générique — **sans toucher à
+`core.list_niveaux_acces()`**, dont dépend un autre appelant
+(`UtilisateursTab._refresh_niveaux()`, qui utilise `nom` directement) qui
+serait sinon cassé par un changement de la fonction partagée.
+
+Testé : reproduit le crash exact avec des niveaux d'accès réels
+(Administrateur, Comptable, Lecture seule, Saisie seule), confirmé
+corrigé ; l'autre appelant de `list_niveaux_acces()` reste inchangé et
+fonctionnel.

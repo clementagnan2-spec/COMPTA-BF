@@ -8409,7 +8409,7 @@ class NiveauxAccesTab(_SimplePlanTab):
     SUGGESTIONS_LABEL = "Ajouter les niveaux courants (Administrateur, Comptable...)"
 
     def list_fn(self, conn):
-        return core.list_niveaux_acces(conn)
+        return [{"code": n["nom"], "label": n["description"]} for n in core.list_niveaux_acces(conn)]
 
     def add_fn(self, conn, code, label):
         core.add_niveau_acces(conn, code, label)
