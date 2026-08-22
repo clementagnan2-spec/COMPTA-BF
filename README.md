@@ -3473,3 +3473,29 @@ authentification et filtrage réel des menus selon le niveau (un niveau
 « Saisie seule » restreint à 2 sous-menus voit bien disparaître Bilan et
 tous les autres) ; Administrateur conserve l'accès total même sans
 configuration ; moteur comptable non régressé.
+
+### Client réseau — barre de menu filtrée selon le niveau d'accès
+
+**Demande** : le client doit aussi voir le menu qui lui est autorisé en haut.
+
+**Réalisé** :
+- **`server.py`** : la réponse de connexion (`/login`) inclut désormais
+  `menus_autorises` — la liste des sous-menus réellement permis pour le
+  niveau d'accès de l'utilisateur (calculée côté serveur via
+  `core.get_menus_autorises()`, la même fonction que l'application de
+  bureau).
+- **`client_core.py`** : `RemoteConnection` conserve cette liste
+  (`remote.menus_autorises`) après connexion.
+- **`client_main.py`** : `ClientApp` construit désormais une **vraie barre
+  de menu** (même structure que l'application de bureau,
+  `core.MENU_STRUCTURE`), filtrée exactement de la même façon — un menu
+  de premier niveau sans aucun sous-menu autorisé est masqué. Les
+  sous-menus autorisés mais **pas encore construits côté client** (tout
+  sauf Saisie, à ce stade) s'affichent quand même dans le menu, marqués
+  « (bientôt disponible) », et affichent un message clair au clic au lieu
+  de planter — pour ne jamais bloquer sur une fonctionnalité en cours de
+  développement.
+
+Testé de bout en bout avec deux profils réels : un niveau restreint
+(« Saisie seule », 3 sous-menus autorisés) ne voit que 2 menus de premier
+niveau (SAISIE, COMMERCE) ; un Administrateur reçoit bien les 48 menus.

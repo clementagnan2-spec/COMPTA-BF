@@ -193,6 +193,8 @@ def make_handler(server_state: AccountingServer):
                 return self._send_json(400, {"ok": False, "error": "Identifiant et mot de passe requis."})
             with server_state.write_lock:
                 utilisateur = core.verify_password(server_state.conn, nom_utilisateur, mot_de_passe)
+                if utilisateur:
+                    menus_autorises = sorted(core.get_menus_autorises(server_state.conn, utilisateur.get("niveau_acces")))
             if not utilisateur:
                 return self._send_json(401, {"ok": False, "error": "Identifiant ou mot de passe incorrect."})
             token = server_state.sessions.create(nom_utilisateur, utilisateur.get("niveau_acces"))
@@ -200,6 +202,7 @@ def make_handler(server_state: AccountingServer):
                 "ok": True,
                 "session": token,
                 "utilisateur": nom_utilisateur,
+                "menus_autorises": menus_autorises,
                 "niveau_acces": utilisateur.get("niveau_acces"),
             })
 

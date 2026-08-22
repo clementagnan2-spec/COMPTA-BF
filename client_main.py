@@ -143,13 +143,23 @@ class LoginWindow(tk.Tk):
 
 
 class ClientApp(tk.Tk):
-    """Fenêtre principale du client, une fois connecté — pour l'instant,
-    l'écran Saisie comptable (pleinement fonctionnel, multi-lignes). Les
-    écrans Ventes/Achats/Stocks s'ajouteront selon le même modèle."""
+    """Fenêtre principale du client, une fois connecté — barre de menu
+    identique dans l'esprit à l'application de bureau (core.MENU_STRUCTURE),
+    filtrée selon les sous-menus autorisés pour le niveau d'accès connecté
+    (transmis par le serveur à la connexion). Seul l'écran Saisie est
+    pleinement implémenté côté client pour l'instant — les autres
+    sous-menus autorisés affichent un message clair plutôt que de planter,
+    en attendant leur construction (même modèle à suivre)."""
+
+    # Sous-menus du circuit commercial déjà pleinement fonctionnels côté client.
+    IMPLEMENTED_SCREENS = {
+        "saisie": lambda parent, remote: RemoteSaisieTab(parent, remote),
+    }
 
     def __init__(self, remote: RemoteConnection):
         super().__init__()
         self.remote = remote
+        self.pages = {}
         self.title(f"PLATEFORME INTEGREE DE GESTION — Client — {remote.nom_utilisateur} "
                     f"({remote.niveau_acces}) — {remote.host}:{remote.port}")
         self.geometry("1300x800")
@@ -171,18 +181,67 @@ class ClientApp(tk.Tk):
                   foreground="#595959").pack(side="left", padx=8)
         ttk.Button(top_bar, text="Se déconnecter", command=self._on_close).pack(side="right", padx=8)
 
-        notebook = ttk.Notebook(self)
-        notebook.pack(fill="both", expand=True)
-        saisie_tab = RemoteSaisieTab(notebook, remote)
-        notebook.add(saisie_tab, text="SAISIE")
+        self._build_menu()
 
-        roadmap_tab = ttk.Frame(notebook)
-        ttk.Label(roadmap_tab, text="Prochains écrans du client (même architecture, à venir)",
-                  font=("Segoe UI", 12, "bold")).pack(anchor="w", padx=16, pady=(16, 8))
-        for txt in ("Ventes — facturation et suivi clients", "Achats — fournisseurs, bons de commande, règlements",
-                    "Stocks — mouvements et valorisation"):
-            ttk.Label(roadmap_tab, text=f"• {txt}", foreground="#595959").pack(anchor="w", padx=24, pady=2)
-        notebook.add(roadmap_tab, text="À VENIR")
+        self.content = ttk.Frame(self)
+        self.content.pack(fill="both", expand=True)
+        self.content.grid_rowconfigure(0, weight=1)
+        self.content.grid_columnconfigure(0, weight=1)
+
+        # Ouvre le premier sous-menu autorisé et implémenté par défaut
+        # (généralement la Saisie), sinon un message d'accueil.
+        premiere_cle = next((k for k in self.IMPLEMENTED_SCREENS if k in remote.menus_autorises), None)
+        if premiere_cle:
+            self.show(premiere_cle)
+        else:
+            self._show_accueil()
+
+    def _build_menu(self):
+        """Barre de menu — mêmes libellés et regroupements que
+        l'application de bureau (core.MENU_STRUCTURE), mais un sous-menu
+        n'apparaît que s'il est À LA FOIS autorisé pour ce niveau d'accès
+        (remote.menus_autorises, transmis par le serveur) ET disponible
+        côté client. Un menu de premier niveau sans aucun sous-menu
+        correspondant est masqué entièrement — même logique que
+        main.py:add_top_menu()."""
+        menubar = tk.Menu(self)
+        bold = ("Segoe UI", 9, "bold")
+
+        for titre, items in core.MENU_STRUCTURE:
+            items_visibles = [(label, key) for label, key in items if key in self.remote.menus_autorises]
+            if not items_visibles:
+                continue
+            m = tk.Menu(menubar, tearoff=0)
+            for label, key in items_visibles:
+                suffix = "" if key in self.IMPLEMENTED_SCREENS else "  (bientôt disponible)"
+                m.add_command(label=label + suffix, command=lambda k=key: self.show(k))
+            menubar.add_cascade(label=titre, menu=m)
+            menubar.entryconfig(menubar.index("end"), font=bold)
+
+        self.config(menu=menubar)
+
+    def show(self, key):
+        if key not in self.IMPLEMENTED_SCREENS:
+            messagebox.showinfo(
+                "Bientôt disponible",
+                f"Cet écran n'est pas encore disponible sur le client réseau — utilisez l'application de "
+                f"bureau en attendant. Il suivra le même principe que l'écran Saisie une fois construit.",
+                parent=self,
+            )
+            return
+        if key not in self.pages:
+            self.pages[key] = self.IMPLEMENTED_SCREENS[key](self.content, self.remote)
+            self.pages[key].grid(row=0, column=0, sticky="nsew")
+        for page_key, page in self.pages.items():
+            if page_key == key:
+                page.tkraise()
+
+    def _show_accueil(self):
+        frame = ttk.Frame(self.content)
+        frame.grid(row=0, column=0, sticky="nsew")
+        ttk.Label(frame, text="Aucun écran encore disponible pour votre niveau d'accès sur le client réseau.",
+                  font=("Segoe UI", 12, "bold")).pack(anchor="w", padx=16, pady=16)
+        frame.tkraise()
 
     def _on_close(self):
         self.remote.logout()

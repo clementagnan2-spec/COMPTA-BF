@@ -50,6 +50,7 @@ class RemoteConnection:
         self.session = None
         self.nom_utilisateur = None
         self.niveau_acces = None
+        self.menus_autorises = set()
 
     def ping(self):
         """Vérifie que le serveur répond, sans authentification — pour un
@@ -70,6 +71,7 @@ class RemoteConnection:
         self.session = data["session"]
         self.nom_utilisateur = data["utilisateur"]
         self.niveau_acces = data.get("niveau_acces")
+        self.menus_autorises = set(data.get("menus_autorises") or [])
         return data
 
     def logout(self):
