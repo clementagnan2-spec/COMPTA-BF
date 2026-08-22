@@ -2998,3 +2998,23 @@ au lieu d'être scindé). Écart resté à 0.
 (17 Md attendu vs 12,5 Md affiché) : la liste des comptes exacts sous
 « Autres immobilisations non classées » sur la vraie base de
 l'utilisateur, pour identifier s'il reste un autre trou de plage.
+
+### Scrollbars ajoutées partout + Soldes d'ouverture en Débit/Crédit avec totaux
+
+**Réalisé** :
+- **Scrollbar verticale ajoutée sur les 46 écrans** qui affichaient une
+  liste (Treeview) sans en avoir — script automatisé (repère chaque
+  Treeview et sa ligne d'affichage, l'enveloppe d'une scrollbar), plus 4
+  cas particuliers traités à la main (Bilan SYSCOHADA — 2 tableaux côte à
+  côte, Grand livre — scrollbar verticale ET horizontale vu le nombre de
+  colonnes, détail Balance âgée, Exercices comptables). Vérifié : plus
+  aucun écran de l'application n'a de liste sans scrollbar.
+- **Soldes d'ouverture** : la colonne unique « Solde » (signée) remplacée
+  par **deux colonnes Débit / Crédit**, avec une ligne de **total en bas
+  de chaque colonne** et un message d'équilibre clair (Débit = Crédit,
+  au lieu de « somme des soldes = 0 »).
+
+Testé : soldes d'ouverture toujours enregistrés et lus correctement
+(conversion Débit/Crédit ↔ solde signé vérifiée dans les deux sens),
+Bilan resté équilibré. Compilation complète sans erreur sur les 46
+écrans modifiés.
