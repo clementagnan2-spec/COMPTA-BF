@@ -86,12 +86,7 @@ class App(tk.Tk):
         self._refresh_exercice_list()
 
         self.content = ttk.Frame(self)
-        _content_scrollframe = ttk.Frame(self)
-        _content_scrollframe.pack(fill="both", expand=True)
-        _content_vscroll = ttk.Scrollbar(_content_scrollframe, orient="vertical", command=self.content.yview)
-        self.content.configure(yscrollcommand=_content_vscroll.set)
-        self.content.pack(in_=_content_scrollframe, side="left", fill="both", expand=True)
-        _content_vscroll.pack(in_=_content_scrollframe, side="right", fill="y")
+        self.content.pack(fill="both", expand=True)
         self.content.grid_rowconfigure(0, weight=1)
         self.content.grid_columnconfigure(0, weight=1)
 
@@ -276,7 +271,7 @@ class App(tk.Tk):
             if abs(bilan["ecart"]) >= 1:
                 messagebox.showwarning(
                     "Bilan déséquilibré",
-                    f"L'exercice {current} n'est pas équilibré (écart de {bilan['ecart']:,.2f}) — "
+                    f"L'exercice {current} n'est pas équilibré (écart de {fmt_cfa(bilan['ecart'])}) — "
                     f"corrigez-le avant de le clôturer (voir l'onglet Bilan pour le diagnostic). "
                     f"Un nouvel exercice sera créé, mais SANS solde d'ouverture reporté pour l'instant.",
                 )
@@ -624,7 +619,7 @@ class MultiLigneDialog(tk.Toplevel):
                              "quantite": qte, "analytic_code": analytic_code,
                              "fournisseur_code": fournisseur_code, "client_code": client_code})
         self.tree.insert("", "end", values=(
-            compte, libelle, f"{debit:,.2f}" if debit else "", f"{credit:,.2f}" if credit else "",
+            compte, libelle, f"{fmt_cfa(debit)}" if debit else "", f"{fmt_cfa(credit)}" if credit else "",
             f"{qte:g}" if qte else "", analytic_code or "", tiers_label))
         self.ligne_compte_var.set("")
         self.ligne_libelle_var.set("")
@@ -651,8 +646,8 @@ class MultiLigneDialog(tk.Toplevel):
         total_debit = sum(l["debit"] for l in self.lignes)
         total_credit = sum(l["credit"] for l in self.lignes)
         ecart = total_debit - total_credit
-        self.total_var.set(f"Total Débit : {total_debit:,.2f}     Total Crédit : {total_credit:,.2f}     "
-                            f"Écart : {ecart:,.2f}")
+        self.total_var.set(f"Total Débit : {fmt_cfa(total_debit)}     Total Crédit : {fmt_cfa(total_credit)}     "
+                            f"Écart : {fmt_cfa(ecart)}")
         self.total_label.configure(foreground="#1F7A1F" if abs(ecart) < 0.01 and total_debit > 0 else "#B00020")
 
     def save(self):
@@ -1363,8 +1358,8 @@ class SaisieTab(ttk.Frame):
             self.tree.insert("", "end", values=(
                 e["id"], core.to_display_date(e["date"]), e["piece"] or "", e["journal"] or "", e["compte"], label,
                 e["tiers"] or "", e["libelle"] or "",
-                f"{e['debit']:.2f}" if e["debit"] else "",
-                f"{e['credit']:.2f}" if e["credit"] else "",
+                fmt_cfa(e["debit"]) if e["debit"] else "",
+                fmt_cfa(e["credit"]) if e["credit"] else "",
                 f"{e['quantite']:g}" if e["quantite"] else "",
                 e["analytic_code"] or "",
                 e["budget_code"] or "",
@@ -1375,7 +1370,7 @@ class SaisieTab(ttk.Frame):
             total_d += e["debit"]
             total_c += e["credit"]
         equilibre = "Équilibré ✓" if abs(total_d - total_c) < 0.01 else "NON ÉQUILIBRÉ ✗"
-        self.totals_var.set(f"TOTAUX — Débit : {total_d:,.2f}   Crédit : {total_c:,.2f}   {equilibre}")
+        self.totals_var.set(f"TOTAUX — Débit : {fmt_cfa(total_d)}   Crédit : {fmt_cfa(total_c)}   {equilibre}")
 
 
 class BalanceTab(ttk.Frame):
@@ -1423,7 +1418,7 @@ class BalanceTab(ttk.Frame):
         data = core.compute_balance_detaillee(self.conn)
 
         def f(v):
-            return f"{v:,.2f}" if v else ""
+            return f"{fmt_cfa(v)}" if v else ""
 
         for c in data["classes"]:
             for l in c["lignes"]:
@@ -1450,13 +1445,13 @@ class BalanceTab(ttk.Frame):
             msg = "⚠ Balance déséquilibrée — "
             parts = []
             if abs(ecart_ouv) >= 1:
-                parts.append(f"écart Ouverture Débit/Crédit de {ecart_ouv:,.2f} (soldes d'ouverture "
+                parts.append(f"écart Ouverture Débit/Crédit de {fmt_cfa(ecart_ouv)} (soldes d'ouverture "
                               f"incomplets — voir l'onglet Soldes d'ouverture)")
             if abs(ecart_cumul) >= 1:
-                parts.append(f"écart Mouvement Débit/Crédit de {ecart_cumul:,.2f} (des écritures de la "
+                parts.append(f"écart Mouvement Débit/Crédit de {fmt_cfa(ecart_cumul)} (des écritures de la "
                               f"période ne sont pas équilibrées — vérifiez un éventuel import massif)")
             if abs(ecart_solde) >= 1:
-                parts.append(f"écart Clôture Débit/Crédit de {ecart_solde:,.2f}")
+                parts.append(f"écart Clôture Débit/Crédit de {fmt_cfa(ecart_solde)}")
             self.ecart_var.set(msg + " ; ".join(parts))
 
 
@@ -1509,7 +1504,7 @@ class CompteResultatTab(ttk.Frame):
         self.refresh()
 
     def _row(self, tag, label, val):
-        self.tree.insert("", "end", tags=(tag,), values=(f"  {label}", f"{val:,.2f}"))
+        self.tree.insert("", "end", tags=(tag,), values=(f"  {label}", f"{fmt_cfa(val)}"))
 
     def _header(self, tag, titre):
         self.tree.insert("", "end", tags=(tag + "_header",), values=(titre, ""))
@@ -1559,7 +1554,7 @@ class CompteResultatTab(ttk.Frame):
         self._row("hao", "RÉSULTAT HAO", cr["XH"])
         self._row("hao", "- Participation des salariés", cr["RQ"])
         self._row("hao", "- Impôts sur les bénéfices", cr["RS"])
-        self.tree.insert("", "end", tags=("total",), values=("RÉSULTAT NET COMPTABLE", f"{cr['XI']:,.2f}"))
+        self.tree.insert("", "end", tags=("total",), values=("RÉSULTAT NET COMPTABLE", f"{fmt_cfa(cr['XI'])}"))
 
 
 class BilanSyscohadaTab(ttk.Frame):
@@ -2012,7 +2007,7 @@ class GrandLivreTab(ttk.Frame):
         classes = core.compute_grand_livre_complet(self.conn, compte_prefix=compte_prefix, tiers=tiers)
 
         def f(v):
-            return f"{v:,.2f}" if v else ""
+            return f"{fmt_cfa(v)}" if v else ""
 
         for c in classes:
             classe_ouv_debit = classe_ouv_credit = classe_sold_debit = classe_sold_credit = 0.0
@@ -2160,14 +2155,14 @@ class OpeningBalancesTab(ttk.Frame):
             debit = solde if solde > 0 else 0.0
             credit = -solde if solde < 0 else 0.0
             self.tree.insert("", "end", values=(
-                b["code"], b["label"], f"{debit:,.2f}" if debit else "", f"{credit:,.2f}" if credit else ""))
+                b["code"], b["label"], f"{fmt_cfa(debit)}" if debit else "", f"{fmt_cfa(credit)}" if credit else ""))
             total_debit += debit
             total_credit += credit
         self.tree.insert("", "end", tags=("total",), values=(
-            "", "TOTAL", f"{total_debit:,.2f}", f"{total_credit:,.2f}"))
+            "", "TOTAL", f"{fmt_cfa(total_debit)}", f"{fmt_cfa(total_credit)}"))
         ecart = total_debit - total_credit
         equilibre = "Équilibré ✓" if abs(ecart) < 0.01 else "NON ÉQUILIBRÉ ✗ (Débit doit être égal à Crédit)"
-        self.total_var.set(f"Total Débit : {total_debit:,.2f}   —   Total Crédit : {total_credit:,.2f}   "
+        self.total_var.set(f"Total Débit : {fmt_cfa(total_debit)}   —   Total Crédit : {fmt_cfa(total_credit)}   "
                             f"—   {equilibre}")
 
     def download_template(self):
@@ -2342,10 +2337,10 @@ class StocksSyntheseTab(ttk.Frame):
         if cat != "Toutes":
             prefixes = [cat.split(" — ")[0].strip()]
         for s in core.compute_stocks_detail(self.conn, prefixes=prefixes):
-            cump = f"{s['cout_unitaire_moyen']:,.2f}" if s["cout_unitaire_moyen"] is not None else "—"
+            cump = f"{fmt_cfa(s['cout_unitaire_moyen'])}" if s["cout_unitaire_moyen"] is not None else "—"
             self.tree.insert("", "end", values=(
-                s["code"], s["label"], f"{s['stock_initial']:,.2f}",
-                f"{s['entrees']:,.2f}", f"{s['sorties']:,.2f}", f"{s['stock_final']:,.2f}",
+                s["code"], s["label"], f"{fmt_cfa(s['stock_initial'])}",
+                f"{fmt_cfa(s['entrees'])}", f"{fmt_cfa(s['sorties'])}", f"{fmt_cfa(s['stock_final'])}",
                 f"{s['qte_initiale']:g}", f"{s['qte_entrees']:g}", f"{s['qte_sorties']:g}",
                 f"{s['qte_finale']:g}", cump,
             ))
@@ -2408,14 +2403,14 @@ class StocksMouvementsTab(ttk.Frame):
             tags = ("auto",) if m["origine"] != "Saisie manuelle" else ()
             self.tree.insert("", "end", tags=tags, values=(
                 core.to_display_date(m["date"]), m["piece"] or "", m["compte"], m["compte_label"],
-                m["libelle"] or "", f"{m['debit']:,.2f}" if m["debit"] else "",
-                f"{m['credit']:,.2f}" if m["credit"] else "", f"{m['quantite']:g}" if m["quantite"] else "",
-                f"{m['qte_cumulee']:g}", f"{m['valeur_cumulee']:,.2f}",
+                m["libelle"] or "", f"{fmt_cfa(m['debit'])}" if m["debit"] else "",
+                f"{fmt_cfa(m['credit'])}" if m["credit"] else "", f"{m['quantite']:g}" if m["quantite"] else "",
+                f"{m['qte_cumulee']:g}", f"{fmt_cfa(m['valeur_cumulee'])}",
                 m["origine"],
             ))
             total_d += m["debit"]
             total_c += m["credit"]
-        self.totals_var.set(f"TOTAL — Débit : {total_d:,.2f}   Crédit : {total_c:,.2f}")
+        self.totals_var.set(f"TOTAL — Débit : {fmt_cfa(total_d)}   Crédit : {fmt_cfa(total_c)}")
 
 
 class CoutsFabricationPeriodeTab(ttk.Frame):
@@ -2586,7 +2581,7 @@ class RecetteFabricationTab(ttk.Frame):
         cu = core.compute_cout_unitaire_moyen_analytique(self.conn, code, toutes_dates=True)
         if cu is not None:
             self.analytic_apercu_var.set(
-                f"Coût moyen pondéré constaté : {cu:,.2f} F CFA / {unite or 'unité'} "
+                f"Coût moyen pondéré constaté : {fmt_cfa(cu)} F CFA / {unite or 'unité'} "
                 f"(sera utilisé automatiquement)")
         else:
             self.analytic_apercu_var.set(
@@ -2743,9 +2738,9 @@ class RecetteFabricationTab(ttk.Frame):
         for l in resultat["lignes"]:
             self.tree.insert("", "end", values=(
                 l["id"], core.LIGNE_TYPES.get(l["type_ligne"], l["type_ligne"]), l["libelle"],
-                l["compte"] or "", f"{l['quantite']:g}", f"{l['cout_unitaire_utilise']:,.2f}",
+                l["compte"] or "", f"{l['quantite']:g}", f"{fmt_cfa(l['cout_unitaire_utilise'])}",
                 l.get("analytic_code") or "",
-                l["source_cout"], f"{l['montant']:,.2f}",
+                l["source_cout"], f"{fmt_cfa(l['montant'])}",
             ))
         lines = [
             f"COÛT DE PRODUCTION — {produit['nom']} ({self.selected_produit})", "=" * 70,
@@ -2770,10 +2765,10 @@ class RecetteFabricationTab(ttk.Frame):
         if not messagebox.askyesno(
             "Confirmer la validation de la fabrication",
             f"Valider la fabrication de « {resultat['produit']['nom']} » ?\n\n"
-            f"Coût de production : {resultat['cout_production_total']:,.2f}\n"
+            f"Coût de production : {fmt_cfa(resultat['cout_production_total'])}\n"
             f"Quantité produite : {resultat['quantite_produite']:g}\n"
             f"Valeur du produit fini mis en stock (coût + marge {resultat['marge_pourcentage']:g}%) : "
-            f"{resultat['prix_vente_total']:,.2f}\n\n"
+            f"{fmt_cfa(resultat['prix_vente_total'])}\n\n"
             f"Cette action va DIMINUER les matières premières consommées (quantité et valeur) et "
             f"AUGMENTER le stock de produit fini, avec envoi des écritures dans le menu SAISIE. "
             f"Cette action est définitive."
@@ -3047,7 +3042,7 @@ class SituationFinanciereTab(ttk.Frame):
 
     def _row(self, tag, label, val, pct=False):
         suffix = " %" if pct else ""
-        display = f"{val:,.2f}{suffix}" if pct else fmt_cfa(val)
+        display = f"{fmt_cfa(val)}{suffix}" if pct else fmt_cfa(val)
         self.tree.insert("", "end", tags=(tag,), values=(f"  {label}", display))
 
     def _header(self, tag, titre):
@@ -3111,13 +3106,13 @@ class SituationFinanciereTab(ttk.Frame):
         self._row("endettement", "= ENDETTEMENT FINANCIER NET", s["endettement_financier_net"])
 
         self.tree.insert("", "end", tags=("total",), values=(
-            "TRÉSORERIE NETTE", f"{s['controle_treso_reelle']:,.2f}"))
+            "TRÉSORERIE NETTE", f"{fmt_cfa(s['controle_treso_reelle'])}"))
 
         if abs(s["controle_ecart"]) < 1:
             self.ecart_var.set("✓ La trésorerie nette (FR - BFR) correspond exactement à la Balance.")
         else:
             self.ecart_var.set(
-                f"⚠ Écart de {s['controle_ecart']:,.2f} — vérifiez que les soldes d'ouverture de tous "
+                f"⚠ Écart de {fmt_cfa(s['controle_ecart'])} — vérifiez que les soldes d'ouverture de tous "
                 f"les comptes (onglet Soldes d'ouverture) sont complets et s'équilibrent à zéro."
             )
 
@@ -4257,7 +4252,7 @@ class PiecesRechangeTab(ttk.Frame):
             valeur = p["quantite_stock"] * p["cout_unitaire"]
             self.tree.insert("", "end", values=(
                 p["id"], p["code"] or "", p["designation"], f"{p['quantite_stock']:g}", p["unite"] or "",
-                f"{p['cout_unitaire']:,.2f}", f"{valeur:,.2f}"))
+                f"{fmt_cfa(p['cout_unitaire'])}", f"{fmt_cfa(valeur)}"))
 
 
 class ReparationDialog(tk.Toplevel):
@@ -4369,9 +4364,9 @@ class ReparationDialog(tk.Toplevel):
             self.tree.delete(row)
         for l in core.list_lignes_reparation(self.conn, self.reparation_id):
             self.tree.insert("", "end", values=(
-                l["id"], l["designation"], f"{l['quantite']:g}", f"{l['cout_unitaire']:,.2f}", f"{l['montant']:,.2f}"))
+                l["id"], l["designation"], f"{l['quantite']:g}", f"{fmt_cfa(l['cout_unitaire'])}", f"{fmt_cfa(l['montant'])}"))
         cout_total = core.compute_cout_total_reparation(self.conn, self.reparation_id)
-        self.total_var.set(f"Coût total (pièces + main d'œuvre) : {cout_total:,.2f}")
+        self.total_var.set(f"Coût total (pièces + main d'œuvre) : {fmt_cfa(cout_total)}")
 
     def save(self):
         try:
@@ -4458,7 +4453,7 @@ class ReparationsTab(ttk.Frame):
             cout_total = core.compute_cout_total_reparation(self.conn, r["id"])
             iid = self.tree.insert("", "end", values=(
                 r["id"], r["immatriculation"] or "", core.to_display_date(r["date_reparation"]), r["description"],
-                r["garage"] or "", f"{r['cout_main_oeuvre']:,.2f}", f"{cout_total:,.2f}", r["statut"]))
+                r["garage"] or "", f"{fmt_cfa(r['cout_main_oeuvre'])}", f"{fmt_cfa(cout_total)}", r["statut"]))
             self._by_iid[iid] = r["id"]
 
 
@@ -4562,8 +4557,8 @@ class ImmobilisationsTab(ttk.Frame):
         for l in core.compute_immobilisations_liste(self.conn):
             self.tree.insert("", "end", values=(
                 l["compte"], l["libelle"], l["categorie"], l["fournisseur_nom"] or l["fournisseur_code"] or "",
-                f"{l['prix_achat']:,.2f}" if l["prix_achat"] else "", f"{l['taux_pct']:g}",
-                f"{l['valeur_brute']:,.2f}", f"{l['amortissement']:,.2f}", f"{l['valeur_nette']:,.2f}"))
+                f"{fmt_cfa(l['prix_achat'])}" if l["prix_achat"] else "", f"{l['taux_pct']:g}",
+                f"{fmt_cfa(l['valeur_brute'])}", f"{fmt_cfa(l['amortissement'])}", f"{fmt_cfa(l['valeur_nette'])}"))
 
 
 class AmortissementsTab(ttk.Frame):
@@ -4701,15 +4696,15 @@ class AnalytiquePeriodeTab(ttk.Frame):
         total_debut = total_debit = total_credit = total_fin = 0.0
         for c in codes:
             self.tree.insert("", "end", values=(
-                c["code"], c["label"], f"{c['solde_debut_periode']:,.2f}",
-                f"{c['debit_periode']:,.2f}", f"{c['credit_periode']:,.2f}", f"{c['solde_fin_periode']:,.2f}",
+                c["code"], c["label"], f"{fmt_cfa(c['solde_debut_periode'])}",
+                f"{fmt_cfa(c['debit_periode'])}", f"{fmt_cfa(c['credit_periode'])}", f"{fmt_cfa(c['solde_fin_periode'])}",
             ))
             total_debut += c["solde_debut_periode"]
             total_debit += c["debit_periode"]
             total_credit += c["credit_periode"]
             total_fin += c["solde_fin_periode"]
         self.tree.insert("", "end", tags=("total",), values=(
-            "", "TOTAL", f"{total_debut:,.2f}", f"{total_debit:,.2f}", f"{total_credit:,.2f}", f"{total_fin:,.2f}",
+            "", "TOTAL", f"{fmt_cfa(total_debut)}", f"{fmt_cfa(total_debit)}", f"{fmt_cfa(total_credit)}", f"{fmt_cfa(total_fin)}",
         ))
         periode = f"du {self.date_from_var.get()} au {self.date_to_var.get()}" if date_from or date_to else \
             f"exercice {core.get_current_exercice(self.conn)} entier"
@@ -4775,16 +4770,16 @@ class ClassePeriodeTab(ttk.Frame):
         total_debut = total_debit = total_credit = total_fin = 0.0
         for c in comptes:
             self.tree.insert("", "end", values=(
-                c["code"], c["label"], f"{c['solde_debut_periode']:,.2f}",
-                f"{c['debit_periode']:,.2f}", f"{c['credit_periode']:,.2f}", f"{c['solde_fin_periode']:,.2f}",
+                c["code"], c["label"], f"{fmt_cfa(c['solde_debut_periode'])}",
+                f"{fmt_cfa(c['debit_periode'])}", f"{fmt_cfa(c['credit_periode'])}", f"{fmt_cfa(c['solde_fin_periode'])}",
             ))
             total_debut += c["solde_debut_periode"]
             total_debit += c["debit_periode"]
             total_credit += c["credit_periode"]
             total_fin += c["solde_fin_periode"]
         self.tree.insert("", "end", tags=("total",), values=(
-            "", f"TOTAL CLASSE {self.prefix}", f"{total_debut:,.2f}",
-            f"{total_debit:,.2f}", f"{total_credit:,.2f}", f"{total_fin:,.2f}",
+            "", f"TOTAL CLASSE {self.prefix}", f"{fmt_cfa(total_debut)}",
+            f"{fmt_cfa(total_debit)}", f"{fmt_cfa(total_credit)}", f"{fmt_cfa(total_fin)}",
         ))
         periode = f"du {self.date_from_var.get()} au {self.date_to_var.get()}" if date_from or date_to else \
             f"exercice {core.get_current_exercice(self.conn)} entier"
@@ -4860,26 +4855,26 @@ class RapprochementBancaireTab(ttk.Frame):
         total_pointe = 0.0
         for c in comptes:
             self.tree.insert("", "end", tags=("compte_header",), values=(
-                "", "", "", f"{c['code']} {c['label']} — solde début de période : {c['solde_debut_periode']:,.2f}",
+                "", "", "", f"{c['code']} {c['label']} — solde début de période : {fmt_cfa(c['solde_debut_periode'])}",
                 "", "", "",
             ))
             for m in c["mouvements"]:
                 iid = self.tree.insert("", "end", tags=("pointe",) if m["pointe"] else (), values=(
                     "☑" if m["pointe"] else "☐", core.to_display_date(m["date"]), m["piece"] or "",
-                    m["libelle"] or "", f"{m['debit']:,.2f}" if m["debit"] else "",
-                    f"{m['credit']:,.2f}" if m["credit"] else "", f"{m['solde_cumule']:,.2f}",
+                    m["libelle"] or "", f"{fmt_cfa(m['debit'])}" if m["debit"] else "",
+                    f"{fmt_cfa(m['credit'])}" if m["credit"] else "", f"{fmt_cfa(m['solde_cumule'])}",
                 ))
                 self._row_entry_ids[iid] = m["id"]
                 total_periode += m["debit"] - m["credit"]
             self.tree.insert("", "end", tags=("compte_footer",), values=(
-                "", "", "", f"  Solde fin de période — {c['code']}", "", "", f"{c['solde_fin_periode']:,.2f}",
+                "", "", "", f"  Solde fin de période — {c['code']}", "", "", f"{fmt_cfa(c['solde_fin_periode'])}",
             ))
             total_pointe += c["total_pointe"]
 
         self.ecart_var.set(
-            f"Total pointé (retrouvé dans le relevé) : {total_pointe:,.2f}    "
-            f"Total des mouvements de la période : {total_periode:,.2f}    "
-            f"Écart non pointé : {total_periode - total_pointe:,.2f}"
+            f"Total pointé (retrouvé dans le relevé) : {fmt_cfa(total_pointe)}    "
+            f"Total des mouvements de la période : {fmt_cfa(total_periode)}    "
+            f"Écart non pointé : {fmt_cfa(total_periode - total_pointe)}"
         )
 
     def _on_click(self, event):
@@ -4952,11 +4947,11 @@ class VentesTab(ttk.Frame):
             self.conn, date_from=date_from, date_to=date_to)
         for v in ventes:
             self.tree.insert("", "end", values=(
-                v["code"], v["raison_sociale"], f"{v['debit']:,.2f}", f"{v['credit']:,.2f}", f"{v['solde']:,.2f}"
+                v["code"], v["raison_sociale"], f"{fmt_cfa(v['debit'])}", f"{fmt_cfa(v['credit'])}", f"{fmt_cfa(v['solde'])}"
             ))
         self.total_var.set(
-            f"TOTAL — Débit : {total_debit:,.2f}   Crédit : {total_credit:,.2f}   "
-            f"Solde global à recouvrer : {total_debit - total_credit:,.2f}"
+            f"TOTAL — Débit : {fmt_cfa(total_debit)}   Crédit : {fmt_cfa(total_credit)}   "
+            f"Solde global à recouvrer : {fmt_cfa(total_debit - total_credit)}"
         )
 
 
@@ -5016,11 +5011,11 @@ class AchatsTab(ttk.Frame):
             self.conn, date_from=date_from, date_to=date_to)
         for a in achats:
             self.tree.insert("", "end", values=(
-                a["code"], a["raison_sociale"], f"{a['debit']:,.2f}", f"{a['credit']:,.2f}", f"{a['solde']:,.2f}"
+                a["code"], a["raison_sociale"], f"{fmt_cfa(a['debit'])}", f"{fmt_cfa(a['credit'])}", f"{fmt_cfa(a['solde'])}"
             ))
         self.total_var.set(
-            f"TOTAL — Débit : {total_debit:,.2f}   Crédit : {total_credit:,.2f}   "
-            f"Solde global : {total_debit - total_credit:,.2f}"
+            f"TOTAL — Débit : {fmt_cfa(total_debit)}   Crédit : {fmt_cfa(total_credit)}   "
+            f"Solde global : {fmt_cfa(total_debit - total_credit)}"
         )
 
 
@@ -5558,13 +5553,13 @@ class FacturationTab(ttk.Frame):
                 l["type_stock"], "Aucun (service)")
             self.tree.insert("", "end", values=(
                 l["id"], l["compte_vente"], l["libelle"], impact,
-                f"{l['quantite']:g}", f"{l['prix_unitaire']:,.2f}", l.get("analytic_code") or "",
-                f"{l['montant_ht']:,.2f}",
+                f"{l['quantite']:g}", f"{fmt_cfa(l['prix_unitaire'])}", l.get("analytic_code") or "",
+                f"{fmt_cfa(l['montant_ht'])}",
             ))
         totals = core.compute_facture_totals(self.conn, self.current_facture_id)
         self.totals_var.set(
-            f"TOTAL HT : {totals['total_ht']:,.2f}    TVA ({totals['tva_taux']:g}%) : "
-            f"{totals['tva_montant']:,.2f}    TOTAL TTC : {totals['total_ttc']:,.2f}"
+            f"TOTAL HT : {fmt_cfa(totals['total_ht'])}    TVA ({totals['tva_taux']:g}%) : "
+            f"{fmt_cfa(totals['tva_montant'])}    TOTAL TTC : {fmt_cfa(totals['total_ttc'])}"
         )
 
     def _ensure_facture(self):
@@ -6044,7 +6039,7 @@ class RecouvrementTab(ttk.Frame):
             tags = ("depasse",) if f["depassement"] else ()
             self.tree.insert("", "end", tags=tags, values=(
                 f["id"], f["raison_sociale"], f["piece"] or "", f["libelle"] or "",
-                f"{f['montant']:,.2f}", core.to_display_date(f["date_facture"]),
+                f"{fmt_cfa(f['montant'])}", core.to_display_date(f["date_facture"]),
                 core.to_display_date(f["date_echeance_paiement"]), f["statut_paiement"],
             ))
         self.refresh_balance_agee()
@@ -6328,13 +6323,13 @@ class FacturesFrsTab(ttk.Frame):
                 l["type_stock"], "Aucun (service)")
             self.tree.insert("", "end", values=(
                 l["id"], l["compte_achat"], l["libelle"], impact,
-                f"{l['quantite']:g}", f"{l['prix_unitaire']:,.2f}", l.get("analytic_code") or "",
-                f"{l['montant_ht']:,.2f}",
+                f"{l['quantite']:g}", f"{fmt_cfa(l['prix_unitaire'])}", l.get("analytic_code") or "",
+                f"{fmt_cfa(l['montant_ht'])}",
             ))
         totals = core.compute_facture_achat_totals(self.conn, self.current_facture_id)
         self.totals_var.set(
-            f"TOTAL HT : {totals['total_ht']:,.2f}    Retenue ({totals['retenue_taux']:g}%) : "
-            f"{totals['retenue_montant']:,.2f}    NET À PAYER : {totals['net_a_payer']:,.2f}"
+            f"TOTAL HT : {fmt_cfa(totals['total_ht'])}    Retenue ({totals['retenue_taux']:g}%) : "
+            f"{fmt_cfa(totals['retenue_montant'])}    NET À PAYER : {fmt_cfa(totals['net_a_payer'])}"
         )
 
     def _ensure_facture(self):
@@ -6977,9 +6972,9 @@ class BonCommandeEPDialog(tk.Toplevel):
             total += l["montant_ht"]
             self.tree.insert("", "end", values=(
                 l["id"], l["compte_charge"] or "⚠ à choisir", l["libelle"], f"{l['quantite']:g}",
-                f"{l['prix_unitaire']:,.2f}", f"{l['montant_ht']:,.2f}", l["unite"] or "",
+                f"{fmt_cfa(l['prix_unitaire'])}", f"{fmt_cfa(l['montant_ht'])}", l["unite"] or "",
                 l["analytic_code"] or ""))
-        self.total_var.set(f"Total HT : {total:,.2f}")
+        self.total_var.set(f"Total HT : {fmt_cfa(total)}")
 
     def add_ligne(self):
         libelle = self.ligne_libelle_var.get().strip()
@@ -7617,7 +7612,7 @@ class ReglementDialog(tk.Toplevel):
         self.paiement_statut_var.set("✓ Paiement déjà comptabilisé")
         self._apply_lock()
         messagebox.showinfo("Paiement comptabilisé",
-                             f"Paiement de {montant:,.2f} comptabilisé (Débit fournisseur, Crédit banque/caisse).",
+                             f"Paiement de {fmt_cfa(montant)} comptabilisé (Débit fournisseur, Crédit banque/caisse).",
                              parent=self)
         self.on_saved()
 
@@ -7656,8 +7651,8 @@ class ReglementDialog(tk.Toplevel):
         for l in lignes:
             self.tree.insert("", "end", values=(
                 l["id"], l["compte_charge"] or "⚠ à choisir", l["libelle"], f"{l['quantite']:g}",
-                f"{l['prix_unitaire']:,.2f}", f"{l['montant_ht']:,.2f}", l["analytic_code"] or ""))
-        self.total_var.set(f"Total HT : {total:,.2f}")
+                f"{fmt_cfa(l['prix_unitaire'])}", f"{fmt_cfa(l['montant_ht'])}", l["analytic_code"] or ""))
+        self.total_var.set(f"Total HT : {fmt_cfa(total)}")
 
     def add_ligne(self):
         libelle = self.ligne_libelle_var.get().strip()
@@ -7989,7 +7984,7 @@ class ContratsTab(ttk.Frame):
             tags = ("depasse",) if (c["depassement_livraison"] or c["depassement_paiement"]) else ()
             self.tree.insert("", "end", tags=tags, values=(
                 c["id"], c["raison_sociale"], c["piece"] or "", c["libelle"] or "",
-                f"{c['montant']:,.2f}", core.to_display_date(c["date_commande"]),
+                f"{fmt_cfa(c['montant'])}", core.to_display_date(c["date_commande"]),
                 core.to_display_date(c["date_livraison_prevue"]), c["statut_livraison"],
                 core.to_display_date(c["date_echeance_paiement"]), c["statut_paiement"],
             ))
@@ -8058,7 +8053,7 @@ class ExercicesTab(ttk.Frame):
         if abs(bilan["ecart"]) >= 1:
             if not messagebox.askyesno(
                 "Bilan non équilibré",
-                f"Le Bilan de l'exercice {ex} n'est pas équilibré (écart de {bilan['ecart']:,.2f}). "
+                f"Le Bilan de l'exercice {ex} n'est pas équilibré (écart de {fmt_cfa(bilan['ecart'])}). "
                 f"Clôturer quand même ?"
             ):
                 return
@@ -8066,7 +8061,7 @@ class ExercicesTab(ttk.Frame):
         if not messagebox.askyesno(
             "Confirmer la clôture",
             f"Clôturer définitivement l'exercice {ex} ?\n\n"
-            f"Résultat net : {resultat_net:,.2f}\n"
+            f"Résultat net : {fmt_cfa(resultat_net)}\n"
             f"Cette action reporte les soldes de clôture comme soldes d'ouverture de l'exercice "
             f"suivant et verrouille l'exercice {ex} en lecture seule."
         ):
@@ -8541,7 +8536,7 @@ class SynchronisationTab(ttk.Frame):
             messagebox.showerror("Erreur", f"Échec de la synchronisation : {exc}")
             return
         ecart = rapport["ecart_bilan"]
-        ecart_txt = (f"écart Actif/Passif : {ecart:,.2f}" if ecart is not None
+        ecart_txt = (f"écart Actif/Passif : {fmt_cfa(ecart)}" if ecart is not None
                      else "Bilan non calculable (base vide ?)")
         self.result_var.set(
             f"✓ Synchronisation terminée — {rapport['nb_tables']} tables vérifiées, "
@@ -8999,7 +8994,7 @@ class PlanBudgetaireTab(ttk.Frame):
         for row in self.tree.get_children():
             self.tree.delete(row)
         for item in core.list_budget_codes(self.conn):
-            self.tree.insert("", "end", values=(item["code"], item["label"], f"{item['montant']:,.2f}"))
+            self.tree.insert("", "end", values=(item["code"], item["label"], f"{fmt_cfa(item['montant'])}"))
 
     def export_xlsx(self):
         path = filedialog.asksaveasfilename(

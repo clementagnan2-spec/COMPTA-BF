@@ -3018,3 +3018,47 @@ Testé : soldes d'ouverture toujours enregistrés et lus correctement
 (conversion Débit/Crédit ↔ solde signé vérifiée dans les deux sens),
 Bilan resté équilibré. Compilation complète sans erreur sur les 46
 écrans modifiés.
+
+### Format des nombres uniformisé partout — séparateur de milliers, plus de décimales
+
+**Demande** : séparateur de milliers sur tous les chiffres, et suppression
+des deux zéros après la virgule.
+
+**Réalisé** : les **111 occurrences** de l'ancien format (`,.2f` — virgule
+comme séparateur de milliers, 2 décimales, ex. `1,234,567.00`) trouvées
+dans toute l'application ont été remplacées par `fmt_cfa()` (déjà
+utilisée dans les écrans les plus récents) — espace comme séparateur de
+milliers, aucune décimale, format SYSCOHADA standard (ex. `1 234 567`).
+Script automatisé (repère chaque `{EXPR:,.2f}` et le convertit en
+`{fmt_cfa(EXPR)}`), plus 2 occurrences oubliées (sans séparateur du tout)
+corrigées à la main.
+
+Testé : plus aucune occurrence de format à 2 décimales dans tout le
+fichier, moteur comptable toujours pleinement fonctionnel, format vérifié
+sur un exemple (1234567 → « 1 234 567 »).
+
+### Crash au démarrage corrigé — bug du script d'ajout automatique de scrollbars
+
+**Crash signalé** (capture d'écran) : `AttributeError: 'Frame' object has
+no attribute 'yview'` — l'application plantait immédiatement au
+démarrage.
+
+**Cause** : le script automatisé qui a ajouté des scrollbars à 46 écrans
+(réponse précédente) a repéré `self.content.pack(fill="both",
+expand=True)` — le **conteneur principal de l'application** (un simple
+`ttk.Frame` servant à basculer entre les différents onglets), qui
+correspondait par coïncidence au même motif que les listes (Treeview)
+ciblées — et lui a ajouté une scrollbar comme s'il s'agissait d'une
+liste. Un `Frame` n'a pas de méthode `.yview()`, d'où le plantage
+immédiat à l'ouverture (ce conteneur est initialisé dès le démarrage).
+
+**Corrigé** : `self.content` restauré à son comportement d'origine (sans
+scrollbar, ce n'est pas une liste). **Vérification systématique
+effectuée sur tout le fichier** : chaque scrollbar ajoutée automatiquement
+a été contrôlée pour confirmer qu'elle contrôle bien un widget qui
+supporte réellement `.yview()` (Treeview, Text, Listbox) — aucun autre
+cas erroné trouvé.
+
+Testé : compilation propre, moteur comptable toujours pleinement
+fonctionnel, aucune autre scrollbar mal attribuée détectée dans
+l'ensemble de l'application.
