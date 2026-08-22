@@ -3629,20 +3629,21 @@ def compute_bilan_detaille(conn, exercice=None):
 # adapté pour lire les soldes directement depuis CETTE application (Balance
 # SQLite) au lieu d'exiger l'import de deux fichiers de balance externes.
 # ---------------------------------------------------------------------------
-def _generer_template_depuis_b64(nom_fichier, module_name, attr_name):
+def _generer_template_depuis_b64(nom_fichier, b64_data):
     """Régénère un gabarit Excel à la volée depuis des données encodées en
-    base64 dans un module Python — voir _bilan_template_path() pour le
-    principe complet (élimine toute dépendance au bundle PyInstaller)."""
+    base64 (déjà chargées par l'appelant via un `import` STATIQUE — voir
+    les fonctions ci-dessous) — élimine toute dépendance au bundle
+    PyInstaller. IMPORTANT : ne jamais importer le module de données via
+    importlib/nom dynamique ici, PyInstaller ne détecterait pas la
+    dépendance et ne l'inclurait pas dans l'exécutable (déjà arrivé)."""
     base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
     folder = os.path.join(base, "SaisieComptable")
     os.makedirs(folder, exist_ok=True)
     path = os.path.join(folder, nom_fichier)
     if not os.path.exists(path):
         import base64
-        import importlib
-        module = importlib.import_module(module_name)
         with open(path, "wb") as f:
-            f.write(base64.b64decode(getattr(module, attr_name)))
+            f.write(base64.b64decode(b64_data))
     return path
 
 
@@ -3655,25 +3656,29 @@ def _bilan_template_path():
     PyInstaller — élimine TOUTE dépendance au bundle --add-data du build,
     qui s'est révélé peu fiable en pratique (fichier absent de
     l'exécutable compilé malgré une configuration correcte)."""
-    return _generer_template_depuis_b64("bilan_template.xls", "bilan_template_data", "BILAN_TEMPLATE_B64")
+    import bilan_template_data
+    return _generer_template_depuis_b64("bilan_template.xls", bilan_template_data.BILAN_TEMPLATE_B64)
 
 
 def _cr_template_path():
     """Emplacement du gabarit Compte de résultat (SIG) — même principe que
     _bilan_template_path()."""
-    return _generer_template_depuis_b64("resultat_template.xls", "etats_financiers_data", "CR_TEMPLATE_B64")
+    import etats_financiers_data
+    return _generer_template_depuis_b64("resultat_template.xls", etats_financiers_data.CR_TEMPLATE_B64)
 
 
 def _tft_template_path():
     """Emplacement du gabarit TFT (Tableau des flux de trésorerie) — même
     principe que _bilan_template_path()."""
-    return _generer_template_depuis_b64("tft_template.xls", "etats_financiers_data", "TFT_TEMPLATE_B64")
+    import etats_financiers_data
+    return _generer_template_depuis_b64("tft_template.xls", etats_financiers_data.TFT_TEMPLATE_B64)
 
 
 def _situation_template_path():
     """Emplacement du gabarit Situation financière (FR-BFR-TN) — même
     principe que _bilan_template_path()."""
-    return _generer_template_depuis_b64("situation_template.xls", "etats_financiers_data", "SITUATION_TEMPLATE_B64")
+    import etats_financiers_data
+    return _generer_template_depuis_b64("situation_template.xls", etats_financiers_data.SITUATION_TEMPLATE_B64)
 
 
 def import_bilan_template(path_source):

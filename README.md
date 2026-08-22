@@ -3212,3 +3212,26 @@ minimal, pas un bug). Export des 3 états vérifié (mise en forme
 préservée, formules correctement résolues même avec des dépendances
 inter-rubriques en plusieurs passes). Non-régression du Bilan SYSCOHADA
 confirmée.
+
+### Crash « No module named 'etats_financiers_data' » corrigé
+
+**Crash signalé** (capture d'écran) : les 3 nouveaux sous-menus (Compte
+de résultat, TFT, Situation financière) affichaient tous
+`No module named 'etats_financiers_data'`.
+
+**Cause** : `_generer_template_depuis_b64()` utilisait un import
+DYNAMIQUE (`importlib.import_module(module_name)`, où `module_name` était
+une simple chaîne de caractères passée en paramètre) — PyInstaller ne
+peut analyser statiquement ce genre d'import et ne l'inclut donc PAS
+automatiquement dans l'exécutable compilé, contrairement à un `import
+etats_financiers_data` écrit littéralement dans le code (détectable).
+
+**Corrigé** : chaque fonction (`_cr_template_path()`, `_tft_template_path()`,
+`_situation_template_path()`) fait maintenant son propre `import
+etats_financiers_data` **littéral** — exactement le même principe qui
+fonctionne déjà pour `bilan_template_data`. Par sécurité supplémentaire,
+les deux modules ont aussi été ajoutés explicitement en
+`--hidden-import` dans le workflow de build.
+
+Testé : les 3 états se calculent à nouveau sans erreur, Bilan SYSCOHADA
+non régressé.
