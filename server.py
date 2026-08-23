@@ -74,6 +74,12 @@ RPC_WHITELIST = {
     # ---- Stocks ----
     "compute_stocks", "compute_stocks_detail", "list_produits_finis",
     "add_produit_fini", "compute_balance_agee",
+    # ---- GRH ----
+    "list_personnel", "add_personnel", "update_personnel", "delete_personnel", "get_personnel",
+    "list_time_sheet", "add_time_sheet", "delete_time_sheet",
+    "list_kpi", "add_kpi", "update_kpi", "delete_kpi",
+    "list_hs", "add_hs", "update_hs", "delete_hs",
+    "compute_tableau_bord_grh",
     # ---- Référentiels utiles à tous les écrans ----
     "list_taux_tva", "list_analytic_codes", "list_taux_retenue",
 }

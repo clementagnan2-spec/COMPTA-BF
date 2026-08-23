@@ -33,6 +33,27 @@ def fmt_cfa(v):
         return str(v)
 
 
+APPEL_ECHEC = object()  # sentinelle distincte de None (un appel reussi peut legitimement renvoyer None)
+
+
+def appeler(widget, remote, fonction, *args, **kwargs):
+    """Enveloppe tout appel réseau avec une gestion d'erreur unifiée
+    (session expirée, serveur injoignable, erreur métier) — factorisé
+    pour être réutilisé par tous les écrans du client (Saisie, GRH...).
+    Renvoie APPEL_ECHEC (PAS None) en cas d'échec, pour ne jamais
+    confondre un appel réussi qui renvoie légitimement None avec un échec."""
+    try:
+        return getattr(client_core, fonction)(remote, *args, **kwargs)
+    except RemoteAuthError as exc:
+        messagebox.showerror("Session expirée", str(exc), parent=widget)
+        widget.winfo_toplevel().destroy()
+    except RemoteConnectionError as exc:
+        messagebox.showerror("Connexion perdue", str(exc), parent=widget)
+    except RemoteCallError as exc:
+        messagebox.showerror("Erreur", str(exc), parent=widget)
+    return APPEL_ECHEC
+
+
 class LoginWindow(tk.Tk):
     """Écran de connexion : adresse du serveur, port, identifiants —
     premier écran affiché au lancement du client."""
@@ -154,6 +175,11 @@ class ClientApp(tk.Tk):
     # Sous-menus du circuit commercial déjà pleinement fonctionnels côté client.
     IMPLEMENTED_SCREENS = {
         "saisie": lambda parent, remote: RemoteSaisieTab(parent, remote),
+        "grh_personnel": lambda parent, remote: RemotePersonnelTab(parent, remote),
+        "grh_time_sheet": lambda parent, remote: RemoteTimeSheetTab(parent, remote),
+        "grh_kpi": lambda parent, remote: RemoteKpiTab(parent, remote),
+        "grh_tableau_bord": lambda parent, remote: RemoteTableauBordGrhTab(parent, remote),
+        "grh_hs": lambda parent, remote: RemoteHsTab(parent, remote),
     }
 
     def __init__(self, remote: RemoteConnection):
@@ -321,28 +347,13 @@ class RemoteSaisieTab(ttk.Frame):
 
         self.refresh_entries()
 
-    _APPEL_ECHEC = object()  # sentinelle distincte de None (un appel reussi peut legitimement renvoyer None)
-
     def _appeler(self, fonction, *args, **kwargs):
-        """Enveloppe chaque appel réseau avec une gestion d'erreur unifiée
-        (session expirée, serveur injoignable, erreur métier). Renvoie
-        _APPEL_ECHEC (PAS None) en cas d'échec — pour ne jamais confondre
-        un appel réussi qui renvoie légitimement None avec un échec."""
-        try:
-            return getattr(client_core, fonction)(self.remote, *args, **kwargs)
-        except RemoteAuthError as exc:
-            messagebox.showerror("Session expirée", str(exc), parent=self)
-            self.winfo_toplevel().destroy()
-        except RemoteConnectionError as exc:
-            messagebox.showerror("Connexion perdue", str(exc), parent=self)
-        except RemoteCallError as exc:
-            messagebox.showerror("Erreur", str(exc), parent=self)
-        return self._APPEL_ECHEC
+        return appeler(self, self.remote, fonction, *args, **kwargs)
 
     def _on_compte_keyrelease(self, event=None):
         query = self.compte_var.get().strip()
         items = self._appeler("search_accounts", query, limit=30)
-        if items is not self._APPEL_ECHEC:
+        if items is not APPEL_ECHEC:
             self.compte_combo["values"] = [f"{a['code']} — {a['label']}" for a in items]
 
     def _extract_code(self, raw):
@@ -414,7 +425,7 @@ class RemoteSaisieTab(ttk.Frame):
         tiers = self.tiers_var.get().strip()
 
         resultat = self._appeler("add_ecriture_multi_lignes", date_str, piece, journal, self.lignes, tiers=tiers)
-        if resultat is self._APPEL_ECHEC:
+        if resultat is APPEL_ECHEC:
             return  # erreur déjà affichée par _appeler (session expirée, réseau, ou règle métier)
         messagebox.showinfo("Enregistré", f"Écriture « {piece} » enregistrée sur le serveur.", parent=self)
         self.lignes = []
@@ -424,10 +435,10 @@ class RemoteSaisieTab(ttk.Frame):
 
     def refresh_entries(self):
         exercice = self._appeler("get_current_exercice")
-        if exercice is self._APPEL_ECHEC:
+        if exercice is APPEL_ECHEC:
             return
         entries = self._appeler("list_entries", exercice=exercice)
-        if entries is self._APPEL_ECHEC:
+        if entries is APPEL_ECHEC:
             return
         for row in self.tree_entries.get_children():
             self.tree_entries.delete(row)
@@ -435,6 +446,510 @@ class RemoteSaisieTab(ttk.Frame):
             self.tree_entries.insert("", "end", values=(
                 core.to_display_date(e["date"]), e["piece"], e["journal"], e["compte"], e["libelle"],
                 fmt_cfa(e["debit"]) if e["debit"] else "", fmt_cfa(e["credit"]) if e["credit"] else ""))
+
+
+class RemotePersonnelTab(ttk.Frame):
+    """Liste du personnel (GRH) via le réseau."""
+
+    def __init__(self, parent, remote: RemoteConnection):
+        super().__init__(parent)
+        self.remote = remote
+        self.selected_id = None
+
+        ttk.Label(self, text="LISTE DU PERSONNEL", font=("Segoe UI", 14, "bold")).pack(anchor="w", padx=16, pady=(16, 8))
+
+        form = ttk.LabelFrame(self, text="Employé")
+        form.pack(fill="x", padx=16, pady=4)
+        ttk.Label(form, text="Matricule :").grid(row=0, column=0, sticky="w", padx=4, pady=4)
+        self.matricule_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.matricule_var, width=14).grid(row=0, column=1, padx=4)
+        ttk.Label(form, text="Nom :").grid(row=0, column=2, sticky="w", padx=(12, 4))
+        self.nom_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.nom_var, width=16).grid(row=0, column=3, padx=4)
+        ttk.Label(form, text="Prénom :").grid(row=0, column=4, sticky="w", padx=(12, 4))
+        self.prenom_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.prenom_var, width=16).grid(row=0, column=5, padx=4)
+        ttk.Label(form, text="Poste :").grid(row=1, column=0, sticky="w", padx=4, pady=(4, 0))
+        self.poste_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.poste_var, width=16).grid(row=1, column=1, padx=4, pady=(4, 0))
+        ttk.Label(form, text="Service :").grid(row=1, column=2, sticky="w", padx=(12, 4), pady=(4, 0))
+        self.service_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.service_var, width=16).grid(row=1, column=3, padx=4, pady=(4, 0))
+        ttk.Label(form, text="Statut :").grid(row=1, column=4, sticky="w", padx=(12, 4), pady=(4, 0))
+        self.statut_var = tk.StringVar(value="actif")
+        ttk.Combobox(form, textvariable=self.statut_var, width=13, state="readonly",
+                     values=["actif", "congé", "suspendu", "parti"]).grid(row=1, column=5, padx=4, pady=(4, 0))
+
+        btns = ttk.Frame(self)
+        btns.pack(fill="x", padx=16, pady=6)
+        ttk.Button(btns, text="Ajouter", command=self.add).pack(side="left")
+        ttk.Button(btns, text="Mettre à jour la sélection", command=self.update_sel).pack(side="left", padx=8)
+        ttk.Button(btns, text="Supprimer la sélection", command=self.delete_sel).pack(side="left")
+        ttk.Button(btns, text="Effacer le formulaire", command=self.clear_form).pack(side="left", padx=8)
+
+        cols = ("id", "matricule", "nom", "prenom", "poste", "service", "statut")
+        self.tree = ttk.Treeview(self, columns=cols, show="headings", height=16)
+        for c, h, w in zip(cols, ["ID", "Matricule", "Nom", "Prénom", "Poste", "Service", "Statut"],
+                           [40, 100, 130, 130, 150, 130, 90]):
+            self.tree.heading(c, text=h)
+            self.tree.column(c, width=w, anchor="w")
+        self.tree.pack(fill="both", expand=True, padx=16, pady=8)
+        self.tree.bind("<<TreeviewSelect>>", self._on_select)
+        self.refresh()
+
+    def _appeler(self, fonction, *args, **kwargs):
+        return appeler(self, self.remote, fonction, *args, **kwargs)
+
+    def _on_select(self, event=None):
+        sel = self.tree.selection()
+        if not sel:
+            return
+        v = self.tree.item(sel[0], "values")
+        self.selected_id = v[0]
+        self.matricule_var.set(v[1]); self.nom_var.set(v[2]); self.prenom_var.set(v[3])
+        self.poste_var.set(v[4]); self.service_var.set(v[5]); self.statut_var.set(v[6])
+
+    def clear_form(self):
+        self.selected_id = None
+        for var in (self.matricule_var, self.nom_var, self.prenom_var, self.poste_var, self.service_var):
+            var.set("")
+        self.statut_var.set("actif")
+
+    def add(self):
+        if not self.nom_var.get().strip():
+            messagebox.showwarning("Champ manquant", "Le nom est obligatoire.", parent=self)
+            return
+        r = self._appeler("add_personnel", self.nom_var.get(), matricule=self.matricule_var.get(),
+                           prenom=self.prenom_var.get(), poste=self.poste_var.get(),
+                           service=self.service_var.get(), statut=self.statut_var.get())
+        if r is APPEL_ECHEC:
+            return
+        self.clear_form()
+        self.refresh()
+
+    def update_sel(self):
+        if not self.selected_id:
+            messagebox.showinfo("Info", "Sélectionnez d'abord un employé.", parent=self)
+            return
+        r = self._appeler("update_personnel", self.selected_id, matricule=self.matricule_var.get().strip(),
+                           nom=self.nom_var.get().strip(), prenom=self.prenom_var.get().strip(),
+                           poste=self.poste_var.get().strip(), service=self.service_var.get().strip(),
+                           statut=self.statut_var.get())
+        if r is APPEL_ECHEC:
+            return
+        self.clear_form()
+        self.refresh()
+
+    def delete_sel(self):
+        if not self.selected_id:
+            messagebox.showinfo("Info", "Sélectionnez d'abord un employé.", parent=self)
+            return
+        if messagebox.askyesno("Confirmer", "Supprimer cet employé ?", parent=self):
+            r = self._appeler("delete_personnel", self.selected_id)
+            if r is APPEL_ECHEC:
+                return
+            self.clear_form()
+            self.refresh()
+
+    def refresh(self):
+        personnel = self._appeler("list_personnel")
+        if personnel is APPEL_ECHEC:
+            return
+        for row in self.tree.get_children():
+            self.tree.delete(row)
+        for p in personnel:
+            self.tree.insert("", "end", values=(
+                p["id"], p["matricule"] or "", p["nom"], p["prenom"] or "", p["poste"] or "",
+                p["service"] or "", p["statut"]))
+
+
+class RemoteTimeSheetTab(ttk.Frame):
+    """Time sheet (GRH) via le réseau."""
+
+    def __init__(self, parent, remote: RemoteConnection):
+        super().__init__(parent)
+        self.remote = remote
+
+        ttk.Label(self, text="TIME SHEET", font=("Segoe UI", 14, "bold")).pack(anchor="w", padx=16, pady=(16, 8))
+
+        form = ttk.LabelFrame(self, text="Nouveau pointage")
+        form.pack(fill="x", padx=16, pady=4)
+        ttk.Label(form, text="Employé :").grid(row=0, column=0, sticky="w", padx=4, pady=4)
+        self.personnel_var = tk.StringVar()
+        self.personnel_combo = ttk.Combobox(form, textvariable=self.personnel_var, width=26, state="readonly")
+        self.personnel_combo.grid(row=0, column=1, padx=4)
+        ttk.Label(form, text="Date (JJ/MM/AAAA) :").grid(row=0, column=2, sticky="w", padx=(12, 4))
+        self.date_var = tk.StringVar(value=date.today().strftime("%d/%m/%Y"))
+        ttk.Entry(form, textvariable=self.date_var, width=12).grid(row=0, column=3, padx=4)
+        ttk.Label(form, text="Heures :").grid(row=0, column=4, sticky="w", padx=(12, 4))
+        self.heures_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.heures_var, width=8).grid(row=0, column=5, padx=4)
+        ttk.Label(form, text="Activité :").grid(row=1, column=0, sticky="w", padx=4, pady=(4, 0))
+        self.activite_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.activite_var, width=40).grid(
+            row=1, column=1, columnspan=3, padx=4, pady=(4, 0), sticky="we")
+        ttk.Button(form, text="Ajouter le pointage", command=self.add).grid(row=1, column=5, padx=4, pady=(4, 0))
+
+        cols = ("id", "employe", "date", "heures", "activite")
+        self.tree = ttk.Treeview(self, columns=cols, show="headings", height=16)
+        for c, h, w in zip(cols, ["ID", "Employé", "Date", "Heures", "Activité"], [40, 180, 100, 80, 350]):
+            self.tree.heading(c, text=h)
+            self.tree.column(c, width=w, anchor="w")
+        self.tree.pack(fill="both", expand=True, padx=16, pady=8)
+        ttk.Button(self, text="Supprimer la ligne sélectionnée", command=self.delete_sel).pack(
+            anchor="w", padx=16, pady=(0, 12))
+        self.refresh()
+
+    def _appeler(self, fonction, *args, **kwargs):
+        return appeler(self, self.remote, fonction, *args, **kwargs)
+
+    def _refresh_personnel_values(self):
+        personnel = self._appeler("list_personnel", actifs_only=True)
+        if personnel is APPEL_ECHEC:
+            return
+        self.personnel_list = personnel
+        self.personnel_combo["values"] = [f"{p['id']} — {p['prenom'] or ''} {p['nom']}".strip() for p in personnel]
+
+    def add(self):
+        raw = self.personnel_var.get()
+        if not raw:
+            messagebox.showwarning("Champ manquant", "Choisissez un employé.", parent=self)
+            return
+        personnel_id = int(raw.split(" — ", 1)[0])
+        date_str = core.to_iso_date(self.date_var.get().strip())
+        if not date_str:
+            messagebox.showwarning("Champ manquant", "La date est obligatoire.", parent=self)
+            return
+        try:
+            heures = float(self.heures_var.get())
+        except ValueError:
+            messagebox.showerror("Erreur", "Les heures doivent être un nombre.", parent=self)
+            return
+        r = self._appeler("add_time_sheet", personnel_id, date_str, heures, activite=self.activite_var.get())
+        if r is APPEL_ECHEC:
+            return
+        self.heures_var.set(""); self.activite_var.set("")
+        self.refresh()
+
+    def delete_sel(self):
+        sel = self.tree.selection()
+        if not sel:
+            messagebox.showinfo("Info", "Sélectionnez d'abord une ligne.", parent=self)
+            return
+        ts_id = self.tree.item(sel[0], "values")[0]
+        r = self._appeler("delete_time_sheet", ts_id)
+        if r is APPEL_ECHEC:
+            return
+        self.refresh()
+
+    def refresh(self):
+        self._refresh_personnel_values()
+        entries = self._appeler("list_time_sheet")
+        if entries is APPEL_ECHEC:
+            return
+        for row in self.tree.get_children():
+            self.tree.delete(row)
+        for t in entries:
+            self.tree.insert("", "end", values=(
+                t["id"], t["employe"], core.to_display_date(t["date_pointage"]), f"{t['heures']:g}",
+                t["activite"] or ""))
+
+
+class RemoteKpiTab(ttk.Frame):
+    """KPI (GRH) via le réseau."""
+
+    def __init__(self, parent, remote: RemoteConnection):
+        super().__init__(parent)
+        self.remote = remote
+        self.selected_id = None
+
+        ttk.Label(self, text="KPI — INDICATEURS DE PERFORMANCE", font=("Segoe UI", 14, "bold")).pack(
+            anchor="w", padx=16, pady=(16, 8))
+
+        form = ttk.LabelFrame(self, text="Indicateur")
+        form.pack(fill="x", padx=16, pady=4)
+        ttk.Label(form, text="Indicateur :").grid(row=0, column=0, sticky="w", padx=4, pady=4)
+        self.indicateur_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.indicateur_var, width=28).grid(row=0, column=1, padx=4)
+        ttk.Label(form, text="Service :").grid(row=0, column=2, sticky="w", padx=(12, 4))
+        self.service_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.service_var, width=14).grid(row=0, column=3, padx=4)
+        ttk.Label(form, text="Période :").grid(row=0, column=4, sticky="w", padx=(12, 4))
+        self.periode_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.periode_var, width=14).grid(row=0, column=5, padx=4)
+        ttk.Label(form, text="Valeur cible :").grid(row=1, column=0, sticky="w", padx=4, pady=(4, 0))
+        self.cible_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.cible_var, width=10).grid(row=1, column=1, padx=4, pady=(4, 0), sticky="w")
+        ttk.Label(form, text="Valeur réalisée :").grid(row=1, column=2, sticky="w", padx=(12, 4), pady=(4, 0))
+        self.realisee_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.realisee_var, width=10).grid(row=1, column=3, padx=4, pady=(4, 0), sticky="w")
+        ttk.Label(form, text="Statut :").grid(row=1, column=4, sticky="w", padx=(12, 4), pady=(4, 0))
+        self.statut_var = tk.StringVar(value="en_cours")
+        ttk.Combobox(form, textvariable=self.statut_var, width=13, state="readonly",
+                     values=["en_cours", "atteint", "non_atteint"]).grid(row=1, column=5, padx=4, pady=(4, 0))
+
+        btns = ttk.Frame(self)
+        btns.pack(fill="x", padx=16, pady=6)
+        ttk.Button(btns, text="Ajouter", command=self.add).pack(side="left")
+        ttk.Button(btns, text="Mettre à jour la sélection", command=self.update_sel).pack(side="left", padx=8)
+        ttk.Button(btns, text="Supprimer la sélection", command=self.delete_sel).pack(side="left")
+        ttk.Button(btns, text="Effacer le formulaire", command=self.clear_form).pack(side="left", padx=8)
+
+        cols = ("id", "indicateur", "service", "periode", "cible", "realisee", "taux", "statut")
+        self.tree = ttk.Treeview(self, columns=cols, show="headings", height=16)
+        headers = ["ID", "Indicateur", "Service", "Période", "Cible", "Réalisée", "Taux %", "Statut"]
+        widths = [40, 220, 100, 90, 80, 80, 70, 100]
+        for c, h, w in zip(cols, headers, widths):
+            self.tree.heading(c, text=h)
+            self.tree.column(c, width=w, anchor="w")
+        self.tree.pack(fill="both", expand=True, padx=16, pady=8)
+        self.tree.bind("<<TreeviewSelect>>", self._on_select)
+        self.refresh()
+
+    def _appeler(self, fonction, *args, **kwargs):
+        return appeler(self, self.remote, fonction, *args, **kwargs)
+
+    def _on_select(self, event=None):
+        sel = self.tree.selection()
+        if not sel:
+            return
+        v = self.tree.item(sel[0], "values")
+        self.selected_id = v[0]
+        self.indicateur_var.set(v[1]); self.service_var.set(v[2]); self.periode_var.set(v[3])
+        self.cible_var.set(v[4]); self.realisee_var.set(v[5]); self.statut_var.set(v[7])
+
+    def clear_form(self):
+        self.selected_id = None
+        for var in (self.indicateur_var, self.service_var, self.periode_var, self.cible_var, self.realisee_var):
+            var.set("")
+        self.statut_var.set("en_cours")
+
+    def add(self):
+        if not self.indicateur_var.get().strip():
+            messagebox.showwarning("Champ manquant", "Le nom de l'indicateur est obligatoire.", parent=self)
+            return
+        try:
+            cible = float(self.cible_var.get() or 0)
+            realisee = float(self.realisee_var.get() or 0)
+        except ValueError:
+            messagebox.showerror("Erreur", "Cible et Réalisée doivent être des nombres.", parent=self)
+            return
+        r = self._appeler("add_kpi", self.indicateur_var.get(), service=self.service_var.get(),
+                           periode=self.periode_var.get(), valeur_cible=cible, valeur_realisee=realisee,
+                           statut=self.statut_var.get())
+        if r is APPEL_ECHEC:
+            return
+        self.clear_form()
+        self.refresh()
+
+    def update_sel(self):
+        if not self.selected_id:
+            messagebox.showinfo("Info", "Sélectionnez d'abord un indicateur.", parent=self)
+            return
+        try:
+            cible = float(self.cible_var.get() or 0)
+            realisee = float(self.realisee_var.get() or 0)
+        except ValueError:
+            messagebox.showerror("Erreur", "Cible et Réalisée doivent être des nombres.", parent=self)
+            return
+        r = self._appeler("update_kpi", self.selected_id, indicateur=self.indicateur_var.get().strip(),
+                           service=self.service_var.get().strip(), periode=self.periode_var.get().strip(),
+                           valeur_cible=cible, valeur_realisee=realisee, statut=self.statut_var.get())
+        if r is APPEL_ECHEC:
+            return
+        self.clear_form()
+        self.refresh()
+
+    def delete_sel(self):
+        if not self.selected_id:
+            messagebox.showinfo("Info", "Sélectionnez d'abord un indicateur.", parent=self)
+            return
+        if messagebox.askyesno("Confirmer", "Supprimer cet indicateur ?", parent=self):
+            r = self._appeler("delete_kpi", self.selected_id)
+            if r is APPEL_ECHEC:
+                return
+            self.clear_form()
+            self.refresh()
+
+    def refresh(self):
+        kpis = self._appeler("list_kpi")
+        if kpis is APPEL_ECHEC:
+            return
+        for row in self.tree.get_children():
+            self.tree.delete(row)
+        for k in kpis:
+            taux = f"{k['taux_realisation']:.0f}" if k["taux_realisation"] is not None else ""
+            self.tree.insert("", "end", values=(
+                k["id"], k["indicateur"], k["service"] or "", k["periode"] or "",
+                f"{k['valeur_cible']:g}", f"{k['valeur_realisee']:g}", taux, k["statut"]))
+
+
+class RemoteTableauBordGrhTab(ttk.Frame):
+    """Tableau de bord GRH (synthèse en lecture seule) via le réseau."""
+
+    def __init__(self, parent, remote: RemoteConnection):
+        super().__init__(parent)
+        self.remote = remote
+        ttk.Label(self, text="TABLEAU DE BORD GRH", font=("Segoe UI", 14, "bold")).pack(
+            anchor="w", padx=16, pady=(16, 8))
+        ttk.Button(self, text="Actualiser", command=self.refresh).pack(anchor="w", padx=16)
+        self.cards_frame = ttk.Frame(self)
+        self.cards_frame.pack(fill="x", padx=16, pady=16)
+        self.hs_frame = ttk.LabelFrame(self, text="Incidents HS ouverts, par gravité")
+        self.hs_frame.pack(fill="x", padx=16, pady=8)
+        self.refresh()
+
+    def _appeler(self, fonction, *args, **kwargs):
+        return appeler(self, self.remote, fonction, *args, **kwargs)
+
+    def _card(self, parent, titre, valeur, col, couleur="#1F4E78"):
+        f = ttk.Frame(parent, relief="solid", borderwidth=1)
+        f.grid(row=0, column=col, padx=8, sticky="nsew")
+        parent.columnconfigure(col, weight=1)
+        tk.Label(f, text=titre, font=("Segoe UI", 9), bg="white", fg="#595959").pack(fill="x", padx=12, pady=(10, 0))
+        tk.Label(f, text=str(valeur), font=("Segoe UI", 20, "bold"), bg="white", fg=couleur).pack(
+            fill="x", padx=12, pady=(0, 10))
+
+    def refresh(self):
+        d = self._appeler("compute_tableau_bord_grh")
+        if d is APPEL_ECHEC:
+            return
+        for w in self.cards_frame.winfo_children():
+            w.destroy()
+        for w in self.hs_frame.winfo_children():
+            w.destroy()
+        self._card(self.cards_frame, "Personnel actif", f"{d['nb_personnel_actif']} / {d['nb_personnel_total']}", 0)
+        self._card(self.cards_frame, "Heures pointées (30j)", f"{d['total_heures_30j']:g} h", 1)
+        self._card(self.cards_frame, "KPI en cours", d["nb_kpi_en_cours"], 2)
+        self._card(self.cards_frame, "KPI atteints", d["nb_kpi_atteints"], 3, couleur="#1F7A1F")
+        self._card(self.cards_frame, "KPI non atteints", d["nb_kpi_non_atteints"], 4, couleur="#B00020")
+        self._card(self.cards_frame, "Incidents HS ouverts", d["nb_hs_ouverts"], 5,
+                   couleur="#B00020" if d["nb_hs_ouverts"] else "#1F7A1F")
+        if not d["hs_par_gravite"]:
+            ttk.Label(self.hs_frame, text="Aucun incident ouvert.", foreground="#1F7A1F").pack(
+                anchor="w", padx=12, pady=8)
+        else:
+            for gravite, nb in d["hs_par_gravite"].items():
+                ttk.Label(self.hs_frame, text=f"• {gravite} : {nb}").pack(anchor="w", padx=12, pady=2)
+
+
+class RemoteHsTab(ttk.Frame):
+    """HS — Hygiène Santé (GRH) via le réseau."""
+
+    def __init__(self, parent, remote: RemoteConnection):
+        super().__init__(parent)
+        self.remote = remote
+        self.selected_id = None
+
+        ttk.Label(self, text="HS — HYGIÈNE SANTÉ", font=("Segoe UI", 14, "bold")).pack(
+            anchor="w", padx=16, pady=(16, 8))
+
+        form = ttk.LabelFrame(self, text="Événement")
+        form.pack(fill="x", padx=16, pady=4)
+        ttk.Label(form, text="Date (JJ/MM/AAAA) :").grid(row=0, column=0, sticky="w", padx=4, pady=4)
+        self.date_var = tk.StringVar(value=date.today().strftime("%d/%m/%Y"))
+        ttk.Entry(form, textvariable=self.date_var, width=12).grid(row=0, column=1, padx=4)
+        ttk.Label(form, text="Type :").grid(row=0, column=2, sticky="w", padx=(12, 4))
+        self.type_var = tk.StringVar(value="incident")
+        ttk.Combobox(form, textvariable=self.type_var, width=17, state="readonly",
+                     values=["incident", "visite_medicale", "formation_securite", "distribution_epi"]).grid(
+            row=0, column=3, padx=4)
+        ttk.Label(form, text="Gravité :").grid(row=0, column=4, sticky="w", padx=(12, 4))
+        self.gravite_var = tk.StringVar()
+        ttk.Combobox(form, textvariable=self.gravite_var, width=13, state="readonly",
+                     values=["", "Mineure", "Modérée", "Grave"]).grid(row=0, column=5, padx=4)
+        ttk.Label(form, text="Statut :").grid(row=1, column=0, sticky="w", padx=4, pady=(4, 0))
+        self.statut_var = tk.StringVar(value="ouvert")
+        ttk.Combobox(form, textvariable=self.statut_var, width=13, state="readonly",
+                     values=["ouvert", "clos"]).grid(row=1, column=1, padx=4, pady=(4, 0), sticky="w")
+        ttk.Label(form, text="Description :").grid(row=1, column=2, sticky="w", padx=(12, 4), pady=(4, 0))
+        self.description_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.description_var, width=50).grid(
+            row=1, column=3, columnspan=3, padx=4, pady=(4, 0), sticky="we")
+
+        btns = ttk.Frame(self)
+        btns.pack(fill="x", padx=16, pady=6)
+        ttk.Button(btns, text="Ajouter", command=self.add).pack(side="left")
+        ttk.Button(btns, text="Mettre à jour la sélection", command=self.update_sel).pack(side="left", padx=8)
+        ttk.Button(btns, text="Supprimer la sélection", command=self.delete_sel).pack(side="left")
+        ttk.Button(btns, text="Effacer le formulaire", command=self.clear_form).pack(side="left", padx=8)
+
+        cols = ("id", "date", "type", "gravite", "statut", "description")
+        self.tree = ttk.Treeview(self, columns=cols, show="headings", height=16)
+        headers = ["ID", "Date", "Type", "Gravité", "Statut", "Description"]
+        widths = [40, 90, 140, 90, 80, 380]
+        for c, h, w in zip(cols, headers, widths):
+            self.tree.heading(c, text=h)
+            self.tree.column(c, width=w, anchor="w")
+        self.tree.pack(fill="both", expand=True, padx=16, pady=8)
+        self.tree.bind("<<TreeviewSelect>>", self._on_select)
+        self.refresh()
+
+    def _appeler(self, fonction, *args, **kwargs):
+        return appeler(self, self.remote, fonction, *args, **kwargs)
+
+    def _on_select(self, event=None):
+        sel = self.tree.selection()
+        if not sel:
+            return
+        v = self.tree.item(sel[0], "values")
+        self.selected_id = v[0]
+        self.date_var.set(v[1]); self.type_var.set(v[2])
+        self.gravite_var.set(v[3]); self.statut_var.set(v[4]); self.description_var.set(v[5])
+
+    def clear_form(self):
+        self.selected_id = None
+        self.date_var.set(date.today().strftime("%d/%m/%Y"))
+        self.type_var.set("incident"); self.gravite_var.set(""); self.statut_var.set("ouvert")
+        self.description_var.set("")
+
+    def add(self):
+        date_str = core.to_iso_date(self.date_var.get().strip())
+        if not date_str:
+            messagebox.showwarning("Champ manquant", "La date est obligatoire.", parent=self)
+            return
+        r = self._appeler("add_hs", date_str, type_evenement=self.type_var.get(),
+                           description=self.description_var.get(), gravite=self.gravite_var.get(),
+                           statut=self.statut_var.get())
+        if r is APPEL_ECHEC:
+            return
+        self.clear_form()
+        self.refresh()
+
+    def update_sel(self):
+        if not self.selected_id:
+            messagebox.showinfo("Info", "Sélectionnez d'abord un événement.", parent=self)
+            return
+        date_str = core.to_iso_date(self.date_var.get().strip())
+        r = self._appeler("update_hs", self.selected_id, date_evenement=date_str, type_evenement=self.type_var.get(),
+                           description=self.description_var.get().strip(), gravite=self.gravite_var.get(),
+                           statut=self.statut_var.get())
+        if r is APPEL_ECHEC:
+            return
+        self.clear_form()
+        self.refresh()
+
+    def delete_sel(self):
+        if not self.selected_id:
+            messagebox.showinfo("Info", "Sélectionnez d'abord un événement.", parent=self)
+            return
+        if messagebox.askyesno("Confirmer", "Supprimer cet événement ?", parent=self):
+            r = self._appeler("delete_hs", self.selected_id)
+            if r is APPEL_ECHEC:
+                return
+            self.clear_form()
+            self.refresh()
+
+    def refresh(self):
+        events = self._appeler("list_hs")
+        if events is APPEL_ECHEC:
+            return
+        for row in self.tree.get_children():
+            self.tree.delete(row)
+        for h in events:
+            self.tree.insert("", "end", values=(
+                h["id"], core.to_display_date(h["date_evenement"]), h["type_evenement"], h["gravite"] or "",
+                h["statut"], h["description"] or ""))
 
 
 def main():

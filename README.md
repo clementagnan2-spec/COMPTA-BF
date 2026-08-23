@@ -3579,3 +3579,31 @@ une seule fois (jamais redémarré), configuration ajoutée depuis un AUTRE
 processus (simulant l'application de bureau) PENDANT que le serveur
 tournait, puis nouvelle connexion via ce même serveur — les 5 menus GRH
 sont désormais correctement reçus sans aucun redémarrage.
+
+## Écrans GRH construits côté client (5 sous-menus pleinement fonctionnels)
+
+**Réalisé** — les 5 écrans GRH ajoutés au client réseau, suivant
+exactement le même modèle que la Saisie :
+- **Liste du personnel** — création, mise à jour, suppression.
+- **Time sheet** — pointage des heures par employé.
+- **KPI** — indicateurs de performance avec taux de réalisation calculé.
+- **Tableau de bord GRH** — synthèse en lecture seule (cartes de
+  résumé + incidents HS par gravité).
+- **HS (hygiène santé)** — incidents, visites médicales, formations,
+  distributions d'EPI.
+
+**Factorisation** : la gestion d'erreur réseau unifiée (session expirée,
+serveur injoignable, erreur métier), auparavant dupliquée dans
+`RemoteSaisieTab`, a été extraite en une fonction commune `appeler()` —
+réutilisée par les 6 écrans du client désormais, pour éviter toute
+duplication future.
+
+**Serveur** : les 16 fonctions GRH ajoutées à `RPC_WHITELIST`
+(`list_personnel`, `add_personnel`, `add_time_sheet`, `add_kpi`,
+`add_hs`...).
+
+Testé de bout en bout avec un vrai serveur et un vrai client réseau
+(pas seulement le moteur local) : création d'un employé, pointage
+d'heures, KPI avec taux de réalisation, incident HS, puis vérification
+que le Tableau de bord agrège correctement toutes ces données en temps
+réel à travers le réseau. Non-régression du moteur comptable confirmée.
