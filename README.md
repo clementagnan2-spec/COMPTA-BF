@@ -3796,3 +3796,27 @@ au bureau par sécurité. Zéro écran laissé sans réponse.
 Testé de bout en bout à chaque étape (Exercices avec clôture réelle,
 Soldes d'ouverture, Plan comptable, tous les écrans du lot). Non-
 régression complète du moteur comptable confirmée.
+
+### Gestionnaire d'erreurs global ajouté au client — plus jamais d'écran vide sans explication
+
+**Signalé** : Immobilisations reste vide sur le client alors que le
+bureau affiche des données réelles pour le même exercice.
+
+**Investigation approfondie** : reproduit fidèlement le scénario exact
+communiqué (comptes 231100, 231102 « hors Plan comptable », montants
+négatifs, exercice 2026 identique des deux côtés) — **le calcul et la
+transmission réseau se sont révélés corrects dans tous les tests**,
+aussi bien en appel direct qu'à travers un vrai serveur/client. Impossible
+de reproduire le problème précisément avec les informations disponibles.
+
+**Corrigé structurellement** : un **gestionnaire d'erreurs global** a
+été ajouté au client (`report_callback_exception`) — sans lui, toute
+exception survenant dans un écran (notamment en mode `--windowed`, sans
+console visible) est **silencieusement avalée par Tkinter**, laissant
+l'écran vide sans le moindre message, rendant tout diagnostic impossible
+côté utilisateur. Désormais, **toute erreur s'affiche dans une boîte de
+dialogue claire**, avec le détail technique — si le problème d'
+Immobilisations revient, ce message permettra d'identifier la cause
+exacte immédiatement, au lieu d'un écran silencieusement vide.
+
+Testé : mécanisme de capture et de formatage de l'erreur vérifié.

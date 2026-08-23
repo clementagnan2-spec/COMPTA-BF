@@ -263,6 +263,7 @@ class ClientApp(tk.Tk):
         super().__init__()
         self.remote = remote
         self.pages = {}
+        self.report_callback_exception = self._report_callback_exception
         self.title(f"PLATEFORME INTEGREE DE GESTION — Client — {remote.nom_utilisateur} "
                     f"({remote.niveau_acces}) — {remote.host}:{remote.port}")
         self.geometry("1300x800")
@@ -351,6 +352,21 @@ class ClientApp(tk.Tk):
         ttk.Label(frame, text="Aucun écran encore disponible pour votre niveau d'accès sur le client réseau.",
                   font=("Segoe UI", 12, "bold")).pack(anchor="w", padx=16, pady=16)
         frame.tkraise()
+
+    def _report_callback_exception(self, exc_type, exc_value, exc_traceback):
+        """Gestionnaire d'erreurs global — SANS lui, une exception survenant
+        dans un écran (ex. Immobilisations avec des données inhabituelles)
+        serait silencieusement avalée par Tkinter (surtout en mode
+        --windowed, sans console visible) : l'écran resterait vide, SANS
+        AUCUN message, ce qui rend le diagnostic impossible pour
+        l'utilisateur. Avec ce gestionnaire, toute erreur devient visible."""
+        import traceback
+        detail = "".join(traceback.format_exception(exc_type, exc_value, exc_traceback))
+        messagebox.showerror(
+            "Erreur inattendue",
+            f"Une erreur est survenue dans cet écran :\n\n{exc_type.__name__} : {exc_value}\n\n"
+            f"Détail technique (à transmettre pour diagnostic) :\n{detail[-1500:]}",
+        )
 
     def _on_close(self):
         self.remote.logout()
