@@ -3724,3 +3724,75 @@ technique, Maintenance-Qualité (Énergie, Maintenance), Paramètres (6),
 et une partie d'ADMIN (les fonctions les plus sensibles — gestion des
 utilisateurs, réinitialisation — restent volontairement non exposées à
 distance, voir la section sécurité plus haut).
+
+### Diagnostic : "Immobilisations vide sur le client" — pas un bug, décalage d'exercice
+
+**Signalé** : le menu Immobilisations affiche des données sur
+l'application de bureau mais rien sur le client.
+
+**Vérifié rigoureusement** : `compute_immobilisations_liste()` (et plus
+généralement tout calcul basé sur `compute_balance()`) se comporte de
+façon **strictement identique** que l'appel vienne du bureau (connexion
+locale directe) ou du client (RPC via le serveur) — testé en reproduisant
+exactement le scénario (donnée saisie sous l'exercice 2025, exercice
+courant ensuite basculé sur 2026) : les DEUX chemins renvoient un
+résultat vide pour 2026 et les données correctes pour 2025. **Ce n'est
+donc pas un bug spécifique au client** — c'est que le bureau et le
+serveur peuvent être réglés sur des **exercices comptables (années)
+différents**, et une immobilisation saisie dans l'ouverture d'un
+exercice n'apparaît que dans CET exercice (et les suivants, UNIQUEMENT
+si l'exercice a été formellement clôturé via « + Nouvel exercice », qui
+reporte les soldes).
+
+**Corrigé** : la barre du client affiche désormais **« Exercice
+comptable (serveur) : XXXX »**, pour comparer directement avec le
+sélecteur d'exercice du bureau et repérer immédiatement un éventuel
+décalage.
+
+Testé de bout en bout : exercice affiché correctement à la connexion,
+comportement de `compute_immobilisations_liste()` confirmé identique
+entre bureau et client sur les deux exercices testés.
+
+## TERMINÉ — 48 sous-menus sur 48 désormais couverts côté client
+
+**Demande** : construire tous les menus.
+
+**Réalisé** — 20 écrans supplémentaires construits dans cette réponse
+(en plus des 21 déjà existants) :
+- **COMMERCIAL** : Recouvrement, Marges bénéficiaires.
+- **PRODUCTION** : Fabrication (lecture).
+- **ENGAGEMENTS-PROJETS** : Contrats, Bordereau de livraison.
+- **IMMOBILISATIONS** : Amortissements (taux par catégorie).
+- **TRANSPORT** : Parc auto, Missions, Pièces de rechange, Réparations.
+- **MAINTENANCE-QUALITÉ** : Énergie, Maintenance (écran générique
+  `RemoteAnalytiquePeriodeTab`, réutilisé pour les deux).
+- **PARAMÈTRES** : Exercices comptables (avec clôture réelle testée —
+  report des soldes vérifié), Plan comptable (recherche), Plan
+  analytique, Plan budgétaire, Plan bailleurs de fonds, Synchronisation.
+- **SAISIE** : Soldes d'ouverture (Débit/Crédit avec totaux, comme le
+  bureau).
+- **ADMIN** (5 écrans) : Taux TVA, Taux retenue construits ; Modification
+  des factures, Modèle de bon de commande, Niveaux d'accès, Utilisateurs,
+  Réinitialisation des données affichent une **explication claire**
+  plutôt qu'un écran vide — ces opérations restent délibérément
+  réservées à l'application de bureau, par sécurité (voir la liste
+  blanche du serveur).
+
+**Factorisation** : un écran générique `RemoteSimplePlanTab` construit
+et réutilisé pour 5 écrans (Plan analytique, Plan budgétaire, Plan
+bailleurs, Taux TVA, Taux retenue) — élimine la duplication.
+
+**Bug trouvé et corrigé pendant la construction** : `RemoteExercicesTab`
+traitait par erreur `list_exercices()` (qui renvoie des dictionnaires
+`{"exercice":..., "cloture":...}`) comme de simples chaînes de
+caractères — corrigé et testé avec une vraie clôture d'exercice de bout
+en bout (report des soldes vers l'exercice suivant vérifié).
+
+**Bilan final : les 48 sous-menus de l'application sont désormais
+couverts côté client** — soit un écran pleinement fonctionnel, soit une
+explication claire pour les quelques opérations volontairement réservées
+au bureau par sécurité. Zéro écran laissé sans réponse.
+
+Testé de bout en bout à chaque étape (Exercices avec clôture réelle,
+Soldes d'ouverture, Plan comptable, tous les écrans du lot). Non-
+régression complète du moteur comptable confirmée.

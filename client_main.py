@@ -197,6 +197,66 @@ class ClientApp(tk.Tk):
         "immobilisations": lambda parent, remote: RemoteImmobilisationsTab(parent, remote),
         "expression_besoin": lambda parent, remote: RemoteExpressionBesoinTab(parent, remote),
         "ep_bon_commande": lambda parent, remote: RemoteBonCommandeTab(parent, remote),
+        "recouvrement": lambda parent, remote: RemoteRecouvrementTab(parent, remote),
+        "marges": lambda parent, remote: RemoteMargesTab(parent, remote),
+        "contrats": lambda parent, remote: RemoteContratsTab(parent, remote),
+        "bordereau_livraison": lambda parent, remote: RemoteBordereauLivraisonTab(parent, remote),
+        "amortissements": lambda parent, remote: RemoteAmortissementsTab(parent, remote),
+        "transport": lambda parent, remote: RemoteParcAutoTab(parent, remote),
+        "missions": lambda parent, remote: RemoteMissionsTab(parent, remote),
+        "pieces_rechange": lambda parent, remote: RemotePiecesRechangeTab(parent, remote),
+        "reparations": lambda parent, remote: RemoteReparationsTab(parent, remote),
+        "plan_analytique": lambda parent, remote: RemoteSimplePlanTab(
+            parent, remote, "PLAN ANALYTIQUE", "list_analytic_codes", "add_analytic_code",
+            "delete_analytic_code", extra_field="unite"),
+        "plan_budgetaire": lambda parent, remote: RemoteSimplePlanTab(
+            parent, remote, "PLAN BUDGÉTAIRE", "list_budget_codes", "add_budget_code",
+            "delete_budget_code", extra_field="montant"),
+        "plan_bailleur": lambda parent, remote: RemoteSimplePlanTab(
+            parent, remote, "PLAN BAILLEURS DE FONDS", "list_donor_codes", "add_donor_code",
+            "delete_donor_code"),
+        "taux_tva": lambda parent, remote: RemoteSimplePlanTab(
+            parent, remote, "TAUX DE TVA", "list_taux_tva", "add_taux_tva", "delete_taux_tva",
+            extra_field="montant"),
+        "taux_retenue": lambda parent, remote: RemoteSimplePlanTab(
+            parent, remote, "TAUX DE RETENUE À LA SOURCE", "list_taux_retenue", "add_taux_retenue",
+            "delete_taux_retenue", extra_field="montant"),
+        "energie": lambda parent, remote: RemoteAnalytiquePeriodeTab(
+            parent, remote, "Énergie",
+            "Coûts d'énergie (eau, électricité, essence, gasoil, gaz...) par code analytique, sur l'exercice "
+            "courant.", "ENERGIE-"),
+        "maintenance": lambda parent, remote: RemoteAnalytiquePeriodeTab(
+            parent, remote, "Maintenance",
+            "Coûts de maintenance (véhicules, bâtiments, machines, informatique...) par code analytique, sur "
+            "l'exercice courant.", "MAINT-"),
+        "production": lambda parent, remote: RemoteProductionTab(parent, remote),
+        "exercices": lambda parent, remote: RemoteExercicesTab(parent, remote),
+        "synchronisation": lambda parent, remote: RemoteSynchronisationTab(parent, remote),
+        "rapports_technique": lambda parent, remote: RemotePlaceholderTab(
+            parent, remote, "Rapports technique",
+            "À définir — dites-moi quels rapports techniques vous voulez ici et je construis l'écran."),
+        "ouverture": lambda parent, remote: RemoteOuvertureTab(parent, remote),
+        "plan_comptable": lambda parent, remote: RemotePlanComptableTab(parent, remote),
+        "admin_factures": lambda parent, remote: RemotePlaceholderTab(
+            parent, remote, "Modification des factures",
+            "Réservé à l'application de bureau, par sécurité — modification de factures déjà validées, "
+            "opération sensible non exposée à distance pour l'instant."),
+        "admin_modele_bon_commande": lambda parent, remote: RemotePlaceholderTab(
+            parent, remote, "Modèle de bon de commande",
+            "Réservé à l'application de bureau — édition d'un modèle de document, opération locale au "
+            "poste serveur."),
+        "niveaux_acces": lambda parent, remote: RemotePlaceholderTab(
+            parent, remote, "Niveaux d'accès",
+            "Réservé à l'application de bureau, par sécurité — la gestion des niveaux d'accès et de leurs "
+            "autorisations n'est volontairement pas exposée à distance (voir server.py RPC_WHITELIST)."),
+        "utilisateurs": lambda parent, remote: RemotePlaceholderTab(
+            parent, remote, "Utilisateurs",
+            "Réservé à l'application de bureau, par sécurité — la création/suppression d'utilisateurs "
+            "n'est volontairement pas exposée à distance."),
+        "reinitialisation": lambda parent, remote: RemotePlaceholderTab(
+            parent, remote, "Réinitialisation des données",
+            "Réservé à l'application de bureau, par sécurité — opération destructrice et irréversible, "
+            "volontairement non exposée à distance."),
     }
 
     def __init__(self, remote: RemoteConnection):
@@ -222,6 +282,12 @@ class ClientApp(tk.Tk):
                   font=("Segoe UI", 9, "bold")).pack(side="left", padx=8)
         ttk.Label(top_bar, text=f"Serveur : {remote.host}:{remote.port}",
                   foreground="#595959").pack(side="left", padx=8)
+        try:
+            exercice_serveur = client_core.get_current_exercice(remote)
+        except Exception:
+            exercice_serveur = "?"
+        ttk.Label(top_bar, text=f"Exercice comptable (serveur) : {exercice_serveur}",
+                  font=("Segoe UI", 9, "bold"), foreground="#B00020").pack(side="left", padx=8)
         ttk.Button(top_bar, text="Se déconnecter", command=self._on_close).pack(side="right", padx=8)
 
         self._build_menu()
@@ -2077,6 +2143,953 @@ class RemoteBonCommandeTab(ttk.Frame):
             self.tree.insert("", "end", values=(
                 b["id"], b["numero"], core.to_display_date(b["date_commande"]), b.get("fournisseur_code") or "",
                 b["statut"]))
+
+
+class RemoteRecouvrementTab(ttk.Frame):
+    """Recouvrement (COMMERCIAL) via le réseau — balance âgée des créances
+    clients, avec enregistrement du paiement."""
+
+    def __init__(self, parent, remote: RemoteConnection):
+        super().__init__(parent)
+        self.remote = remote
+        ttk.Label(self, text="RECOUVREMENT — BALANCE ÂGÉE", font=("Segoe UI", 14, "bold")).pack(
+            anchor="w", padx=16, pady=(16, 8))
+        ttk.Button(self, text="Actualiser", command=self.refresh).pack(anchor="w", padx=16, pady=(0, 4))
+        cols = ("client", "0_30", "31_60", "61_90", "plus_90", "total")
+        self.tree = ttk.Treeview(self, columns=cols, show="headings", height=20)
+        for c, h, w in zip(cols, ["Client", "0-30 j", "31-60 j", "61-90 j", "> 90 j", "Total dû"],
+                           [280, 120, 120, 120, 120, 140]):
+            self.tree.heading(c, text=h)
+            self.tree.column(c, width=w, anchor="w" if c == "client" else "e")
+        self.tree.pack(fill="both", expand=True, padx=16, pady=(0, 16))
+        self.refresh()
+
+    def _appeler(self, fonction, *args, **kwargs):
+        return appeler(self, self.remote, fonction, *args, **kwargs)
+
+    def refresh(self):
+        clients = self._appeler("compute_balance_agee")
+        if clients is APPEL_ECHEC:
+            return
+        for row in self.tree.get_children():
+            self.tree.delete(row)
+        for c in clients:
+            tranches = c.get("tranches", {})
+            self.tree.insert("", "end", values=(
+                c["raison_sociale"], fmt_cfa(tranches.get("0-30", 0)), fmt_cfa(tranches.get("31-60", 0)),
+                fmt_cfa(tranches.get("61-90", 0)), fmt_cfa(tranches.get(">90", 0)), fmt_cfa(c.get("total", 0))))
+
+
+class RemoteMargesTab(ttk.Frame):
+    """Marges bénéficiaires (COMMERCIAL) via le réseau — mêmes indicateurs
+    que la Liasse fiscale (marge commerciale, valeur ajoutée, résultat)."""
+
+    def __init__(self, parent, remote: RemoteConnection):
+        super().__init__(parent)
+        self.remote = remote
+        self.text = tk.Text(self, font=("Consolas", 11), wrap="none")
+        self.text.pack(fill="both", expand=True, padx=16, pady=16)
+        self.refresh()
+
+    def _appeler(self, fonction, *args, **kwargs):
+        return appeler(self, self.remote, fonction, *args, **kwargs)
+
+    def refresh(self):
+        cr = self._appeler("compute_liasse_resultat")
+        if cr is APPEL_ECHEC:
+            return
+        label_ca = "Chiffre d'affaires (XB)"
+        label_re = "Résultat d'exploitation (XE)"
+        lines = [
+            "MARGES BÉNÉFICIAIRES", "=" * 60, "",
+            f"  {'Ventes de marchandises (TA)':<45} {cr['TA']:>14,.2f}",
+            f"  {'Achats de marchandises (RA)':<45} {-cr['RA']:>14,.2f}",
+            f"  {'MARGE COMMERCIALE (XA)':<45} {cr['XA']:>14,.2f}", "",
+            f"  {label_ca:<45} {cr['XB']:>14,.2f}",
+            f"  {'VALEUR AJOUTÉE (XC)':<45} {cr['XC']:>14,.2f}",
+            f"  {label_re:<45} {cr['XE']:>14,.2f}",
+            f"  {'RÉSULTAT NET (XI)':<45} {cr['XI']:>14,.2f}",
+        ]
+        self.text.delete("1.0", "end")
+        self.text.insert("1.0", "\n".join(lines))
+
+
+class RemoteContratsTab(ttk.Frame):
+    """Contrats fournisseurs (ENGAGEMENTS-PROJETS) via le réseau — suivi
+    des délais de livraison et paiement."""
+
+    def __init__(self, parent, remote: RemoteConnection):
+        super().__init__(parent)
+        self.remote = remote
+
+        ttk.Label(self, text="CONTRATS FOURNISSEURS", font=("Segoe UI", 14, "bold")).pack(
+            anchor="w", padx=16, pady=(16, 8))
+
+        form = ttk.LabelFrame(self, text="Nouvelle commande / contrat")
+        form.pack(fill="x", padx=16, pady=4)
+        ttk.Label(form, text="Fournisseur (code) :").grid(row=0, column=0, sticky="w", padx=4, pady=4)
+        self.fournisseur_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.fournisseur_var, width=14).grid(row=0, column=1, padx=4)
+        ttk.Label(form, text="N° Pièce :").grid(row=0, column=2, sticky="w", padx=(12, 4))
+        self.piece_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.piece_var, width=14).grid(row=0, column=3, padx=4)
+        ttk.Label(form, text="Libellé :").grid(row=0, column=4, sticky="w", padx=(12, 4))
+        self.libelle_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.libelle_var, width=26).grid(row=0, column=5, padx=4)
+        ttk.Label(form, text="Montant :").grid(row=1, column=0, sticky="w", padx=4, pady=(4, 0))
+        self.montant_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.montant_var, width=14).grid(row=1, column=1, padx=4, pady=(4, 0))
+        ttk.Label(form, text="Date commande (JJ/MM/AAAA) :").grid(row=1, column=2, sticky="w", padx=(12, 4), pady=(4, 0))
+        self.date_var = tk.StringVar(value=date.today().strftime("%d/%m/%Y"))
+        ttk.Entry(form, textvariable=self.date_var, width=12).grid(row=1, column=3, padx=4, pady=(4, 0))
+        ttk.Button(form, text="Ajouter", command=self.add).grid(row=1, column=5, padx=4, pady=(4, 0))
+
+        cols = ("id", "fournisseur", "piece", "libelle", "montant", "date")
+        self.tree = ttk.Treeview(self, columns=cols, show="headings", height=18)
+        for c, h, w in zip(cols, ["ID", "Fournisseur", "Pièce", "Libellé", "Montant", "Date"],
+                           [40, 220, 90, 260, 120, 90]):
+            self.tree.heading(c, text=h)
+            self.tree.column(c, width=w, anchor="w")
+        self.tree.pack(fill="both", expand=True, padx=16, pady=8)
+        self.refresh()
+
+    def _appeler(self, fonction, *args, **kwargs):
+        return appeler(self, self.remote, fonction, *args, **kwargs)
+
+    def add(self):
+        if not self.fournisseur_var.get().strip() or not self.piece_var.get().strip():
+            messagebox.showwarning("Champ manquant", "Fournisseur et N° pièce sont obligatoires.", parent=self)
+            return
+        try:
+            montant = float(self.montant_var.get() or 0)
+        except ValueError:
+            messagebox.showerror("Erreur", "Le montant doit être un nombre.", parent=self)
+            return
+        date_str = core.to_iso_date(self.date_var.get().strip())
+        r = self._appeler("add_commande", self.fournisseur_var.get().strip(), self.piece_var.get().strip(),
+                           self.libelle_var.get().strip(), montant, date_str)
+        if r is APPEL_ECHEC:
+            return
+        self.piece_var.set(""); self.libelle_var.set(""); self.montant_var.set("")
+        self.refresh()
+
+    def refresh(self):
+        commandes = self._appeler("list_commandes")
+        if commandes is APPEL_ECHEC:
+            return
+        for row in self.tree.get_children():
+            self.tree.delete(row)
+        for c in commandes:
+            self.tree.insert("", "end", values=(
+                c["id"], c["raison_sociale"], c["piece"], c["libelle"], fmt_cfa(c["montant"]),
+                core.to_display_date(c["date_commande"])))
+
+
+class RemoteBordereauLivraisonTab(ttk.Frame):
+    """Bordereau de livraison (ENGAGEMENTS-PROJETS) via le réseau —
+    consultation et confirmation de réception (quantités livrées)."""
+
+    def __init__(self, parent, remote: RemoteConnection):
+        super().__init__(parent)
+        self.remote = remote
+        self.bordereau_id_selectionne = None
+
+        ttk.Label(self, text="BORDEREAU DE LIVRAISON", font=("Segoe UI", 14, "bold")).pack(
+            anchor="w", padx=16, pady=(16, 8))
+        ttk.Button(self, text="Actualiser", command=self.refresh).pack(anchor="w", padx=16, pady=(0, 4))
+
+        cols = ("id", "numero", "date", "statut")
+        self.tree = ttk.Treeview(self, columns=cols, show="headings", height=10)
+        for c, h, w in zip(cols, ["ID", "Numéro", "Date", "Statut"], [40, 120, 100, 100]):
+            self.tree.heading(c, text=h)
+            self.tree.column(c, width=w, anchor="w")
+        self.tree.pack(fill="x", padx=16, pady=(0, 8))
+        self.tree.bind("<<TreeviewSelect>>", self._on_select)
+
+        ttk.Label(self, text="Lignes (quantités commandées / livrées)", font=("Segoe UI", 10, "bold")).pack(
+            anchor="w", padx=16)
+        self.tree_lignes = ttk.Treeview(self, columns=("libelle", "qte_cmd", "qte_liv", "unite"),
+                                         show="headings", height=10)
+        for c, h, w in zip(("libelle", "qte_cmd", "qte_liv", "unite"),
+                           ["Libellé", "Qté commandée", "Qté livrée", "Unité"], [300, 120, 120, 80]):
+            self.tree_lignes.heading(c, text=h)
+            self.tree_lignes.column(c, width=w, anchor="w")
+        self.tree_lignes.pack(fill="both", expand=True, padx=16, pady=(4, 8))
+        ttk.Button(self, text="Valider la réception (confirme les quantités livrées)",
+                   command=self.valider).pack(anchor="w", padx=16, pady=(0, 16))
+        self.refresh()
+
+    def _appeler(self, fonction, *args, **kwargs):
+        return appeler(self, self.remote, fonction, *args, **kwargs)
+
+    def _on_select(self, event=None):
+        sel = self.tree.selection()
+        if not sel:
+            return
+        self.bordereau_id_selectionne = int(self.tree.item(sel[0], "values")[0])
+        self._refresh_lignes()
+
+    def _refresh_lignes(self):
+        for row in self.tree_lignes.get_children():
+            self.tree_lignes.delete(row)
+        if not self.bordereau_id_selectionne:
+            return
+        lignes = self._appeler("list_lignes_bordereau_livraison", self.bordereau_id_selectionne)
+        if lignes is APPEL_ECHEC:
+            return
+        for l in lignes:
+            self.tree_lignes.insert("", "end", values=(
+                l["libelle"], f"{l['quantite_commandee']:g}", f"{l['quantite_livree']:g}", l["unite"] or ""))
+
+    def valider(self):
+        if not self.bordereau_id_selectionne:
+            messagebox.showinfo("Info", "Sélectionnez d'abord un bordereau.", parent=self)
+            return
+        r = self._appeler("valider_bordereau_livraison", self.bordereau_id_selectionne)
+        if r is APPEL_ECHEC:
+            return
+        messagebox.showinfo("Validé", "Réception confirmée sur le serveur.", parent=self)
+        self.refresh()
+
+    def refresh(self):
+        bordereaux = self._appeler("list_bordereaux_livraison")
+        if bordereaux is APPEL_ECHEC:
+            return
+        for row in self.tree.get_children():
+            self.tree.delete(row)
+        for b in bordereaux:
+            self.tree.insert("", "end", values=(
+                b["id"], b["numero"], core.to_display_date(b["date_livraison"]), b["statut"]))
+
+
+class RemoteAmortissementsTab(ttk.Frame):
+    """Taux d'amortissement par catégorie (IMMOBILISATIONS) via le réseau."""
+
+    def __init__(self, parent, remote: RemoteConnection):
+        super().__init__(parent)
+        self.remote = remote
+        ttk.Label(self, text="AMORTISSEMENTS — TAUX PAR CATÉGORIE", font=("Segoe UI", 14, "bold")).pack(
+            anchor="w", padx=16, pady=(16, 8))
+        self.tree = ttk.Treeview(self, columns=("categorie", "taux"), show="headings", height=12)
+        self.tree.heading("categorie", text="Catégorie")
+        self.tree.heading("taux", text="Taux (%)")
+        self.tree.column("categorie", width=350, anchor="w")
+        self.tree.column("taux", width=100, anchor="e")
+        self.tree.pack(fill="x", padx=16, pady=(0, 8))
+        self.tree.bind("<<TreeviewSelect>>", self._on_select)
+
+        form = ttk.Frame(self)
+        form.pack(fill="x", padx=16, pady=4)
+        ttk.Label(form, text="Nouveau taux (%) pour la catégorie sélectionnée :").pack(side="left")
+        self.taux_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.taux_var, width=8).pack(side="left", padx=8)
+        ttk.Button(form, text="Enregistrer", command=self.enregistrer).pack(side="left")
+        self.selected_categorie = None
+        self.refresh()
+
+    def _appeler(self, fonction, *args, **kwargs):
+        return appeler(self, self.remote, fonction, *args, **kwargs)
+
+    def _on_select(self, event=None):
+        sel = self.tree.selection()
+        if not sel:
+            return
+        v = self.tree.item(sel[0], "values")
+        self.selected_categorie = v[0]
+        self.taux_var.set(v[1])
+
+    def enregistrer(self):
+        if not self.selected_categorie:
+            messagebox.showinfo("Info", "Sélectionnez d'abord une catégorie.", parent=self)
+            return
+        try:
+            taux = float(self.taux_var.get() or 0)
+        except ValueError:
+            messagebox.showerror("Erreur", "Le taux doit être un nombre.", parent=self)
+            return
+        r = self._appeler("set_taux_amortissement", self.selected_categorie, taux)
+        if r is APPEL_ECHEC:
+            return
+        self.refresh()
+
+    def refresh(self):
+        taux = self._appeler("list_taux_amortissement")
+        if taux is APPEL_ECHEC:
+            return
+        for row in self.tree.get_children():
+            self.tree.delete(row)
+        for t in taux:
+            self.tree.insert("", "end", values=(t["categorie"], f"{t['taux_pct']:g}"))
+
+
+class RemoteParcAutoTab(ttk.Frame):
+    """Parc auto (TRANSPORT) via le réseau."""
+
+    def __init__(self, parent, remote: RemoteConnection):
+        super().__init__(parent)
+        self.remote = remote
+        self.selected_id = None
+        ttk.Label(self, text="PARC AUTO", font=("Segoe UI", 14, "bold")).pack(anchor="w", padx=16, pady=(16, 8))
+        form = ttk.LabelFrame(self, text="Véhicule")
+        form.pack(fill="x", padx=16, pady=4)
+        ttk.Label(form, text="Immatriculation :").grid(row=0, column=0, sticky="w", padx=4, pady=4)
+        self.immat_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.immat_var, width=16).grid(row=0, column=1, padx=4)
+        ttk.Label(form, text="Marque :").grid(row=0, column=2, sticky="w", padx=(12, 4))
+        self.marque_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.marque_var, width=16).grid(row=0, column=3, padx=4)
+        ttk.Label(form, text="Modèle :").grid(row=0, column=4, sticky="w", padx=(12, 4))
+        self.modele_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.modele_var, width=16).grid(row=0, column=5, padx=4)
+        btns = ttk.Frame(self)
+        btns.pack(fill="x", padx=16, pady=6)
+        ttk.Button(btns, text="Ajouter", command=self.add).pack(side="left")
+        ttk.Button(btns, text="Supprimer la sélection", command=self.delete_sel).pack(side="left", padx=8)
+        cols = ("id", "immat", "marque", "modele")
+        self.tree = ttk.Treeview(self, columns=cols, show="headings", height=16)
+        for c, h, w in zip(cols, ["ID", "Immatriculation", "Marque", "Modèle"], [40, 140, 160, 160]):
+            self.tree.heading(c, text=h)
+            self.tree.column(c, width=w, anchor="w")
+        self.tree.pack(fill="both", expand=True, padx=16, pady=8)
+        self.tree.bind("<<TreeviewSelect>>", self._on_select)
+        self.refresh()
+
+    def _appeler(self, fonction, *args, **kwargs):
+        return appeler(self, self.remote, fonction, *args, **kwargs)
+
+    def _on_select(self, event=None):
+        sel = self.tree.selection()
+        if sel:
+            self.selected_id = self.tree.item(sel[0], "values")[0]
+
+    def add(self):
+        if not self.immat_var.get().strip():
+            messagebox.showwarning("Champ manquant", "L'immatriculation est obligatoire.", parent=self)
+            return
+        r = self._appeler("add_vehicule", self.immat_var.get(), marque=self.marque_var.get(),
+                           modele=self.modele_var.get())
+        if r is APPEL_ECHEC:
+            return
+        self.immat_var.set(""); self.marque_var.set(""); self.modele_var.set("")
+        self.refresh()
+
+    def delete_sel(self):
+        if not self.selected_id:
+            messagebox.showinfo("Info", "Sélectionnez d'abord un véhicule.", parent=self)
+            return
+        r = self._appeler("delete_vehicule", self.selected_id)
+        if r is APPEL_ECHEC:
+            return
+        self.refresh()
+
+    def refresh(self):
+        vehicules = self._appeler("list_vehicules")
+        if vehicules is APPEL_ECHEC:
+            return
+        for row in self.tree.get_children():
+            self.tree.delete(row)
+        for v in vehicules:
+            self.tree.insert("", "end", values=(v["id"], v["immatriculation"], v["marque"] or "", v["modele"] or ""))
+
+
+class RemoteMissionsTab(ttk.Frame):
+    """Missions (TRANSPORT) via le réseau."""
+
+    def __init__(self, parent, remote: RemoteConnection):
+        super().__init__(parent)
+        self.remote = remote
+        self.selected_id = None
+        ttk.Label(self, text="MISSIONS", font=("Segoe UI", 14, "bold")).pack(anchor="w", padx=16, pady=(16, 8))
+        form = ttk.LabelFrame(self, text="Mission")
+        form.pack(fill="x", padx=16, pady=4)
+        ttk.Label(form, text="Destination :").grid(row=0, column=0, sticky="w", padx=4, pady=4)
+        self.destination_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.destination_var, width=20).grid(row=0, column=1, padx=4)
+        ttk.Label(form, text="Chauffeur :").grid(row=0, column=2, sticky="w", padx=(12, 4))
+        self.chauffeur_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.chauffeur_var, width=18).grid(row=0, column=3, padx=4)
+        ttk.Label(form, text="Motif :").grid(row=0, column=4, sticky="w", padx=(12, 4))
+        self.motif_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.motif_var, width=20).grid(row=0, column=5, padx=4)
+        btns = ttk.Frame(self)
+        btns.pack(fill="x", padx=16, pady=6)
+        ttk.Button(btns, text="Ajouter", command=self.add).pack(side="left")
+        ttk.Button(btns, text="Supprimer la sélection", command=self.delete_sel).pack(side="left", padx=8)
+        cols = ("id", "destination", "chauffeur", "motif")
+        self.tree = ttk.Treeview(self, columns=cols, show="headings", height=16)
+        for c, h, w in zip(cols, ["ID", "Destination", "Chauffeur", "Motif"], [40, 200, 180, 220]):
+            self.tree.heading(c, text=h)
+            self.tree.column(c, width=w, anchor="w")
+        self.tree.pack(fill="both", expand=True, padx=16, pady=8)
+        self.tree.bind("<<TreeviewSelect>>", self._on_select)
+        self.refresh()
+
+    def _appeler(self, fonction, *args, **kwargs):
+        return appeler(self, self.remote, fonction, *args, **kwargs)
+
+    def _on_select(self, event=None):
+        sel = self.tree.selection()
+        if sel:
+            self.selected_id = self.tree.item(sel[0], "values")[0]
+
+    def add(self):
+        if not self.destination_var.get().strip():
+            messagebox.showwarning("Champ manquant", "La destination est obligatoire.", parent=self)
+            return
+        r = self._appeler("add_mission", self.destination_var.get(), chauffeur=self.chauffeur_var.get(),
+                           motif=self.motif_var.get())
+        if r is APPEL_ECHEC:
+            return
+        self.destination_var.set(""); self.chauffeur_var.set(""); self.motif_var.set("")
+        self.refresh()
+
+    def delete_sel(self):
+        if not self.selected_id:
+            messagebox.showinfo("Info", "Sélectionnez d'abord une mission.", parent=self)
+            return
+        r = self._appeler("delete_mission", self.selected_id)
+        if r is APPEL_ECHEC:
+            return
+        self.refresh()
+
+    def refresh(self):
+        missions = self._appeler("list_missions")
+        if missions is APPEL_ECHEC:
+            return
+        for row in self.tree.get_children():
+            self.tree.delete(row)
+        for m in missions:
+            self.tree.insert("", "end", values=(m["id"], m["destination"], m["chauffeur"] or "", m["motif"] or ""))
+
+
+class RemotePiecesRechangeTab(ttk.Frame):
+    """Pièces de rechange (TRANSPORT/MAINTENANCE-QUALITÉ, partagé) via le
+    réseau."""
+
+    def __init__(self, parent, remote: RemoteConnection):
+        super().__init__(parent)
+        self.remote = remote
+        self.selected_id = None
+        ttk.Label(self, text="PIÈCES DE RECHANGE", font=("Segoe UI", 14, "bold")).pack(anchor="w", padx=16, pady=(16, 8))
+        form = ttk.LabelFrame(self, text="Pièce")
+        form.pack(fill="x", padx=16, pady=4)
+        ttk.Label(form, text="Désignation :").grid(row=0, column=0, sticky="w", padx=4, pady=4)
+        self.designation_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.designation_var, width=24).grid(row=0, column=1, padx=4)
+        ttk.Label(form, text="Quantité stock :").grid(row=0, column=2, sticky="w", padx=(12, 4))
+        self.qte_var = tk.StringVar(value="0")
+        ttk.Entry(form, textvariable=self.qte_var, width=10).grid(row=0, column=3, padx=4)
+        ttk.Label(form, text="Coût unitaire :").grid(row=0, column=4, sticky="w", padx=(12, 4))
+        self.cout_var = tk.StringVar(value="0")
+        ttk.Entry(form, textvariable=self.cout_var, width=12).grid(row=0, column=5, padx=4)
+        btns = ttk.Frame(self)
+        btns.pack(fill="x", padx=16, pady=6)
+        ttk.Button(btns, text="Ajouter", command=self.add).pack(side="left")
+        ttk.Button(btns, text="Supprimer la sélection", command=self.delete_sel).pack(side="left", padx=8)
+        cols = ("id", "designation", "qte", "cout")
+        self.tree = ttk.Treeview(self, columns=cols, show="headings", height=16)
+        for c, h, w in zip(cols, ["ID", "Désignation", "Qté stock", "Coût unitaire"], [40, 300, 100, 120]):
+            self.tree.heading(c, text=h)
+            self.tree.column(c, width=w, anchor="w")
+        self.tree.pack(fill="both", expand=True, padx=16, pady=8)
+        self.tree.bind("<<TreeviewSelect>>", self._on_select)
+        self.refresh()
+
+    def _appeler(self, fonction, *args, **kwargs):
+        return appeler(self, self.remote, fonction, *args, **kwargs)
+
+    def _on_select(self, event=None):
+        sel = self.tree.selection()
+        if sel:
+            self.selected_id = self.tree.item(sel[0], "values")[0]
+
+    def add(self):
+        if not self.designation_var.get().strip():
+            messagebox.showwarning("Champ manquant", "La désignation est obligatoire.", parent=self)
+            return
+        try:
+            qte = float(self.qte_var.get() or 0)
+            cout = float(self.cout_var.get() or 0)
+        except ValueError:
+            messagebox.showerror("Erreur", "Quantité et coût doivent être des nombres.", parent=self)
+            return
+        r = self._appeler("add_piece_rechange", self.designation_var.get(), quantite_stock=qte, cout_unitaire=cout)
+        if r is APPEL_ECHEC:
+            return
+        self.designation_var.set(""); self.qte_var.set("0"); self.cout_var.set("0")
+        self.refresh()
+
+    def delete_sel(self):
+        if not self.selected_id:
+            messagebox.showinfo("Info", "Sélectionnez d'abord une pièce.", parent=self)
+            return
+        r = self._appeler("delete_piece_rechange", self.selected_id)
+        if r is APPEL_ECHEC:
+            return
+        self.refresh()
+
+    def refresh(self):
+        pieces = self._appeler("list_pieces_rechange")
+        if pieces is APPEL_ECHEC:
+            return
+        for row in self.tree.get_children():
+            self.tree.delete(row)
+        for p in pieces:
+            self.tree.insert("", "end", values=(
+                p["id"], p["designation"], f"{p['quantite_stock']:g}", fmt_cfa(p["cout_unitaire"])))
+
+
+class RemoteReparationsTab(ttk.Frame):
+    """Réparations (TRANSPORT) via le réseau — consultation."""
+
+    def __init__(self, parent, remote: RemoteConnection):
+        super().__init__(parent)
+        self.remote = remote
+        ttk.Label(self, text="RÉPARATIONS", font=("Segoe UI", 14, "bold")).pack(anchor="w", padx=16, pady=(16, 8))
+        ttk.Button(self, text="Actualiser", command=self.refresh).pack(anchor="w", padx=16, pady=(0, 4))
+        cols = ("id", "description", "date", "garage")
+        self.tree = ttk.Treeview(self, columns=cols, show="headings", height=20)
+        for c, h, w in zip(cols, ["ID", "Description", "Date", "Garage"], [40, 320, 100, 200]):
+            self.tree.heading(c, text=h)
+            self.tree.column(c, width=w, anchor="w")
+        self.tree.pack(fill="both", expand=True, padx=16, pady=(0, 16))
+        self.refresh()
+
+    def _appeler(self, fonction, *args, **kwargs):
+        return appeler(self, self.remote, fonction, *args, **kwargs)
+
+    def refresh(self):
+        reparations = self._appeler("list_reparations")
+        if reparations is APPEL_ECHEC:
+            return
+        for row in self.tree.get_children():
+            self.tree.delete(row)
+        for r in reparations:
+            self.tree.insert("", "end", values=(
+                r["id"], r["description"], core.to_display_date(r.get("date_reparation") or ""),
+                r.get("garage") or ""))
+
+
+class RemoteSimplePlanTab(ttk.Frame):
+    """Écran générique code/libellé (+ montant/unité optionnels) via le
+    réseau — réutilisé pour Plan analytique, Plan budgétaire, Plan
+    bailleurs de fonds, Taux TVA, Taux retenue — même principe que
+    _SimplePlanTab dans l'application de bureau."""
+
+    def __init__(self, parent, remote: RemoteConnection, titre, list_fn, add_fn, delete_fn,
+                 code_label="Code", extra_field=None):
+        super().__init__(parent)
+        self.remote = remote
+        self.titre = titre
+        self.list_fn_name = list_fn
+        self.add_fn_name = add_fn
+        self.delete_fn_name = delete_fn
+        self.extra_field = extra_field  # None, "unite", ou "montant"
+        self.selected_code = None
+
+        ttk.Label(self, text=titre, font=("Segoe UI", 14, "bold")).pack(anchor="w", padx=16, pady=(16, 8))
+        form = ttk.LabelFrame(self, text="Élément")
+        form.pack(fill="x", padx=16, pady=4)
+        ttk.Label(form, text=f"{code_label} :").grid(row=0, column=0, sticky="w", padx=4, pady=4)
+        self.code_var = tk.StringVar()
+        self.code_entry = ttk.Entry(form, textvariable=self.code_var, width=16)
+        self.code_entry.grid(row=0, column=1, padx=4)
+        ttk.Label(form, text="Libellé :").grid(row=0, column=2, sticky="w", padx=(12, 4))
+        self.label_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.label_var, width=40).grid(row=0, column=3, padx=4)
+        if extra_field:
+            libelle_champ = "Unité (L, Kw, H...)" if extra_field == "unite" else "Montant / Taux (%)"
+            ttk.Label(form, text=f"{libelle_champ} :").grid(row=0, column=4, sticky="w", padx=(12, 4))
+            self.extra_var = tk.StringVar()
+            ttk.Entry(form, textvariable=self.extra_var, width=12).grid(row=0, column=5, padx=4)
+        else:
+            self.extra_var = None
+
+        btns = ttk.Frame(self)
+        btns.pack(fill="x", padx=16, pady=6)
+        ttk.Button(btns, text="Ajouter", command=self.add).pack(side="left")
+        ttk.Button(btns, text="Mettre à jour la sélection", command=self.update_sel).pack(side="left", padx=8)
+        ttk.Button(btns, text="Supprimer la sélection", command=self.delete_sel).pack(side="left")
+        ttk.Button(btns, text="Effacer le formulaire", command=self.clear_form).pack(side="left", padx=8)
+
+        cols = ("code", "label", "extra") if extra_field else ("code", "label")
+        self.tree = ttk.Treeview(self, columns=cols, show="headings", height=18)
+        self.tree.heading("code", text=code_label)
+        self.tree.heading("label", text="Libellé")
+        self.tree.column("code", width=140, anchor="w")
+        self.tree.column("label", width=400, anchor="w")
+        if extra_field:
+            self.tree.heading("extra", text="Unité" if extra_field == "unite" else "Montant/Taux")
+            self.tree.column("extra", width=120, anchor="e" if extra_field == "montant" else "w")
+        self.tree.pack(fill="both", expand=True, padx=16, pady=8)
+        self.tree.bind("<<TreeviewSelect>>", self._on_select)
+        self.refresh()
+
+    def _appeler(self, fonction, *args, **kwargs):
+        return appeler(self, self.remote, fonction, *args, **kwargs)
+
+    def _on_select(self, event=None):
+        sel = self.tree.selection()
+        if not sel:
+            return
+        v = self.tree.item(sel[0], "values")
+        self.selected_code = v[0]
+        self.code_var.set(v[0]); self.label_var.set(v[1])
+        if self.extra_var is not None and len(v) > 2:
+            self.extra_var.set(v[2])
+        self.code_entry.configure(state="disabled")
+
+    def clear_form(self):
+        self.selected_code = None
+        self.code_var.set(""); self.label_var.set("")
+        if self.extra_var is not None:
+            self.extra_var.set("")
+        self.code_entry.configure(state="normal")
+
+    def _extra_kwargs(self):
+        if not self.extra_field:
+            return {}
+        raw = self.extra_var.get().strip()
+        if self.extra_field == "unite":
+            return {"unite": raw or None}
+        try:
+            return {"montant": float(raw) if raw else 0}
+        except ValueError:
+            messagebox.showerror("Erreur", "Le montant/taux doit être un nombre.", parent=self)
+            return None
+
+    def add(self):
+        if not self.code_var.get().strip() or not self.label_var.get().strip():
+            messagebox.showwarning("Champ manquant", "Code et libellé sont obligatoires.", parent=self)
+            return
+        kwargs = self._extra_kwargs()
+        if kwargs is None:
+            return
+        r = self._appeler(self.add_fn_name, self.code_var.get(), self.label_var.get(), **kwargs)
+        if r is APPEL_ECHEC:
+            return
+        self.clear_form()
+        self.refresh()
+
+    def update_sel(self):
+        if not self.selected_code:
+            messagebox.showinfo("Info", "Sélectionnez d'abord un élément.", parent=self)
+            return
+        kwargs = self._extra_kwargs()
+        if kwargs is None:
+            return
+        r = self._appeler(self.add_fn_name, self.selected_code, self.label_var.get(), **kwargs)
+        if r is APPEL_ECHEC:
+            return
+        self.clear_form()
+        self.refresh()
+
+    def delete_sel(self):
+        if not self.selected_code:
+            messagebox.showinfo("Info", "Sélectionnez d'abord un élément.", parent=self)
+            return
+        if messagebox.askyesno("Confirmer", f"Supprimer « {self.selected_code} » ?", parent=self):
+            r = self._appeler(self.delete_fn_name, self.selected_code)
+            if r is APPEL_ECHEC:
+                return
+            self.clear_form()
+            self.refresh()
+
+    def refresh(self):
+        items = self._appeler(self.list_fn_name)
+        if items is APPEL_ECHEC:
+            return
+        for row in self.tree.get_children():
+            self.tree.delete(row)
+        for it in items:
+            if self.extra_field == "unite":
+                self.tree.insert("", "end", values=(it["code"], it["label"], it.get("unite") or ""))
+            elif self.extra_field == "montant":
+                self.tree.insert("", "end", values=(it["code"], it["label"], fmt_cfa(it.get("montant"))))
+            else:
+                self.tree.insert("", "end", values=(it["code"], it["label"]))
+
+
+class RemoteAnalytiquePeriodeTab(ttk.Frame):
+    """Coûts analytiques par catégorie (Énergie, Maintenance) via le
+    réseau — même principe que AnalytiquePeriodeTab dans l'application de
+    bureau."""
+
+    def __init__(self, parent, remote: RemoteConnection, titre, description, prefix):
+        super().__init__(parent)
+        self.remote = remote
+        self.prefix = prefix
+        ttk.Label(self, text=titre.upper(), font=("Segoe UI", 14, "bold")).pack(anchor="w", padx=16, pady=(16, 4))
+        ttk.Label(self, text=description, foreground="#595959", wraplength=1200, justify="left").pack(
+            anchor="w", padx=16, pady=(0, 8))
+        ttk.Button(self, text="Actualiser", command=self.refresh).pack(anchor="w", padx=16, pady=(0, 4))
+        cols = ("code", "label", "debut", "periode", "fin")
+        self.tree = ttk.Treeview(self, columns=cols, show="headings", height=20)
+        for c, h, w in zip(cols, ["Code", "Libellé", "Début période", "Charge période", "Cumul fin"],
+                           [110, 260, 130, 130, 130]):
+            self.tree.heading(c, text=h)
+            self.tree.column(c, width=w, anchor="w" if c in ("code", "label") else "e")
+        self.tree.pack(fill="both", expand=True, padx=16, pady=(0, 16))
+        self.refresh()
+
+    def _appeler(self, fonction, *args, **kwargs):
+        return appeler(self, self.remote, fonction, *args, **kwargs)
+
+    def refresh(self):
+        items = self._appeler("compute_couts_analytiques_categorie", self.prefix)
+        if items is APPEL_ECHEC:
+            return
+        for row in self.tree.get_children():
+            self.tree.delete(row)
+        for i in items:
+            self.tree.insert("", "end", values=(
+                i["code"], i["label"], fmt_cfa(i["solde_debut_periode"]),
+                fmt_cfa(i["debit_periode"] - i["credit_periode"]), fmt_cfa(i["solde_fin_periode"])))
+
+
+class RemoteProductionTab(ttk.Frame):
+    """Fabrication / Production en lecture seule via le réseau."""
+
+    def __init__(self, parent, remote: RemoteConnection):
+        super().__init__(parent)
+        self.remote = remote
+        ttk.Label(self, text="PRODUCTION — FABRICATION", font=("Segoe UI", 14, "bold")).pack(
+            anchor="w", padx=16, pady=(16, 4))
+        ttk.Button(self, text="Actualiser", command=self.refresh).pack(anchor="w", padx=16, pady=(0, 4))
+        cols = ("compte", "libelle", "debit", "credit", "solde")
+        self.tree = ttk.Treeview(self, columns=cols, show="headings", height=24)
+        for c, h, w in zip(cols, ["Compte", "Libellé", "Débit", "Crédit", "Solde"], [90, 300, 130, 130, 130]):
+            self.tree.heading(c, text=h)
+            self.tree.column(c, width=w, anchor="w" if c in ("compte", "libelle") else "e")
+        self.tree.pack(fill="both", expand=True, padx=16, pady=(0, 16))
+        self.refresh()
+
+    def _appeler(self, fonction, *args, **kwargs):
+        return appeler(self, self.remote, fonction, *args, **kwargs)
+
+    def refresh(self):
+        lignes = self._appeler("compute_production")
+        if lignes is APPEL_ECHEC:
+            return
+        for row in self.tree.get_children():
+            self.tree.delete(row)
+        for l in lignes:
+            self.tree.insert("", "end", values=(
+                l["code"], l["label"], fmt_cfa(l["debit"]), fmt_cfa(l["credit"]), fmt_cfa(l["solde"])))
+
+
+class RemoteExercicesTab(ttk.Frame):
+    """Exercices comptables (clôture) via le réseau — consultation et
+    clôture (report des soldes vers l'exercice suivant)."""
+
+    def __init__(self, parent, remote: RemoteConnection):
+        super().__init__(parent)
+        self.remote = remote
+        ttk.Label(self, text="EXERCICES COMPTABLES", font=("Segoe UI", 14, "bold")).pack(
+            anchor="w", padx=16, pady=(16, 8))
+        ttk.Label(self, text=(
+            "La clôture calcule les soldes de clôture de tous les comptes de bilan et les reporte comme "
+            "soldes d'ouverture de l'exercice suivant. Cette action est IRRÉVERSIBLE."
+        ), foreground="#B00020", wraplength=1100, justify="left").pack(anchor="w", padx=16, pady=(0, 8))
+        ttk.Button(self, text="Actualiser", command=self.refresh).pack(anchor="w", padx=16, pady=(0, 4))
+        cols = ("exercice", "statut")
+        self.tree = ttk.Treeview(self, columns=cols, show="headings", height=16)
+        self.tree.heading("exercice", text="Exercice")
+        self.tree.heading("statut", text="Statut")
+        self.tree.column("exercice", width=140, anchor="w")
+        self.tree.column("statut", width=140, anchor="w")
+        self.tree.pack(fill="x", padx=16, pady=8)
+        self.tree.bind("<<TreeviewSelect>>", self._on_select)
+        self.selected_exercice = None
+        ttk.Button(self, text="Clôturer l'exercice sélectionné (reporte les soldes)",
+                   command=self.cloturer).pack(anchor="w", padx=16, pady=(0, 16))
+        self.refresh()
+
+    def _appeler(self, fonction, *args, **kwargs):
+        return appeler(self, self.remote, fonction, *args, **kwargs)
+
+    def _on_select(self, event=None):
+        sel = self.tree.selection()
+        if sel:
+            self.selected_exercice = self.tree.item(sel[0], "values")[0]
+
+    def cloturer(self):
+        if not self.selected_exercice:
+            messagebox.showinfo("Info", "Sélectionnez d'abord un exercice.", parent=self)
+            return
+        if not messagebox.askyesno(
+            "Clôturer cet exercice",
+            f"Clôturer définitivement l'exercice {self.selected_exercice} ? Cette action est IRRÉVERSIBLE.",
+            parent=self,
+        ):
+            return
+        r = self._appeler("close_exercice", self.selected_exercice)
+        if r is APPEL_ECHEC:
+            return
+        messagebox.showinfo("Clôturé", f"Exercice {self.selected_exercice} clôturé sur le serveur.", parent=self)
+        self.refresh()
+
+    def refresh(self):
+        exercices = self._appeler("list_exercices")
+        if exercices is APPEL_ECHEC:
+            return
+        for row in self.tree.get_children():
+            self.tree.delete(row)
+        for e in exercices:
+            self.tree.insert("", "end", values=(e["exercice"], "Clôturé" if e["cloture"] else "Ouvert"))
+
+
+class RemotePlaceholderTab(ttk.Frame):
+    """Écran non encore défini — même principe que PlaceholderTab dans
+    l'application de bureau."""
+
+    def __init__(self, parent, remote: RemoteConnection, titre, message):
+        super().__init__(parent)
+        ttk.Label(self, text=titre.upper(), font=("Segoe UI", 14, "bold")).pack(anchor="w", padx=16, pady=(16, 8))
+        ttk.Label(self, text=message, foreground="#595959", wraplength=1100, justify="left").pack(
+            anchor="w", padx=16)
+
+
+class RemoteSynchronisationTab(ttk.Frame):
+    """Synchronisation — explique pourquoi cette opération de maintenance
+    du schéma n'est pas exposée à distance (volontairement, pour la
+    sécurité — voir server.py RPC_WHITELIST)."""
+
+    def __init__(self, parent, remote: RemoteConnection):
+        super().__init__(parent)
+        ttk.Label(self, text="SYNCHRONISATION", font=("Segoe UI", 14, "bold")).pack(
+            anchor="w", padx=16, pady=(16, 8))
+        ttk.Label(self, text=(
+            "Cette opération de maintenance (mise à jour du schéma de la base de données) n'est "
+            "volontairement pas exposée à distance, par sécurité — elle reste réservée à l'application "
+            "de bureau ou au poste serveur directement. Le serveur applique déjà automatiquement toute "
+            "mise à jour de schéma nécessaire à son propre démarrage."
+        ), foreground="#595959", wraplength=1100, justify="left").pack(anchor="w", padx=16)
+
+
+class RemoteOuvertureTab(ttk.Frame):
+    """Soldes d'ouverture via le réseau — Débit/Crédit avec totaux et
+    contrôle d'équilibre, même principe que l'application de bureau."""
+
+    def __init__(self, parent, remote: RemoteConnection):
+        super().__init__(parent)
+        self.remote = remote
+
+        ttk.Label(self, text="SOLDES D'OUVERTURE", font=("Segoe UI", 14, "bold")).pack(anchor="w", padx=16, pady=(16, 4))
+        ttk.Button(self, text="Actualiser", command=self.refresh).pack(anchor="w", padx=16, pady=(0, 4))
+
+        form = ttk.LabelFrame(self, text="Saisir / modifier un solde")
+        form.pack(fill="x", padx=16, pady=4)
+        ttk.Label(form, text="Compte :").grid(row=0, column=0, sticky="w", padx=4, pady=4)
+        self.compte_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.compte_var, width=14).grid(row=0, column=1, padx=4)
+        ttk.Label(form, text="Débit :").grid(row=0, column=2, sticky="w", padx=(12, 4))
+        self.debit_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.debit_var, width=14).grid(row=0, column=3, padx=4)
+        ttk.Label(form, text="Crédit :").grid(row=0, column=4, sticky="w", padx=(12, 4))
+        self.credit_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.credit_var, width=14).grid(row=0, column=5, padx=4)
+        ttk.Button(form, text="Enregistrer", command=self.enregistrer).grid(row=0, column=6, padx=12)
+
+        cols = ("code", "label", "debit", "credit")
+        self.tree = ttk.Treeview(self, columns=cols, show="headings", height=22)
+        headers = ["N° Compte", "Libellé", "Débit", "Crédit"]
+        widths = [90, 380, 130, 130]
+        for c, h, w in zip(cols, headers, widths):
+            self.tree.heading(c, text=h)
+            self.tree.column(c, width=w, anchor="w" if c in ("code", "label") else "e")
+        self.tree.tag_configure("total", background="#1F4E78", foreground="white", font=("Segoe UI", 10, "bold"))
+        self.tree.pack(fill="both", expand=True, padx=16, pady=8)
+
+        self.total_var = tk.StringVar()
+        ttk.Label(self, textvariable=self.total_var, font=("Segoe UI", 10, "bold")).pack(
+            anchor="w", padx=16, pady=(0, 16))
+        self.refresh()
+
+    def _appeler(self, fonction, *args, **kwargs):
+        return appeler(self, self.remote, fonction, *args, **kwargs)
+
+    def enregistrer(self):
+        compte = self.compte_var.get().strip()
+        if not compte:
+            messagebox.showwarning("Champ manquant", "Le compte est obligatoire.", parent=self)
+            return
+        try:
+            debit = float(self.debit_var.get() or 0)
+            credit = float(self.credit_var.get() or 0)
+        except ValueError:
+            messagebox.showerror("Erreur", "Débit et Crédit doivent être des nombres.", parent=self)
+            return
+        if debit and credit:
+            messagebox.showwarning("Erreur", "Un compte est soit au débit, soit au crédit — pas les deux.",
+                                    parent=self)
+            return
+        solde = debit - credit
+        r = self._appeler("set_opening_balance", compte, solde)
+        if r is APPEL_ECHEC:
+            return
+        self.compte_var.set(""); self.debit_var.set(""); self.credit_var.set("")
+        self.refresh()
+
+    def refresh(self):
+        soldes = self._appeler("list_opening_balances")
+        if soldes is APPEL_ECHEC:
+            return
+        for row in self.tree.get_children():
+            self.tree.delete(row)
+        total_debit = total_credit = 0.0
+        for s in soldes:
+            solde = s["solde"]
+            debit = solde if solde > 0 else 0.0
+            credit = -solde if solde < 0 else 0.0
+            self.tree.insert("", "end", values=(
+                s["code"], s["label"], fmt_cfa(debit) if debit else "", fmt_cfa(credit) if credit else ""))
+            total_debit += debit
+            total_credit += credit
+        self.tree.insert("", "end", tags=("total",), values=(
+            "", "TOTAL", fmt_cfa(total_debit), fmt_cfa(total_credit)))
+        ecart = total_debit - total_credit
+        etat = "Équilibré ✓" if abs(ecart) < 0.01 else "NON ÉQUILIBRÉ ✗"
+        self.total_var.set(f"Total Débit : {fmt_cfa(total_debit)}   —   Total Crédit : {fmt_cfa(total_credit)}   "
+                            f"—   {etat}")
+
+
+class RemotePlanComptableTab(ttk.Frame):
+    """Plan comptable en lecture seule via le réseau — recherche par code
+    ou libellé (la création/modification de comptes reste réservée à
+    l'application de bureau, opération structurante rarement nécessaire
+    à distance)."""
+
+    def __init__(self, parent, remote: RemoteConnection):
+        super().__init__(parent)
+        self.remote = remote
+        ttk.Label(self, text="PLAN COMPTABLE", font=("Segoe UI", 14, "bold")).pack(anchor="w", padx=16, pady=(16, 4))
+        search_bar = ttk.Frame(self)
+        search_bar.pack(fill="x", padx=16, pady=4)
+        ttk.Label(search_bar, text="Rechercher (code ou libellé) :").pack(side="left")
+        self.search_var = tk.StringVar()
+        search_entry = ttk.Entry(search_bar, textvariable=self.search_var, width=30)
+        search_entry.pack(side="left", padx=6)
+        search_entry.bind("<KeyRelease>", lambda e: self.refresh())
+        cols = ("code", "label", "classe")
+        self.tree = ttk.Treeview(self, columns=cols, show="headings", height=26)
+        for c, h, w in zip(cols, ["Code", "Libellé", "Classe"], [110, 420, 80]):
+            self.tree.heading(c, text=h)
+            self.tree.column(c, width=w, anchor="w")
+        self.tree.pack(fill="both", expand=True, padx=16, pady=(0, 16))
+        self.refresh()
+
+    def _appeler(self, fonction, *args, **kwargs):
+        return appeler(self, self.remote, fonction, *args, **kwargs)
+
+    def refresh(self):
+        comptes = self._appeler("search_accounts", self.search_var.get().strip(), limit=300)
+        if comptes is APPEL_ECHEC:
+            return
+        for row in self.tree.get_children():
+            self.tree.delete(row)
+        for c in comptes:
+            self.tree.insert("", "end", values=(c["code"], c["label"], c.get("classe", "")))
 
 
 def main():
