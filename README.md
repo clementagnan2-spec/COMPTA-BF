@@ -3646,3 +3646,81 @@ avec une vérification serveur par fonction si l'usage s'étend.
 Testé de bout en bout : `add_personnel`/`list_personnel` (qui posaient
 problème) fonctionnent désormais ; les fonctions sensibles
 (`add_utilisateur`, `reinitialiser_donnees`) restent bien bloquées.
+
+## Écrans Achats (Fournisseurs, Règlements) construits côté client
+
+**Demande** : le client affichait "(bientôt disponible)" pour tous les
+sous-menus d'ENGAGEMENTS-PROJETS — confirmé que ce n'était PAS un bug
+(le système fonctionnait déjà correctement : connexion, filtrage des
+menus, serveur en arrière-plan) mais simplement des écrans pas encore
+construits côté client.
+
+**Réalisé** — 2 écrans du circuit Achats construits, suivant le même
+modèle que Saisie et GRH :
+- **Fournisseurs** — création, mise à jour, suppression, recherche.
+- **Règlements** — création du règlement, ajout de lignes (compte de
+  charge, libellé, quantité, prix unitaire), et **validation qui
+  comptabilise réellement l'achat sur le serveur** (débit du compte de
+  charge, crédit fournisseur — même moteur que l'application de bureau).
+
+Testé de bout en bout avec un vrai serveur et un vrai client réseau :
+fournisseur créé, règlement créé avec une ligne, validé (statut passé à
+"validee", écriture comptable réellement postée), Bilan resté équilibré
+après l'opération. Non-régression du moteur comptable confirmée.
+
+**Reste à construire côté client** (suivant le même modèle) : Contrats,
+Expression de besoin, Bon de commande, Bordereau de livraison (le reste
+d'ENGAGEMENTS-PROJETS), puis le circuit Ventes (Clients, Facturation,
+Stocks, Marges) et Trésorerie/Transport/Immobilisations selon la
+priorité souhaitée.
+
+### Outil pratique : lancer le serveur en arrière-plan sans fenêtre
+
+Un script `Lancer_Serveur_Arriere_Plan.vbs` a été fourni séparément
+(hors de ce zip, transmis directement) : lance le serveur SANS aucune
+fenêtre visible à garder ouverte, pour éviter de le couper par erreur en
+fermant une fenêtre — le serveur continue de tourner en arrière-plan tant
+que l'ordinateur reste allumé.
+
+## GROS LOT — 13 nouveaux écrans construits côté client (21/48 au total)
+
+**Demande** : construire tous les écrans manquants.
+
+**Réalisé dans cette réponse** (13 nouveaux écrans, en plus des 8 déjà
+existants) :
+- **RAPPORT FINANCIERS** (6, lecture seule) : Grand livre, Balance,
+  Bilan SYSCOHADA, Compte de résultat (SIG), TFT, Situation financière.
+- **COMMERCIAL** (3) : Clients (CRUD), Facturation (création + lignes +
+  validation qui comptabilise réellement la vente), Stocks (lecture).
+- **TRESORERIE** (1, lecture) : banques horizontales + engagements à
+  payer.
+- **IMMOBILISATIONS** (1, lecture).
+- **ENGAGEMENTS-PROJETS** (2) : Expression de besoin (avec validation
+  qui bascule automatiquement en Bon de commande), Bon de commande (avec
+  validation qui comptabilise réellement l'achat).
+
+**Point technique corrigé au passage** : `compute_etat_formule_generique()`
+prend un argument fonction (non transmissible en JSON) — 3 nouvelles
+enveloppes RPC-compatibles créées (`compute_cr`, `compute_tft_gabarit`,
+`compute_situation_fin`). Collision de nom détectée et corrigée
+(`compute_tft` existait déjà pour un calcul différent — renommé en
+`compute_tft_gabarit` pour la nouvelle enveloppe).
+
+**Total désormais : 21 sous-menus sur 48 pleinement fonctionnels côté
+client** (contre 8 avant cette réponse).
+
+Testé de bout en bout à chaque étape avec un vrai serveur et un vrai
+client réseau (pas seulement le moteur local) : les 6 rapports
+financiers, le circuit Ventes complet (client → facture → validation →
+Bilan équilibré), le circuit Achats complet via Expression de besoin
+(expression → validation → Bon de commande → complété → validé →
+comptabilisé → Bilan équilibré), Trésorerie et Immobilisations en
+lecture. Non-régression du moteur comptable confirmée.
+
+**Reste à construire** (27 sous-menus) : Recouvrement, Marges,
+Fabrication, Contrats, Bordereau de livraison, Amortissements, Transport
+(Parc auto, Missions, Pièces de rechange, Réparations), Rapports
+technique, Maintenance-Qualité (Énergie, Maintenance), Paramètres (6),
+et une partie d'ADMIN (les fonctions les plus sensibles — gestion des
+utilisateurs, réinitialisation — restent volontairement non exposées à
+distance, voir la section sécurité plus haut).

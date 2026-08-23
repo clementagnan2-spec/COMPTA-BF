@@ -76,6 +76,7 @@ RPC_WHITELIST = {
     "taux_retenue_exists", "taux_tva_exists", "total_opening_balance", "totals_debit_credit",
     "compute_achats_par_fournisseur", "compute_balance", "compute_balance_agee", "compute_balance_detaillee",
     "compute_bilan", "compute_bilan_detaille", "compute_bilan_mouvement_periode", "compute_bilan_plat",
+    "compute_cr", "compute_tft_gabarit", "compute_situation_fin",
     "compute_bilan_solde_ouverture", "compute_compte_resultat", "compute_comptes_prefixe_periode",
     "compute_cout_production", "compute_cout_total_reparation", "compute_cout_unitaire_moyen_analytique",
     "compute_couts_analytiques_categorie", "compute_couts_analytiques_fabrication",

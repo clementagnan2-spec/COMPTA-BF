@@ -4104,6 +4104,27 @@ def generate_etat_xlsx(conn, etat_id, output_path, exercice=None):
     return {"cells_ok": len(results), "cells_error": errors, "cells_warning": warnings}
 
 
+def compute_cr(conn, exercice=None):
+    """Compte de résultat (SIG) — enveloppe RPC-compatible de
+    compute_etat_formule_generique() (dont le 2e argument est une fonction
+    Python, non transmissible par réseau)."""
+    return compute_etat_formule_generique(conn, _cr_template_path, exercice=exercice)
+
+
+def compute_tft_gabarit(conn, exercice=None):
+    """TFT (gabarit officiel à formules) — enveloppe RPC-compatible de
+    compute_etat_formule_generique(). Nommée différemment de
+    compute_tft() (fonction plus ancienne, méthode de calcul différente)
+    pour éviter toute collision de nom dans ce module."""
+    return compute_etat_formule_generique(conn, _tft_template_path, exercice=exercice)
+
+
+def compute_situation_fin(conn, exercice=None):
+    """Situation financière (FR-BFR-TN) — enveloppe RPC-compatible de
+    compute_etat_formule_generique()."""
+    return compute_etat_formule_generique(conn, _situation_template_path, exercice=exercice)
+
+
 def compute_etat_formule_generique(conn, template_path_getter, exercice=None):
     """Lit un gabarit à une seule colonne de libellés (A) suivie de 1 à 3
     colonnes de valeurs (détectées via la ligne d'en-tête : « N », « N-1 »,
