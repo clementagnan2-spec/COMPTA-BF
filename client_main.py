@@ -385,7 +385,7 @@ class RemoteSaisieTab(ttk.Frame):
     def __init__(self, parent, remote: RemoteConnection):
         super().__init__(parent)
         self.remote = remote
-        self.lignes = []  # [{"compte":..., "libelle":..., "debit":..., "credit":...}, ...]
+        self.lignes = []  # [{"compte":..., "libelle":..., "debit":..., "credit":..., "quantite":..., "analytic_code":...}, ...]
 
         header = ttk.LabelFrame(self, text="En-tête de l'écriture")
         header.pack(fill="x", padx=8, pady=8)
@@ -403,6 +403,33 @@ class RemoteSaisieTab(ttk.Frame):
         self.tiers_var = tk.StringVar()
         ttk.Entry(header, textvariable=self.tiers_var, width=20).grid(row=0, column=7, padx=4)
 
+        ttk.Label(header, text="Fournisseur :").grid(row=1, column=0, sticky="w", padx=4, pady=(4, 0))
+        self.fournisseur_var = tk.StringVar()
+        self.fournisseur_combo = ttk.Combobox(header, textvariable=self.fournisseur_var, width=22)
+        self.fournisseur_combo.grid(row=1, column=1, padx=4, pady=(4, 0))
+        self.fournisseur_combo.bind("<KeyRelease>", self._on_fournisseur_keyrelease)
+        self._refresh_fournisseur_values()
+        ttk.Label(header, text="Client :").grid(row=1, column=2, sticky="w", padx=(12, 4), pady=(4, 0))
+        self.client_var = tk.StringVar()
+        self.client_combo = ttk.Combobox(header, textvariable=self.client_var, width=22)
+        self.client_combo.grid(row=1, column=3, padx=4, pady=(4, 0))
+        self.client_combo.bind("<KeyRelease>", self._on_client_keyrelease)
+        self._refresh_client_values()
+        ttk.Label(header, text="Code budgétaire :").grid(row=1, column=4, sticky="w", padx=(12, 4), pady=(4, 0))
+        self.budget_var = tk.StringVar()
+        self.budget_combo = ttk.Combobox(header, textvariable=self.budget_var, width=16)
+        self.budget_combo.grid(row=1, column=5, padx=4, pady=(4, 0))
+        self._refresh_plan_values(self.budget_combo, "list_budget_codes")
+        ttk.Label(header, text="Code bailleur :").grid(row=1, column=6, sticky="w", padx=(12, 4), pady=(4, 0))
+        self.bailleur_var = tk.StringVar()
+        self.bailleur_combo = ttk.Combobox(header, textvariable=self.bailleur_var, width=16)
+        self.bailleur_combo.grid(row=1, column=7, padx=4, pady=(4, 0))
+        self._refresh_plan_values(self.bailleur_combo, "list_donor_codes")
+        ttk.Label(header, text=(
+            "Fournisseur/Client ci-dessus : valeur par défaut pour toutes les lignes utilisant un compte "
+            "40x (Fournisseurs) ou 41x (Clients)."
+        ), foreground="#595959", wraplength=1000).grid(row=2, column=0, columnspan=8, sticky="w", padx=4, pady=(2, 0))
+
         ligne_frame = ttk.LabelFrame(self, text="Ajouter une ligne (compte au débit OU au crédit, pas les deux)")
         ligne_frame.pack(fill="x", padx=8, pady=(0, 8))
         ttk.Label(ligne_frame, text="Compte :").grid(row=0, column=0, sticky="w", padx=4, pady=4)
@@ -419,7 +446,21 @@ class RemoteSaisieTab(ttk.Frame):
         ttk.Label(ligne_frame, text="Crédit :").grid(row=0, column=6, sticky="w", padx=(12, 4))
         self.credit_var = tk.StringVar()
         ttk.Entry(ligne_frame, textvariable=self.credit_var, width=12).grid(row=0, column=7, padx=4)
-        ttk.Button(ligne_frame, text="Ajouter la ligne", command=self.ajouter_ligne).grid(row=0, column=8, padx=12)
+        ttk.Label(ligne_frame, text="Quantité :").grid(row=1, column=0, sticky="w", padx=4, pady=(4, 0))
+        self.quantite_var = tk.StringVar()
+        ttk.Entry(ligne_frame, textvariable=self.quantite_var, width=10).grid(
+            row=1, column=1, padx=4, pady=(4, 0), sticky="w")
+        ttk.Label(ligne_frame, text="Code analytique :").grid(row=1, column=2, sticky="w", padx=(12, 4), pady=(4, 0))
+        self.analytic_var = tk.StringVar()
+        self.analytic_combo = ttk.Combobox(ligne_frame, textvariable=self.analytic_var, width=22)
+        self.analytic_combo.grid(row=1, column=3, padx=4, pady=(4, 0))
+        self._refresh_plan_values(self.analytic_combo, "list_analytic_codes")
+        ttk.Label(ligne_frame, text=(
+            "Quantité : requise pour générer automatiquement le mouvement de stock (achats 60x/comptes "
+            "stock, ventes 70x). Code analytique : ex. AN-FAB, ENERGIE-EAU, MAINT-..."
+        ), foreground="#595959", wraplength=1000).grid(row=2, column=0, columnspan=8, sticky="w", padx=4, pady=(2, 4))
+        ttk.Button(ligne_frame, text="Ajouter la ligne", command=self.ajouter_ligne).grid(
+            row=1, column=7, padx=12, pady=(4, 0))
 
         cols = ("compte", "libelle", "debit", "credit")
         self.tree_lignes = ttk.Treeview(self, columns=cols, show="headings", height=8)
@@ -440,14 +481,60 @@ class RemoteSaisieTab(ttk.Frame):
         bottom.pack(fill="both", expand=True, padx=8, pady=(0, 8))
         ttk.Label(bottom, text="Dernières écritures (exercice courant)", font=("Segoe UI", 10, "bold")).pack(
             anchor="w")
+        ttk.Label(bottom, text=(
+            "Cliquez une ligne pour la charger ci-dessous et la modifier, ou sélectionnez plusieurs "
+            "lignes (Ctrl/Maj + clic, ou Ctrl+A) pour les supprimer."
+        ), foreground="#595959").pack(anchor="w", pady=(0, 2))
         ttk.Button(bottom, text="Actualiser", command=self.refresh_entries).pack(anchor="w", pady=(2, 4))
-        cols2 = ("date", "piece", "journal", "compte", "libelle", "debit", "credit")
-        self.tree_entries = ttk.Treeview(bottom, columns=cols2, show="headings", height=14)
-        for c, h, w in zip(cols2, ["Date", "Pièce", "Journal", "Compte", "Libellé", "Débit", "Crédit"],
-                           [85, 90, 60, 90, 300, 110, 110]):
+        cols2 = ("id", "date", "piece", "journal", "compte", "libelle", "debit", "credit")
+        self.tree_entries = ttk.Treeview(bottom, columns=cols2, show="headings", height=14,
+                                          selectmode="extended")
+        for c, h, w in zip(cols2, ["ID", "Date", "Pièce", "Journal", "Compte", "Libellé", "Débit", "Crédit"],
+                           [40, 85, 90, 60, 90, 300, 110, 110]):
             self.tree_entries.heading(c, text=h)
             self.tree_entries.column(c, width=w, anchor="w" if c not in ("debit", "credit") else "e")
         self.tree_entries.pack(fill="both", expand=True, pady=(0, 4))
+        self.tree_entries.bind("<<TreeviewSelect>>", self._on_entry_select)
+        self.tree_entries.bind("<Control-a>", self._select_all_entries)
+        self.tree_entries.bind("<Control-A>", self._select_all_entries)
+
+        edit_frame = ttk.LabelFrame(self, text="Modifier l'écriture sélectionnée (une seule ligne à la fois)")
+        edit_frame.pack(fill="x", padx=8, pady=(0, 8))
+        self.edit_id_var = tk.StringVar(value="(aucune sélection)")
+        ttk.Label(edit_frame, textvariable=self.edit_id_var, font=("Segoe UI", 9, "bold")).grid(
+            row=0, column=0, columnspan=6, sticky="w", padx=4, pady=(4, 0))
+        ttk.Label(edit_frame, text="Date (JJ/MM/AAAA) :").grid(row=1, column=0, sticky="w", padx=4, pady=4)
+        self.edit_date_var = tk.StringVar()
+        ttk.Entry(edit_frame, textvariable=self.edit_date_var, width=12).grid(row=1, column=1, padx=4)
+        ttk.Label(edit_frame, text="Pièce :").grid(row=1, column=2, sticky="w", padx=(12, 4))
+        self.edit_piece_var = tk.StringVar()
+        ttk.Entry(edit_frame, textvariable=self.edit_piece_var, width=14).grid(row=1, column=3, padx=4)
+        ttk.Label(edit_frame, text="Journal :").grid(row=1, column=4, sticky="w", padx=(12, 4))
+        self.edit_journal_var = tk.StringVar()
+        ttk.Combobox(edit_frame, textvariable=self.edit_journal_var, width=6,
+                     values=("OD", "VE", "AC", "BQ", "CA"), state="readonly").grid(row=1, column=5, padx=4)
+        ttk.Label(edit_frame, text="Compte :").grid(row=2, column=0, sticky="w", padx=4, pady=4)
+        self.edit_compte_var = tk.StringVar()
+        self.edit_compte_combo = ttk.Combobox(edit_frame, textvariable=self.edit_compte_var, width=22)
+        self.edit_compte_combo.grid(row=2, column=1, padx=4)
+        self.edit_compte_combo.bind("<KeyRelease>", self._on_edit_compte_keyrelease)
+        ttk.Label(edit_frame, text="Libellé :").grid(row=2, column=2, sticky="w", padx=(12, 4))
+        self.edit_libelle_var = tk.StringVar()
+        ttk.Entry(edit_frame, textvariable=self.edit_libelle_var, width=28).grid(row=2, column=3, padx=4)
+        ttk.Label(edit_frame, text="Débit :").grid(row=2, column=4, sticky="w", padx=(12, 4))
+        self.edit_debit_var = tk.StringVar()
+        ttk.Entry(edit_frame, textvariable=self.edit_debit_var, width=12).grid(row=2, column=5, padx=4)
+        ttk.Label(edit_frame, text="Crédit :").grid(row=2, column=6, sticky="w", padx=(12, 4))
+        self.edit_credit_var = tk.StringVar()
+        ttk.Entry(edit_frame, textvariable=self.edit_credit_var, width=12).grid(row=2, column=7, padx=4)
+        edit_btns = ttk.Frame(edit_frame)
+        edit_btns.grid(row=3, column=0, columnspan=8, sticky="w", padx=4, pady=6)
+        ttk.Button(edit_btns, text="Enregistrer modification", command=self.update_entry_selection).pack(
+            side="left", padx=2)
+        ttk.Button(edit_btns, text="Supprimer (sélection multiple possible)",
+                   command=self.delete_entry_selection).pack(side="left", padx=2)
+        ttk.Button(edit_btns, text="Effacer le formulaire", command=self.clear_edit_form).pack(
+            side="left", padx=2)
 
         self.refresh_entries()
 
@@ -459,6 +546,45 @@ class RemoteSaisieTab(ttk.Frame):
         items = self._appeler("search_accounts", query, limit=30)
         if items is not APPEL_ECHEC:
             self.compte_combo["values"] = [f"{a['code']} — {a['label']}" for a in items]
+
+    def _on_edit_compte_keyrelease(self, event=None):
+        query = self._extract_code(self.edit_compte_var.get())
+        items = self._appeler("search_accounts", query, limit=30)
+        if items is not APPEL_ECHEC:
+            self.edit_compte_combo["values"] = [f"{a['code']} — {a['label']}" for a in items]
+
+    def _refresh_fournisseur_values(self):
+        items = self._appeler("list_fournisseurs")
+        if items is not APPEL_ECHEC:
+            self.fournisseur_combo["values"] = [f"{f['code']} — {f['raison_sociale']}" for f in items]
+
+    def _on_fournisseur_keyrelease(self, event=None):
+        query = self._extract_code(self.fournisseur_var.get())
+        if query:
+            items = self._appeler("list_fournisseurs", query)
+            if items is not APPEL_ECHEC:
+                self.fournisseur_combo["values"] = [f"{f['code']} — {f['raison_sociale']}" for f in items]
+
+    def _refresh_client_values(self):
+        items = self._appeler("list_clients")
+        if items is not APPEL_ECHEC:
+            self.client_combo["values"] = [f"{c['code']} — {c['raison_sociale']}" for c in items]
+
+    def _on_client_keyrelease(self, event=None):
+        query = self._extract_code(self.client_var.get())
+        if query:
+            items = self._appeler("list_clients", query)
+            if items is not APPEL_ECHEC:
+                self.client_combo["values"] = [f"{c['code']} — {c['raison_sociale']}" for c in items]
+
+    def _refresh_plan_values(self, combo, list_fn):
+        items = self._appeler(list_fn)
+        if items is not APPEL_ECHEC:
+            combo["values"] = [f"{c['code']} — {c['label']}" for c in items]
+
+    def _select_all_entries(self, event=None):
+        self.tree_entries.selection_set(self.tree_entries.get_children())
+        return "break"
 
     def _extract_code(self, raw):
         raw = (raw or "").strip()
@@ -473,8 +599,9 @@ class RemoteSaisieTab(ttk.Frame):
         try:
             debit = float(self.debit_var.get() or 0)
             credit = float(self.credit_var.get() or 0)
+            quantite = float(self.quantite_var.get() or 0)
         except ValueError:
-            messagebox.showerror("Erreur", "Débit et Crédit doivent être des nombres.", parent=self)
+            messagebox.showerror("Erreur", "Débit, Crédit et Quantité doivent être des nombres.", parent=self)
             return
         if debit and credit:
             messagebox.showwarning("Erreur", "Une ligne est soit au débit, soit au crédit — pas les deux.",
@@ -483,8 +610,13 @@ class RemoteSaisieTab(ttk.Frame):
         if not debit and not credit:
             messagebox.showwarning("Erreur", "Renseignez un montant au débit ou au crédit.", parent=self)
             return
-        self.lignes.append({"compte": compte, "libelle": libelle, "debit": debit, "credit": credit})
+        analytic_code = self._extract_code(self.analytic_var.get())
+        self.lignes.append({
+            "compte": compte, "libelle": libelle, "debit": debit, "credit": credit,
+            "quantite": quantite, "analytic_code": analytic_code,
+        })
         self.compte_var.set(""); self.libelle_var.set(""); self.debit_var.set(""); self.credit_var.set("")
+        self.quantite_var.set(""); self.analytic_var.set("")
         self._refresh_lignes()
 
     def supprimer_ligne(self):
@@ -527,8 +659,15 @@ class RemoteSaisieTab(ttk.Frame):
             return
         journal = self.journal_var.get().strip() or "OD"
         tiers = self.tiers_var.get().strip()
+        fournisseur_code = self._extract_code(self.fournisseur_var.get())
+        client_code = self._extract_code(self.client_var.get())
+        budget_code = self._extract_code(self.budget_var.get())
+        donor_code = self._extract_code(self.bailleur_var.get())
 
-        resultat = self._appeler("add_ecriture_multi_lignes", date_str, piece, journal, self.lignes, tiers=tiers)
+        resultat = self._appeler(
+            "add_ecriture_multi_lignes", date_str, piece, journal, self.lignes, tiers=tiers,
+            fournisseur_code=fournisseur_code, client_code=client_code,
+            budget_code=budget_code, donor_code=donor_code)
         if resultat is APPEL_ECHEC:
             return  # erreur déjà affichée par _appeler (session expirée, réseau, ou règle métier)
         messagebox.showinfo("Enregistré", f"Écriture « {piece} » enregistrée sur le serveur.", parent=self)
@@ -544,12 +683,102 @@ class RemoteSaisieTab(ttk.Frame):
         entries = self._appeler("list_entries", exercice=exercice)
         if entries is APPEL_ECHEC:
             return
+        self._entries_by_id = {e["id"]: e for e in entries}
         for row in self.tree_entries.get_children():
             self.tree_entries.delete(row)
         for e in entries[-200:][::-1]:  # les 200 plus récentes, plus récentes en premier
-            self.tree_entries.insert("", "end", values=(
-                core.to_display_date(e["date"]), e["piece"], e["journal"], e["compte"], e["libelle"],
+            self.tree_entries.insert("", "end", iid=str(e["id"]), values=(
+                e["id"], core.to_display_date(e["date"]), e["piece"], e["journal"], e["compte"], e["libelle"],
                 fmt_cfa(e["debit"]) if e["debit"] else "", fmt_cfa(e["credit"]) if e["credit"] else ""))
+
+    def _on_entry_select(self, event=None):
+        sel = self.tree_entries.selection()
+        if len(sel) != 1:
+            # sélection multiple (ou vide) : uniquement utile pour la suppression groupée,
+            # on ne charge pas le formulaire d'édition pour éviter toute ambiguïté.
+            return
+        entry = self._entries_by_id.get(int(sel[0]))
+        if not entry:
+            return
+        self.edit_id_var.set(f"Modification de l'écriture ID {entry['id']}")
+        self.edit_date_var.set(core.to_display_date(entry["date"]))
+        self.edit_piece_var.set(entry["piece"] or "")
+        self.edit_journal_var.set(entry["journal"] or "OD")
+        self.edit_compte_var.set(entry["compte"])
+        self.edit_libelle_var.set(entry["libelle"] or "")
+        self.edit_debit_var.set(str(entry["debit"]) if entry["debit"] else "")
+        self.edit_credit_var.set(str(entry["credit"]) if entry["credit"] else "")
+
+    def clear_edit_form(self):
+        self.tree_entries.selection_remove(self.tree_entries.selection())
+        self.edit_id_var.set("(aucune sélection)")
+        self.edit_date_var.set("")
+        self.edit_piece_var.set("")
+        self.edit_journal_var.set("")
+        self.edit_compte_var.set("")
+        self.edit_libelle_var.set("")
+        self.edit_debit_var.set("")
+        self.edit_credit_var.set("")
+
+    def update_entry_selection(self):
+        sel = self.tree_entries.selection()
+        if len(sel) != 1:
+            messagebox.showinfo(
+                "Info", "Sélectionnez une seule écriture à modifier dans le tableau ci-dessus.", parent=self)
+            return
+        entry_id = int(sel[0])
+        date_str = core.to_iso_date(self.edit_date_var.get().strip())
+        compte = self._extract_code(self.edit_compte_var.get())
+        libelle = self.edit_libelle_var.get().strip()
+        if not date_str or not compte or not libelle:
+            messagebox.showwarning("Champ manquant", "Date, compte et libellé sont obligatoires.", parent=self)
+            return
+        try:
+            debit = float(self.edit_debit_var.get() or 0)
+            credit = float(self.edit_credit_var.get() or 0)
+        except ValueError:
+            messagebox.showerror("Erreur", "Débit et Crédit doivent être des nombres.", parent=self)
+            return
+        if debit and credit:
+            messagebox.showwarning(
+                "Erreur", "Une ligne est soit au débit, soit au crédit — pas les deux.", parent=self)
+            return
+        if self._appeler(
+            "update_entry", entry_id, date=date_str, piece=self.edit_piece_var.get().strip(),
+            journal=self.edit_journal_var.get().strip() or "OD", compte=compte, libelle=libelle,
+            debit=debit, credit=credit,
+        ) is APPEL_ECHEC:
+            return
+        messagebox.showinfo("Modifié", f"Écriture ID {entry_id} modifiée sur le serveur.", parent=self)
+        self.clear_edit_form()
+        self.refresh_entries()
+
+    def delete_entry_selection(self):
+        sel = self.tree_entries.selection()
+        if not sel:
+            messagebox.showinfo("Info", "Sélectionnez d'abord une ou plusieurs écritures à supprimer.",
+                                 parent=self)
+            return
+        ids = [int(s) for s in sel]
+        n = len(ids)
+        if not messagebox.askyesno(
+                "Confirmer", f"Supprimer {'cette écriture' if n == 1 else f'ces {n} écritures'} ? "
+                             f"Cette action est irréversible.", parent=self):
+            return
+        if n == 1:
+            if self._appeler("delete_entry", ids[0]) is APPEL_ECHEC:
+                return
+        else:
+            resultat = self._appeler("delete_entries_bulk", ids)
+            if resultat is APPEL_ECHEC:
+                return
+            deleted, errors = resultat
+            if errors:
+                messagebox.showwarning(
+                    "Suppression partielle",
+                    f"{deleted} écriture(s) supprimée(s). Erreurs :\n" + "\n".join(errors), parent=self)
+        self.clear_edit_form()
+        self.refresh_entries()
 
 
 class RemotePersonnelTab(ttk.Frame):
