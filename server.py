@@ -49,85 +49,62 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import core
 
 # ---------------------------------------------------------------------------
-# Configuration de la liste blanche des fonctions accessibles à distance —
-# circuit commercial complet (Saisie + Ventes + Achats + Stocks), voir la
-# demande initiale. Étendre cette liste au fur et à mesure que d'autres
-# écrans du client sont adaptés (même principe pour tout autre module).
+# SÉCURITÉ — modèle en LISTE NOIRE (pas liste blanche) : toute fonction
+# publique de core.py prenant `conn` en premier argument est autorisée à
+# distance PAR DÉFAUT, SAUF celles listées explicitement ci-dessous.
+#
+# Pourquoi ce choix : avec une liste BLANCHE, chaque nouvel écran construit
+# côté client nécessite de mettre à jour ET reconstruire le serveur, avec un
+# risque réel de désynchronisation entre les deux (déjà vécu concrètement :
+# "Fonction non autorisée à distance" alors que le client était à jour mais
+# pas le serveur). Avec une liste NOIRE, un nouvel écran fonctionne
+# immédiatement dès que le client sait l'appeler, sans jamais retoucher au
+# serveur — seules les quelques opérations réellement sensibles listées
+# ci-dessous restent explicitement protégées.
 # ---------------------------------------------------------------------------
-RPC_WHITELIST = {
-    # Liste large — la quasi-totalite des fonctions metier de core.py sont
-    # autorisees a distance (le filtrage par PROFIL reste gere cote client par
-    # les menus autorises -- voir core.get_menus_autorises()) ; seules les
-    # operations sensibles (gestion des utilisateurs/niveaux, reinitialisation
-    # des donnees, mots de passe) et les fonctions travaillant sur des fichiers
-    # LOCAUX AU SERVEUR (export_*/import_*_xlsx, generate_etat_xlsx) restent
-    # exclues -- regenerer cette liste via le script utilise pour la construire
-    # si necessaire (voir README).
-    "add_account", "add_analytic_code", "add_balanced_entry", "add_budget_code", "add_client", "add_commande",
-    "add_donor_code", "add_ecriture_multi_lignes", "add_entry", "add_facture", "add_fournisseur", "add_hs",
-    "add_kpi", "add_ligne_bordereau_livraison", "add_ligne_ep_bon_commande", "add_ligne_expression_besoin",
-    "add_ligne_facture_achat", "add_ligne_facture_vente", "add_ligne_reglement", "add_ligne_reparation",
-    "add_mission", "add_personnel", "add_piece_rechange", "add_produit_fini", "add_recette_ligne",
-    "add_taux_retenue", "add_taux_tva", "add_time_sheet", "add_vehicule",
-    "account_exists", "ajouter_codes_analytiques_suggeres", "ajouter_taux_retenue_suggeres",
-    "analytic_code_exists", "budget_code_exists", "client_exists", "close_exercice", "donor_code_exists",
-    "enregistrer_paiement_facture", "enregistrer_paiement_reglement", "ensure_racine_accounts",
-    "fournisseur_exists", "is_exercice_cloture", "niveau_acces_exists", "search_accounts",
-    "taux_retenue_exists", "taux_tva_exists", "total_opening_balance", "totals_debit_credit",
-    "compute_achats_par_fournisseur", "compute_balance", "compute_balance_agee", "compute_balance_detaillee",
-    "compute_bilan", "compute_bilan_detaille", "compute_bilan_mouvement_periode", "compute_bilan_plat",
-    "compute_cr", "compute_tft_gabarit", "compute_situation_fin",
-    "compute_bilan_solde_ouverture", "compute_compte_resultat", "compute_comptes_prefixe_periode",
-    "compute_cout_production", "compute_cout_total_reparation", "compute_cout_unitaire_moyen_analytique",
-    "compute_couts_analytiques_categorie", "compute_couts_analytiques_fabrication",
-    "compute_ecart_diagnostic", "compute_engagements_a_payer", "compute_ep_bon_commande_totals",
-    "compute_etat_formule_generique", "compute_facture_achat_totals", "compute_facture_totals",
-    "compute_grand_livre", "compute_grand_livre_complet", "compute_immobilisations_liste",
-    "compute_liasse_bilan", "compute_liasse_resultat", "compute_mouvements_prefixe_periode",
-    "compute_mouvements_stocks", "compute_pieces_non_equilibrees", "compute_production",
-    "compute_reglement_totals", "compute_resultat_net_complet", "compute_situation_financiere",
-    "compute_stocks", "compute_stocks_detail", "compute_tableau_bord_grh", "compute_tft",
-    "compute_tft_indirect", "compute_tft_officiel", "compute_tresorerie_banques_horizontal",
-    "compute_tresorerie_detail", "compute_ventes_par_client",
-    "create_bordereau_livraison", "create_ep_bon_commande", "create_expression_besoin",
-    "create_facture_achat", "create_facture_vente", "create_reglement", "create_reparation",
-    "delete_account", "delete_analytic_code", "delete_bordereau_livraison", "delete_budget_code",
-    "delete_client", "delete_commande", "delete_donor_code", "delete_entries_bulk", "delete_entry",
-    "delete_ep_bon_commande", "delete_expression_besoin", "delete_facture", "delete_facture_achat",
-    "delete_facture_vente", "delete_fournisseur", "delete_hs", "delete_kpi",
-    "delete_ligne_bordereau_livraison", "delete_ligne_ep_bon_commande", "delete_ligne_expression_besoin",
-    "delete_ligne_facture_achat", "delete_ligne_facture_vente", "delete_ligne_reglement",
-    "delete_ligne_reparation", "delete_mission", "delete_personnel", "delete_piece_rechange",
-    "delete_produit_fini", "delete_recette_ligne", "delete_reglement", "delete_reparation",
-    "delete_taux_retenue", "delete_taux_tva", "delete_time_sheet", "delete_vehicule",
-    "devalider_ep_bon_commande", "devalider_facture_achat", "devalider_facture_vente",
-    "devalider_paiement_reglement", "devalider_reglement",
-    "get_account_label", "get_analytic_code_unite", "get_bordereau_livraison", "get_client",
-    "get_company_info", "get_company_value", "get_current_exercice", "get_ep_bon_commande",
-    "get_expression_besoin", "get_facture_achat", "get_facture_vente", "get_fournisseur",
-    "get_immobilisation_fiche", "get_menus_autorises", "get_opening_balance", "get_personnel",
-    "get_piece_balance", "get_piece_rechange", "get_produit_fini", "get_reglement", "get_reparation",
-    "get_setting", "get_text_setting", "get_vehicule",
-    "list_analytic_codes", "list_bordereaux_livraison", "list_budget_codes", "list_clients", "list_commandes",
-    "list_donor_codes", "list_entries", "list_ep_bons_commande", "list_exercices", "list_expressions_besoin",
-    "list_factures", "list_factures_achat", "list_factures_vente", "list_fournisseurs", "list_hs", "list_kpi",
-    "list_lignes_bordereau_livraison", "list_lignes_ep_bon_commande", "list_lignes_expression_besoin",
-    "list_lignes_facture_achat", "list_lignes_facture_vente", "list_lignes_reglement",
-    "list_lignes_reparation", "list_missions", "list_niveaux_acces", "list_opening_balances",
-    "list_personnel", "list_pieces_rechange", "list_produits_finis", "list_recette_lignes", "list_reglements",
-    "list_reparations", "list_taux_amortissement", "list_taux_retenue", "list_taux_tva", "list_time_sheet",
-    "list_vehicules",
-    "set_company_value", "set_current_exercice", "set_immobilisation_fiche", "set_opening_balance",
-    "set_pointage_bancaire", "set_setting", "set_stock_initial", "set_stock_qte_initiale",
-    "set_taux_amortissement", "set_text_setting",
-    "update_bordereau_livraison", "update_commande", "update_entry", "update_ep_bon_commande",
-    "update_expression_besoin", "update_facture", "update_facture_achat", "update_facture_vente", "update_hs",
-    "update_kpi", "update_ligne_bordereau_livraison", "update_ligne_ep_bon_commande",
-    "update_ligne_reglement", "update_mission", "update_personnel", "update_piece_rechange",
-    "update_reglement", "update_reparation", "update_time_sheet", "update_vehicule",
-    "valider_bordereau_livraison", "valider_ep_bon_commande", "valider_expression_besoin",
-    "valider_fabrication", "valider_facture_achat", "valider_facture_vente", "valider_reglement",
+RPC_BLOCKLIST = {
+    # Authentification — déjà gérée en interne par /login, ne doit jamais
+    # être appelable directement (permettrait de tester des mots de passe
+    # sans passer par le mécanisme de session).
+    "verify_password",
+    # Gestion des utilisateurs et des niveaux d'accès — réservée à
+    # l'application de bureau : un utilisateur distant ne doit jamais
+    # pouvoir se créer un compte Administrateur ou modifier les
+    # autorisations à distance (risque d'élévation de privilèges).
+    "add_utilisateur", "update_utilisateur", "delete_utilisateur", "list_utilisateurs",
+    "add_niveau_acces", "delete_niveau_acces", "set_menus_autorises",
+    "ajouter_niveaux_acces_suggeres", "ajouter_niveaux_acces_suggeres_menus",
+    # Opérations destructrices ou d'infrastructure — réservées au poste
+    # serveur/bureau local.
+    "reinitialiser_donnees", "init_db", "load_plan_comptable", "synchroniser_base",
+    "get_app_icon_path",
 }
+
+
+def _construire_rpc_whitelist():
+    """Construit dynamiquement l'ensemble des fonctions autorisées à
+    distance : toutes les fonctions publiques de core.py prenant `conn` en
+    premier argument, MOINS RPC_BLOCKLIST et les fonctions travaillant sur
+    des fichiers locaux au serveur (export_*/import_*/generate_etat_xlsx —
+    leurs chemins désignent le disque du serveur, sans signification
+    pertinente pour un client distant tel quel)."""
+    import inspect
+    fonctions = set()
+    for nom, obj in vars(core).items():
+        if nom.startswith("_") or not inspect.isfunction(obj):
+            continue
+        if nom.startswith(("export_", "import_")) or nom == "generate_etat_xlsx":
+            continue
+        try:
+            params = list(inspect.signature(obj).parameters)
+        except (ValueError, TypeError):
+            continue
+        if params and params[0] == "conn":
+            fonctions.add(nom)
+    return fonctions - RPC_BLOCKLIST
+
+
+RPC_WHITELIST = _construire_rpc_whitelist()
 
 SESSION_DURATION_SECONDS = 8 * 3600  # 8h de travail avant reconnexion
 

@@ -3820,3 +3820,47 @@ Immobilisations revient, ce message permettra d'identifier la cause
 exacte immédiatement, au lieu d'un écran silencieusement vide.
 
 Testé : mécanisme de capture et de formatage de l'erreur vérifié.
+
+## CORRECTIF STRUCTUREL — le serveur autorise désormais tout par défaut (liste noire, pas liste blanche)
+
+**Demande** : simplifier le serveur pour qu'il donne simplement accès à
+la base de données au client, sans liste à maintenir.
+
+**Cause du problème rencontré** (« Fonction non autorisée à distance »
+sur Immobilisations et Balance) : la liste BLANCHE devait être tenue à
+jour manuellement à chaque nouvel écran construit côté client, avec un
+risque réel de désynchronisation entre client et serveur si l'un des
+deux n'était pas reconstruit en même temps que l'autre — exactement ce
+qui s'est produit.
+
+**Corrigé structurellement** : le modèle est inversé — désormais, **toute
+fonction publique de `core.py` est autorisée à distance PAR DÉFAUT**
+(liste calculée dynamiquement au démarrage du serveur, 239 fonctions),
+sauf une **petite liste noire explicite** (`RPC_BLOCKLIST`, 14 fonctions)
+couvrant uniquement les opérations réellement sensibles : gestion des
+utilisateurs et niveaux d'accès (risque d'élévation de privilèges),
+réinitialisation destructrice des données, `verify_password` (déjà géré
+par `/login`), et les opérations d'infrastructure (`init_db`,
+`synchroniser_base`...).
+
+**Conséquence pratique** : **plus jamais besoin de reconstruire le
+serveur** quand un nouvel écran est ajouté côté client (tant que la
+fonction `core.py` sous-jacente existe déjà) — élimine complètement la
+classe de bug rencontrée.
+
+Testé de bout en bout avec les deux cas exacts qui posaient problème
+(`compute_immobilisations_liste`, `compute_balance_detaillee`) —
+fonctionnent désormais sans toucher au serveur ; vérifié que les
+opérations sensibles (`add_utilisateur`...) restent bien bloquées.
+
+## Bouton "Ouvrir le dossier de la base de données" (menu ADMIN)
+
+**Demande** : un bouton dans le menu ADMIN de l'application de bureau
+pour ouvrir directement le dossier contenant le fichier de la base de
+données.
+
+**Réalisé** : ajouté en haut de l'écran ADMIN > Réinitialisation des
+données — affiche le chemin exact et ouvre l'explorateur de fichiers
+Windows (ou l'équivalent macOS/Linux) d'un clic, pratique pour localiser
+rapidement `comptabilite.db` (utile notamment pour vérifier que le
+serveur et le bureau utilisent bien le même fichier).

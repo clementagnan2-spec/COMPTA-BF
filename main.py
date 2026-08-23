@@ -8,6 +8,8 @@ choisi. Les données sont stockées localement dans un fichier SQLite
 """
 import tkinter as tk
 import os
+import sys
+import subprocess
 from tkinter import ttk, messagebox, filedialog, simpledialog
 from datetime import date, datetime
 
@@ -8650,6 +8652,15 @@ class ReinitialisationTab(ttk.Frame):
         self.conn = conn
         ttk.Label(self, text="RÉINITIALISATION DES DONNÉES", font=("Segoe UI", 14, "bold")).pack(
             anchor="w", padx=16, pady=(16, 4))
+
+        dossier_frame = ttk.Frame(self)
+        dossier_frame.pack(fill="x", padx=16, pady=(0, 8))
+        ttk.Button(dossier_frame, text="📁 Ouvrir le dossier de la base de données",
+                   command=self._ouvrir_dossier_donnees).pack(side="left")
+        ttk.Label(dossier_frame, text=core.default_db_path(), foreground="#595959").pack(
+            side="left", padx=12)
+        ttk.Separator(self).pack(fill="x", padx=16, pady=(0, 8))
+
         ttk.Label(self, text=(
             "⚠ Action destructive et irréversible. La Synchronisation (menu PARAMÈTRES) ne supprime "
             "JAMAIS de données — elle ne fait que réparer la structure des tables. Ici, chaque catégorie "
@@ -8699,6 +8710,22 @@ class ReinitialisationTab(ttk.Frame):
 
     def _on_confirm_change(self, *_):
         self.reset_btn.configure(state="normal" if self.confirm_var.get() == "SUPPRIMER" else "disabled")
+
+    def _ouvrir_dossier_donnees(self):
+        dossier = os.path.dirname(core.default_db_path())
+        try:
+            if sys.platform.startswith("win"):
+                os.startfile(dossier)
+            elif sys.platform == "darwin":
+                subprocess.run(["open", dossier], check=False)
+            else:
+                subprocess.run(["xdg-open", dossier], check=False)
+        except Exception as exc:
+            messagebox.showerror(
+                "Impossible d'ouvrir le dossier",
+                f"Le dossier n'a pas pu être ouvert automatiquement :\n{exc}\n\nChemin exact :\n{dossier}",
+                parent=self,
+            )
 
     def reinitialiser(self):
         categories = {k for k, v in self.vars.items() if v.get()}
