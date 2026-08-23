@@ -118,8 +118,11 @@ class LoginWindow(tk.Tk):
             self.status_var.set("Le port doit être un nombre.")
             return
         remote = RemoteConnection(host, port, timeout=5)
-        if remote.ping():
-            self.status_var.set("✓ Serveur joignable.")
+        info = remote.ping()
+        if info:
+            version = info.get("version", "?")
+            nb_fn = info.get("nb_fonctions_autorisees", "?")
+            self.status_var.set(f"✓ Serveur joignable — version {version} ({nb_fn} fonctions autorisées).")
             self.status_var_color("#1F7A1F")
         else:
             self.status_var.set(f"✗ Serveur injoignable à {host}:{port} — vérifiez l'adresse, le port, et "
@@ -289,6 +292,8 @@ class ClientApp(tk.Tk):
             exercice_serveur = "?"
         ttk.Label(top_bar, text=f"Exercice comptable (serveur) : {exercice_serveur}",
                   font=("Segoe UI", 9, "bold"), foreground="#B00020").pack(side="left", padx=8)
+        ttk.Label(top_bar, text=f"Version serveur : {getattr(remote, 'server_version', '?')}",
+                  foreground="#595959").pack(side="left", padx=8)
         ttk.Button(top_bar, text="Se déconnecter", command=self._on_close).pack(side="right", padx=8)
 
         self._build_menu()

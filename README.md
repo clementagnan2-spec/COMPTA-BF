@@ -3864,3 +3864,24 @@ données — affiche le chemin exact et ouvre l'explorateur de fichiers
 Windows (ou l'équivalent macOS/Linux) d'un clic, pratique pour localiser
 rapidement `comptabilite.db` (utile notamment pour vérifier que le
 serveur et le bureau utilisent bien le même fichier).
+
+## Numéro de version visible sur le serveur (fini de deviner)
+
+**Demande** : rester sur l'approche .exe (pas Python direct), mais
+éviter la confusion récurrente sur la version du serveur en cours
+d'exécution.
+
+**Réalisé** : `SERVER_VERSION = "2026-08-23-v1"` (chaîne à changer à
+chaque modification de `server.py`), affichée à **3 endroits** :
+1. Console du serveur au démarrage (bien visible, avec le nombre de
+   fonctions autorisées).
+2. Bouton "Tester la connexion au serveur" du client, avant même de se
+   connecter.
+3. Barre du haut du client, une fois connecté ("Version serveur : ...").
+
+**Fini de deviner** : pour vérifier que le bon serveur tourne, il suffit
+de comparer le numéro affiché au numéro que j'indique dans ma réponse —
+plus besoin de dates de fichiers ou de suppositions.
+
+Testé de bout en bout : version affichée correctement dans les 3
+emplacements (console, ping, connexion).

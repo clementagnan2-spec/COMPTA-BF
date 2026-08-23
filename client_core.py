@@ -51,16 +51,18 @@ class RemoteConnection:
         self.nom_utilisateur = None
         self.niveau_acces = None
         self.menus_autorises = set()
+        self.server_version = None
 
     def ping(self):
         """Vérifie que le serveur répond, sans authentification — pour un
-        test de connexion rapide avant de demander les identifiants."""
+        test de connexion rapide avant de demander les identifiants.
+        Renvoie le dict complet (avec "version") si joignable, sinon None."""
         try:
             with urllib.request.urlopen(f"{self.base_url}/ping", timeout=self.timeout) as resp:
                 data = json.loads(resp.read())
-            return bool(data.get("ok"))
+            return data if data.get("ok") else None
         except (urllib.error.URLError, OSError, TimeoutError):
-            return False
+            return None
 
     def login(self, nom_utilisateur, mot_de_passe):
         status, data = self._post("/login", {
@@ -72,6 +74,7 @@ class RemoteConnection:
         self.nom_utilisateur = data["utilisateur"]
         self.niveau_acces = data.get("niveau_acces")
         self.menus_autorises = set(data.get("menus_autorises") or [])
+        self.server_version = data.get("version", "?")
         return data
 
     def logout(self):

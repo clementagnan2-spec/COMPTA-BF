@@ -48,6 +48,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import core
 
+# Numéro de version — change à CHAQUE fois que ce fichier est modifié.
+# Permet de vérifier en un coup d'œil (affiché au démarrage ET dans
+# /ping) que le serveur en cours d'exécution est bien la dernière
+# version, sans avoir à deviner.
+SERVER_VERSION = "2026-08-23-v1"
+
 # ---------------------------------------------------------------------------
 # SÉCURITÉ — modèle en LISTE NOIRE (pas liste blanche) : toute fonction
 # publique de core.py prenant `conn` en premier argument est autorisée à
@@ -218,7 +224,10 @@ def make_handler(server_state: AccountingServer):
 
         def do_GET(self):
             if self.path == "/ping":
-                return self._send_json(200, {"ok": True, "message": "Serveur SaisieComptable actif."})
+                return self._send_json(200, {
+                    "ok": True, "message": "Serveur SaisieComptable actif.",
+                    "version": SERVER_VERSION, "nb_fonctions_autorisees": len(RPC_WHITELIST),
+                })
             self._send_json(404, {"ok": False, "error": "Route inconnue."})
 
         def _handle_login(self):
@@ -241,6 +250,7 @@ def make_handler(server_state: AccountingServer):
                 "utilisateur": nom_utilisateur,
                 "menus_autorises": menus_autorises,
                 "niveau_acces": utilisateur.get("niveau_acces"),
+                "version": SERVER_VERSION,
             })
 
         def _handle_logout(self):
@@ -275,6 +285,10 @@ def run_server(db_path, host="0.0.0.0", port=8765):
     state = AccountingServer(db_path)
     handler_cls = make_handler(state)
     httpd = ThreadingHTTPServer((host, port), handler_cls)
+    print("=" * 60)
+    print(f"VERSION DU SERVEUR : {SERVER_VERSION}")
+    print(f"Fonctions autorisées à distance : {len(RPC_WHITELIST)}")
+    print("=" * 60)
     print(f"Serveur SaisieComptable démarré sur {host}:{port}")
     print(f"Base de données : {db_path}")
     print("Adresses locales possibles pour les postes clients : voir 'ipconfig' (Windows) sur cette machine.")
