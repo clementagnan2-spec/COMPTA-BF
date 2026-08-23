@@ -7666,7 +7666,7 @@ def synchroniser_base(conn):
 # ---------------------------------------------------------------------------
 MENU_STRUCTURE = [
     ("SAISIE", [("Saisie des écritures", "saisie"), ("Soldes d'ouverture", "ouverture")]),
-    ("COMMERCE", [("Clients", "clients"), ("Recouvrement", "recouvrement"), ("Facturation", "facturation"),
+    ("COMMERCIAL", [("Clients", "clients"), ("Recouvrement", "recouvrement"), ("Facturation", "facturation"),
                   ("Stocks", "stocks"), ("Marges bénéficiaires", "marges")]),
     ("PRODUCTION", [("Matières premières", "stocks"), ("Fabrication", "production"),
                      ("Produits finis", "stocks")]),
@@ -7778,7 +7778,7 @@ def niveau_acces_exists(conn, nom):
 NIVEAUX_ACCES_SUGGERES = [
     ("Administrateur", "Accès complet à tous les menus, y compris ADMIN et PARAMÈTRES."),
     ("Comptable", "Saisie, soldes d'ouverture, tous les rapports financiers, trésorerie et paramètres comptables."),
-    ("Vendeur", "Clients, recouvrement, facturation, stocks et marges bénéficiaires (menu COMMERCE)."),
+    ("Vendeur", "Clients, recouvrement, facturation, stocks et marges bénéficiaires (menu COMMERCIAL)."),
     ("Chargé des achats", "Fournisseurs, contrats, expressions de besoin, bons de commande, bordereaux de "
                           "livraison et règlements (menu ENGAGEMENTS-PROJETS)."),
     ("GRH", "Personnel, time sheet, KPI, tableau de bord GRH et hygiène santé (menu GRH)."),

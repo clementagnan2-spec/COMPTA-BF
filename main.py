@@ -263,7 +263,7 @@ class App(tk.Tk):
             ("Saisie des écritures", "saisie"),
             ("Soldes d'ouverture", "ouverture"),
         ])
-        add_top_menu("COMMERCE", [
+        add_top_menu("COMMERCIAL", [
             ("Clients", "clients"),
             ("Recouvrement", "recouvrement"),
             ("Facturation", "facturation"),

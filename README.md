@@ -3531,3 +3531,51 @@ Chaque utilisateur créé avec l'un de ces niveaux voit automatiquement,
 sur l'application de bureau ET sur le client réseau, uniquement les
 menus correspondant à sa fonction — testé et vérifié pour les 7 profils
 (comptage et contenu exacts confirmés).
+
+### Confirmation : restriction fine par sous-menu (pas juste par menu entier)
+
+**Demande** : chaque profil (ex. Vendeur) doit voir son menu (ex.
+"commercial"), avec possibilité de restreindre au niveau des sous-menus.
+
+**Confirmé** — c'était déjà le mécanisme construit : `set_menus_autorises()`
+travaille au niveau de CHAQUE sous-menu individuellement (pas par bloc de
+menu entier). Un menu de premier niveau (ex. COMMERCIAL) reste visible
+tant qu'il lui reste AU MOINS UN sous-menu autorisé, et disparaît
+entièrement dès que tous ses sous-menus sont retirés — testé et vérifié
+avec le Vendeur : retirer "Recouvrement" et "Marges bénéficiaires" les
+fait disparaître individuellement, sans toucher aux 3 autres sous-menus
+autorisés (Clients, Facturation, Stocks) ; retirer TOUS les sous-menus
+fait disparaître le menu COMMERCIAL en entier. Ce mécanisme est
+identique sur l'application de bureau et sur le client réseau (même
+fonction `core.get_menus_autorises()` des deux côtés).
+
+**Renommage** : le menu « COMMERCE » renommé en **« COMMERCIAL »** pour
+coller au vocabulaire de l'utilisateur.
+
+## CORRECTIF MAJEUR — le serveur voyait des données périmées sans redémarrage
+
+**Symptôme signalé** : après avoir configuré les modules du niveau
+« GRH » dans l'application de bureau, le client connecté au serveur ne
+voyait toujours aucun menu — jusqu'à ce que le serveur soit manuellement
+redémarré, après quoi ça fonctionnait.
+
+**Cause** : le serveur garde une connexion SQLite ouverte en continu
+(mode WAL, pour de bonnes performances multi-utilisateur). Sur certains
+systèmes (Windows en particulier), cette connexion longue durée peut
+rester figée sur un instantané ancien de la base tant qu'aucune
+transaction n'est explicitement close — même si un AUTRE processus
+(l'application de bureau) a bien enregistré des changements entre-temps.
+Un redémarrage du serveur forçait une nouvelle connexion, donc une
+lecture fraîche — mais ce n'est évidemment pas praticable au quotidien.
+
+**Corrigé** : un `commit()` (sans effet si rien n'était en attente) est
+désormais exécuté systématiquement **avant chaque requête réseau**
+(connexion ET appels RPC), forçant la connexion à toujours repartir d'un
+instantané à jour de la base — plus jamais besoin de redémarrer le
+serveur pour voir des changements faits depuis l'application de bureau.
+
+Testé en reproduisant exactement le scénario signalé : serveur démarré
+une seule fois (jamais redémarré), configuration ajoutée depuis un AUTRE
+processus (simulant l'application de bureau) PENDANT que le serveur
+tournait, puis nouvelle connexion via ce même serveur — les 5 menus GRH
+sont désormais correctement reçus sans aucun redémarrage.

@@ -135,6 +135,14 @@ class AccountingServer:
         if fn is None:
             raise AttributeError(f"Fonction « {function_name} » introuvable.")
         with self.write_lock:
+            # Clôt toute transaction implicite en attente AVANT d'exécuter la
+            # fonction — sans ça, une connexion SQLite longue durée en mode
+            # WAL peut rester figée sur un instantané ancien de la base
+            # (notamment sous Windows) tant qu'aucune transaction n'est
+            # explicitement terminée, même si un AUTRE processus (l'application
+            # de bureau) a bien validé des changements depuis. Sans effet si
+            # rien n'était en attente (commit() est alors un no-op).
+            self.conn.commit()
             return fn(self.conn, *args, **kwargs)
 
 
@@ -192,6 +200,7 @@ def make_handler(server_state: AccountingServer):
             if not nom_utilisateur or not mot_de_passe:
                 return self._send_json(400, {"ok": False, "error": "Identifiant et mot de passe requis."})
             with server_state.write_lock:
+                server_state.conn.commit()  # voir AccountingServer.call() -- force une lecture a jour (WAL)
                 utilisateur = core.verify_password(server_state.conn, nom_utilisateur, mot_de_passe)
                 if utilisateur:
                     menus_autorises = sorted(core.get_menus_autorises(server_state.conn, utilisateur.get("niveau_acces")))
