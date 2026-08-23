@@ -5128,6 +5128,22 @@ class ClientsTab(ttk.Frame):
         se.pack(side="left", padx=6)
         se.bind("<KeyRelease>", lambda e: self.refresh())
 
+        web_bar = ttk.LabelFrame(self, text="Trouver de nouveaux clients / prospects sur Internet")
+        web_bar.pack(fill="x", padx=16, pady=(4, 4))
+        ttk.Label(web_bar, text="Produit / service vendu :").grid(row=0, column=0, sticky="w", padx=4, pady=4)
+        self.web_produit_var = tk.StringVar()
+        ttk.Entry(web_bar, textvariable=self.web_produit_var, width=28).grid(row=0, column=1, padx=4)
+        ttk.Label(web_bar, text="Ville :").grid(row=0, column=2, sticky="w", padx=(12, 4))
+        self.web_ville_var = tk.StringVar(value="Ouagadougou")
+        ttk.Entry(web_bar, textvariable=self.web_ville_var, width=18).grid(row=0, column=3, padx=4)
+        ttk.Button(web_bar, text="Rechercher sur Internet", command=self.rechercher_internet).grid(
+            row=0, column=4, padx=12)
+        ttk.Label(web_bar, text=(
+            "Ouvre votre navigateur avec une recherche Google déjà remplie (entreprises susceptibles "
+            "d'acheter ce produit/service dans cette ville). Copiez ensuite les coordonnées du prospect "
+            "choisi dans le formulaire ci-dessus pour l'enregistrer."
+        ), foreground="#595959", wraplength=1050).grid(row=1, column=0, columnspan=5, sticky="w", padx=4, pady=(2, 4))
+
         cols = ("code", "raison_sociale", "contact", "telephone", "adresse", "dp")
         self.tree = ttk.Treeview(self, columns=cols, show="headings")
         headers = ["Code", "Raison sociale", "Contact", "Téléphone", "Adresse", "Délai paiement (j)"]
@@ -5150,6 +5166,17 @@ class ClientsTab(ttk.Frame):
         self.vars["Téléphone"].set(v[3])
         self.vars["Adresse"].set(v[4])
         self.vars["Délai paiement (jours)"].set(v[5])
+
+    def rechercher_internet(self):
+        produit = self.web_produit_var.get().strip()
+        if not produit:
+            messagebox.showwarning("Champ manquant", "Indiquez le produit ou service vendu.")
+            return
+        ville = self.web_ville_var.get().strip()
+        requete = f"entreprises acheteurs {produit} {ville}".strip()
+        import webbrowser
+        from urllib.parse import quote_plus
+        webbrowser.open(f"https://www.google.com/search?q={quote_plus(requete)}")
 
     def clear_form(self):
         for v in self.vars.values():
@@ -5258,6 +5285,22 @@ class FournisseursTab(ttk.Frame):
         se.pack(side="left", padx=6)
         se.bind("<KeyRelease>", lambda e: self.refresh())
 
+        web_bar = ttk.LabelFrame(self, text="Trouver de nouveaux fournisseurs sur Internet")
+        web_bar.pack(fill="x", padx=16, pady=(4, 4))
+        ttk.Label(web_bar, text="Produit recherché :").grid(row=0, column=0, sticky="w", padx=4, pady=4)
+        self.web_produit_var = tk.StringVar()
+        ttk.Entry(web_bar, textvariable=self.web_produit_var, width=28).grid(row=0, column=1, padx=4)
+        ttk.Label(web_bar, text="Ville :").grid(row=0, column=2, sticky="w", padx=(12, 4))
+        self.web_ville_var = tk.StringVar(value="Ouagadougou")
+        ttk.Entry(web_bar, textvariable=self.web_ville_var, width=18).grid(row=0, column=3, padx=4)
+        ttk.Button(web_bar, text="Rechercher sur Internet", command=self.rechercher_internet).grid(
+            row=0, column=4, padx=12)
+        ttk.Label(web_bar, text=(
+            "Ouvre votre navigateur avec une recherche Google déjà remplie. Les résultats s'affichent "
+            "dans le navigateur, pas ici — copiez ensuite les coordonnées du fournisseur choisi dans le "
+            "formulaire ci-dessus pour l'enregistrer."
+        ), foreground="#595959", wraplength=1050).grid(row=1, column=0, columnspan=5, sticky="w", padx=4, pady=(2, 4))
+
         cols = ("code", "raison_sociale", "contact", "telephone", "adresse", "dp", "dl")
         self.tree = ttk.Treeview(self, columns=cols, show="headings")
         headers = ["Code", "Raison sociale", "Contact", "Téléphone", "Adresse",
@@ -5282,6 +5325,17 @@ class FournisseursTab(ttk.Frame):
         self.vars["Adresse"].set(v[4])
         self.vars["Délai paiement (jours)"].set(v[5])
         self.vars["Délai livraison (jours)"].set(v[6])
+
+    def rechercher_internet(self):
+        produit = self.web_produit_var.get().strip()
+        if not produit:
+            messagebox.showwarning("Champ manquant", "Indiquez le produit recherché.")
+            return
+        ville = self.web_ville_var.get().strip()
+        requete = f"fournisseur {produit} {ville}".strip()
+        import webbrowser
+        from urllib.parse import quote_plus
+        webbrowser.open(f"https://www.google.com/search?q={quote_plus(requete)}")
 
     def clear_form(self):
         for v in self.vars.values():
