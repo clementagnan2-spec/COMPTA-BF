@@ -2869,34 +2869,45 @@ class RemoteAnalytiquePeriodeTab(ttk.Frame):
 
 
 class RemoteProductionTab(ttk.Frame):
-    """Fabrication / Production en lecture seule via le réseau."""
+    """Fabrication / Production en lecture seule via le réseau.
+
+    compute_production() renvoie un RÉSUMÉ (dict) — ventes, production
+    stockée, postes de coûts, marge — et non une liste de lignes ; l'affichage
+    reprend donc le même format texte que l'onglet équivalent du bureau
+    (CoutsFabricationPeriodeTab dans main.py) plutôt qu'un tableau."""
 
     def __init__(self, parent, remote: RemoteConnection):
         super().__init__(parent)
         self.remote = remote
         ttk.Label(self, text="PRODUCTION — FABRICATION", font=("Segoe UI", 14, "bold")).pack(
             anchor="w", padx=16, pady=(16, 4))
+        ttk.Label(self, text=(
+            "Pour qu'une charge remonte ici, elle doit être saisie avec le code analytique « AN-FAB » "
+            "sur la ligne correspondante dans l'onglet Saisie."
+        ), foreground="#595959").pack(anchor="w", padx=16, pady=(0, 4))
         ttk.Button(self, text="Actualiser", command=self.refresh).pack(anchor="w", padx=16, pady=(0, 4))
-        cols = ("compte", "libelle", "debit", "credit", "solde")
-        self.tree = ttk.Treeview(self, columns=cols, show="headings", height=24)
-        for c, h, w in zip(cols, ["Compte", "Libellé", "Débit", "Crédit", "Solde"], [90, 300, 130, 130, 130]):
-            self.tree.heading(c, text=h)
-            self.tree.column(c, width=w, anchor="w" if c in ("compte", "libelle") else "e")
-        self.tree.pack(fill="both", expand=True, padx=16, pady=(0, 16))
+        self.text = tk.Text(self, font=("Consolas", 11), wrap="none")
+        self.text.pack(fill="both", expand=True, padx=16, pady=(0, 16))
         self.refresh()
 
     def _appeler(self, fonction, *args, **kwargs):
         return appeler(self, self.remote, fonction, *args, **kwargs)
 
     def refresh(self):
-        lignes = self._appeler("compute_production")
-        if lignes is APPEL_ECHEC:
+        p = self._appeler("compute_production")
+        if p is APPEL_ECHEC:
             return
-        for row in self.tree.get_children():
-            self.tree.delete(row)
-        for l in lignes:
-            self.tree.insert("", "end", values=(
-                l["code"], l["label"], fmt_cfa(l["debit"]), fmt_cfa(l["credit"]), fmt_cfa(l["solde"])))
+        lines = ["PRODUCTION DE L'EXERCICE", "=" * 60,
+                 f"  {'Ventes (produits finis, travaux, services)':<50} {p['ventes']:>12,.2f}",
+                 f"  {'Production stockée (variation stock 360000)':<50} {p['production_stockee']:>12,.2f}",
+                 f"  {'VALEUR DE LA PRODUCTION':<50} {p['valeur_production']:>12,.2f}",
+                 "", "COÛTS DE FABRICATION (axe AN-FAB)", "=" * 60]
+        for poste in p["postes_cout"]:
+            lines.append(f"  {poste['label']:<50} {poste['montant']:>12,.2f}")
+        lines += [f"  {'COÛT DE PRODUCTION':<50} {p['cout_production']:>12,.2f}", "",
+                  f"MARGE SUR COÛT DE PRODUCTION{'':<34}{p['marge']:>12,.2f}"]
+        self.text.delete("1.0", "end")
+        self.text.insert("1.0", "\n".join(lines))
 
 
 class RemoteExercicesTab(ttk.Frame):
