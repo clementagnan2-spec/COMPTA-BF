@@ -3607,3 +3607,42 @@ Testé de bout en bout avec un vrai serveur et un vrai client réseau
 d'heures, KPI avec taux de réalisation, incident HS, puis vérification
 que le Tableau de bord agrège correctement toutes ces données en temps
 réel à travers le réseau. Non-régression du moteur comptable confirmée.
+
+## Liste blanche du serveur considérablement élargie (236 fonctions)
+
+**Demande** : activer tous les menus à distance, plutôt que d'ajouter les
+fonctions une par une à chaque nouvel écran client — pour éviter de
+devoir reconstruire le serveur à chaque fois.
+
+**Réalisé** : `RPC_WHITELIST` passe de 61 à **236 fonctions** — la quasi-
+totalité des fonctions métier de `core.py` (générée automatiquement par
+script à partir de toutes les fonctions publiques prenant `conn` en
+premier argument). Désormais, **ajouter un nouvel écran côté client ne
+nécessitera plus de reconstruire le serveur** — seulement le client.
+
+**Exclusions volontaires** (14 fonctions, sécurité) : gestion des
+utilisateurs et niveaux d'accès (`add_utilisateur`, `delete_utilisateur`,
+`add_niveau_acces`, `set_menus_autorises`...), `verify_password` (déjà
+géré en interne par `/login`, ne doit pas être appelable directement),
+`reinitialiser_donnees` (remise à zéro destructrice), `init_db`,
+`load_plan_comptable`, `synchroniser_base`.
+
+**Exclusions techniques** (32 fonctions) : tous les `export_*`/`import_*`
+travaillant sur des fichiers Excel — ces chemins de fichiers désignent le
+disque du SERVEUR, pas celui du client, donc sans signification
+pertinente en RPC tel quel (nécessiterait un vrai mécanisme d'upload/
+téléchargement, hors périmètre pour l'instant).
+
+**Note sur le filtrage** : ce filtrage large côté serveur repose sur
+l'AUTHENTIFICATION (session valide obligatoire), pas encore sur une
+vérification du niveau d'accès PAR FONCTION — le filtrage des menus
+selon le profil (Vendeur, GRH...) reste géré côté client (l'interface ne
+montre/n'appelle que ce qui est autorisé). Un utilisateur techniquement
+capable d'envoyer des requêtes HTTP directes pourrait outrepasser ce
+filtrage d'interface. Pour un usage en réseau de confiance (bureau,
+LAN d'entreprise), ce n'est pas un risque significatif ; à renforcer
+avec une vérification serveur par fonction si l'usage s'étend.
+
+Testé de bout en bout : `add_personnel`/`list_personnel` (qui posaient
+problème) fonctionnent désormais ; les fonctions sensibles
+(`add_utilisateur`, `reinitialiser_donnees`) restent bien bloquées.
