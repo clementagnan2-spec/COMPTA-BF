@@ -527,8 +527,18 @@ class RemoteSaisieTab(ttk.Frame):
         ttk.Label(edit_frame, text="Crédit :").grid(row=2, column=6, sticky="w", padx=(12, 4))
         self.edit_credit_var = tk.StringVar()
         ttk.Entry(edit_frame, textvariable=self.edit_credit_var, width=12).grid(row=2, column=7, padx=4)
+        ttk.Label(edit_frame, text="Fournisseur (si compte 40x) :").grid(row=3, column=0, sticky="w", padx=4, pady=4)
+        self.edit_fournisseur_var = tk.StringVar()
+        self.edit_fournisseur_combo = ttk.Combobox(edit_frame, textvariable=self.edit_fournisseur_var, width=22)
+        self.edit_fournisseur_combo.grid(row=3, column=1, padx=4)
+        self.edit_fournisseur_combo.bind("<KeyRelease>", self._on_edit_fournisseur_keyrelease)
+        ttk.Label(edit_frame, text="Client (si compte 41x) :").grid(row=3, column=2, sticky="w", padx=(12, 4))
+        self.edit_client_var = tk.StringVar()
+        self.edit_client_combo = ttk.Combobox(edit_frame, textvariable=self.edit_client_var, width=22)
+        self.edit_client_combo.grid(row=3, column=3, padx=4)
+        self.edit_client_combo.bind("<KeyRelease>", self._on_edit_client_keyrelease)
         edit_btns = ttk.Frame(edit_frame)
-        edit_btns.grid(row=3, column=0, columnspan=8, sticky="w", padx=4, pady=6)
+        edit_btns.grid(row=4, column=0, columnspan=8, sticky="w", padx=4, pady=6)
         ttk.Button(edit_btns, text="Enregistrer modification", command=self.update_entry_selection).pack(
             side="left", padx=2)
         ttk.Button(edit_btns, text="Supprimer (sélection multiple possible)",
@@ -552,6 +562,18 @@ class RemoteSaisieTab(ttk.Frame):
         items = self._appeler("search_accounts", query, limit=30)
         if items is not APPEL_ECHEC:
             self.edit_compte_combo["values"] = [f"{a['code']} — {a['label']}" for a in items]
+
+    def _on_edit_fournisseur_keyrelease(self, event=None):
+        query = self._extract_code(self.edit_fournisseur_var.get())
+        items = self._appeler("list_fournisseurs", query or None)
+        if items is not APPEL_ECHEC:
+            self.edit_fournisseur_combo["values"] = [f"{f['code']} — {f['raison_sociale']}" for f in items]
+
+    def _on_edit_client_keyrelease(self, event=None):
+        query = self._extract_code(self.edit_client_var.get())
+        items = self._appeler("list_clients", query or None)
+        if items is not APPEL_ECHEC:
+            self.edit_client_combo["values"] = [f"{c['code']} — {c['raison_sociale']}" for c in items]
 
     def _refresh_fournisseur_values(self):
         items = self._appeler("list_fournisseurs")
@@ -708,6 +730,8 @@ class RemoteSaisieTab(ttk.Frame):
         self.edit_libelle_var.set(entry["libelle"] or "")
         self.edit_debit_var.set(str(entry["debit"]) if entry["debit"] else "")
         self.edit_credit_var.set(str(entry["credit"]) if entry["credit"] else "")
+        self.edit_fournisseur_var.set(entry.get("fournisseur_code") or "")
+        self.edit_client_var.set(entry.get("client_code") or "")
 
     def clear_edit_form(self):
         self.tree_entries.selection_remove(self.tree_entries.selection())
@@ -719,6 +743,8 @@ class RemoteSaisieTab(ttk.Frame):
         self.edit_libelle_var.set("")
         self.edit_debit_var.set("")
         self.edit_credit_var.set("")
+        self.edit_fournisseur_var.set("")
+        self.edit_client_var.set("")
 
     def update_entry_selection(self):
         sel = self.tree_entries.selection()
@@ -743,10 +769,12 @@ class RemoteSaisieTab(ttk.Frame):
             messagebox.showwarning(
                 "Erreur", "Une ligne est soit au débit, soit au crédit — pas les deux.", parent=self)
             return
+        fournisseur_code = self._extract_code(self.edit_fournisseur_var.get())
+        client_code = self._extract_code(self.edit_client_var.get())
         if self._appeler(
             "update_entry", entry_id, date=date_str, piece=self.edit_piece_var.get().strip(),
             journal=self.edit_journal_var.get().strip() or "OD", compte=compte, libelle=libelle,
-            debit=debit, credit=credit,
+            debit=debit, credit=credit, fournisseur_code=fournisseur_code, client_code=client_code,
         ) is APPEL_ECHEC:
             return
         messagebox.showinfo("Modifié", f"Écriture ID {entry_id} modifiée sur le serveur.", parent=self)

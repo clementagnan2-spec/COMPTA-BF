@@ -2313,10 +2313,32 @@ def add_ecriture_multi_lignes(conn, date_str, piece, journal, lignes, tiers="",
       achats sans lien entre eux dans la même écriture)."""
     if len(lignes) < 2:
         raise ValueError("Une écriture multi-lignes nécessite au moins 2 lignes (au moins une au débit, une au crédit).")
+    if fournisseur_code and not fournisseur_exists(conn, fournisseur_code):
+        raise ValueError(f"Le fournisseur « {fournisseur_code} » n'existe pas dans la liste des fournisseurs.")
+    if client_code and not client_exists(conn, client_code):
+        raise ValueError(f"Le client « {client_code} » n'existe pas dans la liste des clients.")
+    if budget_code and not budget_code_exists(conn, budget_code):
+        raise ValueError(f"Le code budgétaire « {budget_code} » n'existe pas dans le plan budgétaire.")
+    if donor_code and not donor_code_exists(conn, donor_code):
+        raise ValueError(f"Le code bailleur « {donor_code} » n'existe pas dans le plan des bailleurs.")
     total_debit = total_credit = 0.0
     for l in lignes:
         if not l.get("compte"):
             raise ValueError("Chaque ligne doit avoir un compte.")
+        if not account_exists(conn, l["compte"]):
+            raise ValueError(
+                f"Le compte « {l['compte']} » n'existe pas dans le plan comptable — "
+                f"choisissez un compte dans la liste plutôt que de le saisir librement."
+            )
+        ligne_analytic = l.get("analytic_code")
+        if ligne_analytic and not analytic_code_exists(conn, ligne_analytic):
+            raise ValueError(f"Le code analytique « {ligne_analytic} » n'existe pas dans le plan analytique.")
+        ligne_fournisseur = l.get("fournisseur_code")
+        if ligne_fournisseur and not fournisseur_exists(conn, ligne_fournisseur):
+            raise ValueError(f"Le fournisseur « {ligne_fournisseur} » n'existe pas dans la liste des fournisseurs.")
+        ligne_client = l.get("client_code")
+        if ligne_client and not client_exists(conn, ligne_client):
+            raise ValueError(f"Le client « {ligne_client} » n'existe pas dans la liste des clients.")
         d, c = l.get("debit") or 0, l.get("credit") or 0
         if d and c:
             raise ValueError(f"La ligne « {l['compte']} » ne peut pas être à la fois au débit et au crédit.")
@@ -2484,11 +2506,42 @@ def add_balanced_entry(conn, date_str, piece, journal, compte_debit, compte_cred
 def update_entry(conn, entry_id, **fields):
     if not fields:
         return
-    row = conn.execute("SELECT date FROM entries WHERE id = ?", (entry_id,)).fetchone()
-    if row:
-        _check_exercice_editable(conn, row["date"])
+    row = conn.execute("SELECT * FROM entries WHERE id = ?", (entry_id,)).fetchone()
+    if not row:
+        raise ValueError(f"Écriture ID {entry_id} introuvable.")
+    _check_exercice_editable(conn, row["date"])
     if "date" in fields:
         _check_exercice_editable(conn, fields["date"])
+    if "compte" in fields and fields["compte"] and not account_exists(conn, fields["compte"]):
+        raise ValueError(
+            f"Le compte « {fields['compte']} » n'existe pas dans le plan comptable — "
+            f"choisissez un compte dans la liste plutôt que de le saisir librement."
+        )
+    if "analytic_code" in fields and fields["analytic_code"] and not analytic_code_exists(conn, fields["analytic_code"]):
+        raise ValueError(f"Le code analytique « {fields['analytic_code']} » n'existe pas dans le plan analytique.")
+    if "fournisseur_code" in fields and fields["fournisseur_code"] and not fournisseur_exists(conn, fields["fournisseur_code"]):
+        raise ValueError(f"Le fournisseur « {fields['fournisseur_code']} » n'existe pas.")
+    if "client_code" in fields and fields["client_code"] and not client_exists(conn, fields["client_code"]):
+        raise ValueError(f"Le client « {fields['client_code']} » n'existe pas.")
+    # Racine du compte APRÈS modification : si elle relève des Fournisseurs (40x)
+    # ou des Clients (41x), le tiers auxiliaire correspondant doit être renseigné
+    # — soit déjà présent sur la ligne, soit fourni dans cette modification.
+    compte_final = fields.get("compte", row["compte"])
+    racine = account_racine(compte_final)
+    if racine == RACINE_FOURNISSEURS:
+        fournisseur_final = fields.get("fournisseur_code", row["fournisseur_code"])
+        if not fournisseur_final:
+            raise ValueError(
+                f"Le compte « {compte_final} » relève des Fournisseurs (racine 40) : "
+                f"vous devez choisir le fournisseur concerné."
+            )
+    if racine == RACINE_CLIENTS:
+        client_final = fields.get("client_code", row["client_code"])
+        if not client_final:
+            raise ValueError(
+                f"Le compte « {compte_final} » relève des Clients (racine 41) : "
+                f"vous devez choisir le client concerné."
+            )
     cols = ", ".join(f"{k} = ?" for k in fields)
     conn.execute(f"UPDATE entries SET {cols} WHERE id = ?", (*fields.values(), entry_id))
     conn.commit()
