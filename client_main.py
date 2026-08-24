@@ -408,22 +408,26 @@ class RemoteSaisieTab(ttk.Frame):
         self.fournisseur_combo = ttk.Combobox(header, textvariable=self.fournisseur_var, width=22)
         self.fournisseur_combo.grid(row=1, column=1, padx=4, pady=(4, 0))
         self.fournisseur_combo.bind("<KeyRelease>", self._on_fournisseur_keyrelease)
+        self.fournisseur_combo.bind("<FocusOut>", self._on_fournisseur_focusout)
         self._refresh_fournisseur_values()
         ttk.Label(header, text="Client :").grid(row=1, column=2, sticky="w", padx=(12, 4), pady=(4, 0))
         self.client_var = tk.StringVar()
         self.client_combo = ttk.Combobox(header, textvariable=self.client_var, width=22)
         self.client_combo.grid(row=1, column=3, padx=4, pady=(4, 0))
         self.client_combo.bind("<KeyRelease>", self._on_client_keyrelease)
+        self.client_combo.bind("<FocusOut>", self._on_client_focusout)
         self._refresh_client_values()
         ttk.Label(header, text="Code budgétaire :").grid(row=1, column=4, sticky="w", padx=(12, 4), pady=(4, 0))
         self.budget_var = tk.StringVar()
         self.budget_combo = ttk.Combobox(header, textvariable=self.budget_var, width=16)
         self.budget_combo.grid(row=1, column=5, padx=4, pady=(4, 0))
+        self.budget_combo.bind("<FocusOut>", self._on_budget_focusout)
         self._refresh_plan_values(self.budget_combo, "list_budget_codes")
         ttk.Label(header, text="Code bailleur :").grid(row=1, column=6, sticky="w", padx=(12, 4), pady=(4, 0))
         self.bailleur_var = tk.StringVar()
         self.bailleur_combo = ttk.Combobox(header, textvariable=self.bailleur_var, width=16)
         self.bailleur_combo.grid(row=1, column=7, padx=4, pady=(4, 0))
+        self.bailleur_combo.bind("<FocusOut>", self._on_bailleur_focusout)
         self._refresh_plan_values(self.bailleur_combo, "list_donor_codes")
         ttk.Label(header, text=(
             "Fournisseur/Client ci-dessus : valeur par défaut pour toutes les lignes utilisant un compte "
@@ -604,6 +608,54 @@ class RemoteSaisieTab(ttk.Frame):
         if items is not APPEL_ECHEC:
             combo["values"] = [f"{c['code']} — {c['label']}" for c in items]
 
+    def _on_fournisseur_focusout(self, event=None):
+        code = self._extract_code(self.fournisseur_var.get())
+        if not code:
+            return
+        existe = self._appeler("fournisseur_exists", code)
+        if existe is not APPEL_ECHEC and not existe:
+            messagebox.showerror(
+                "Fournisseur invalide",
+                f"« {code} » n'est pas un code fournisseur existant. Tapez le nom ou le code pour "
+                f"faire apparaître la liste, puis choisissez-y le fournisseur.", parent=self)
+            self.fournisseur_var.set("")
+
+    def _on_client_focusout(self, event=None):
+        code = self._extract_code(self.client_var.get())
+        if not code:
+            return
+        existe = self._appeler("client_exists", code)
+        if existe is not APPEL_ECHEC and not existe:
+            messagebox.showerror(
+                "Client invalide",
+                f"« {code} » n'est pas un code client existant. Tapez le nom ou le code pour faire "
+                f"apparaître la liste, puis choisissez-y le client.", parent=self)
+            self.client_var.set("")
+
+    def _on_budget_focusout(self, event=None):
+        code = self._extract_code(self.budget_var.get())
+        if not code:
+            return
+        existe = self._appeler("budget_code_exists", code)
+        if existe is not APPEL_ECHEC and not existe:
+            messagebox.showerror(
+                "Code budgétaire invalide",
+                f"« {code} » n'existe pas dans le plan budgétaire. Choisissez-le dans la liste "
+                f"déroulante plutôt que de le taper librement.", parent=self)
+            self.budget_var.set("")
+
+    def _on_bailleur_focusout(self, event=None):
+        code = self._extract_code(self.bailleur_var.get())
+        if not code:
+            return
+        existe = self._appeler("donor_code_exists", code)
+        if existe is not APPEL_ECHEC and not existe:
+            messagebox.showerror(
+                "Code bailleur invalide",
+                f"« {code} » n'existe pas dans le plan des bailleurs. Choisissez-le dans la liste "
+                f"déroulante plutôt que de le taper librement.", parent=self)
+            self.bailleur_var.set("")
+
     def _select_all_entries(self, event=None):
         self.tree_entries.selection_set(self.tree_entries.get_children())
         return "break"
@@ -617,6 +669,17 @@ class RemoteSaisieTab(ttk.Frame):
         libelle = self.libelle_var.get().strip()
         if not compte or not libelle:
             messagebox.showwarning("Champ manquant", "Compte et libellé sont obligatoires.", parent=self)
+            return
+        existe = self._appeler("account_exists", compte)
+        if existe is APPEL_ECHEC:
+            return
+        if not existe:
+            messagebox.showerror(
+                "Compte invalide",
+                f"Le compte « {compte} » n'existe pas dans le plan comptable.\n\n"
+                f"Tapez quelques chiffres ou lettres dans le champ Compte pour faire apparaître la liste "
+                f"des comptes existants, puis choisissez-en un — ne tapez pas de numéro au hasard.",
+                parent=self)
             return
         try:
             debit = float(self.debit_var.get() or 0)
@@ -633,6 +696,33 @@ class RemoteSaisieTab(ttk.Frame):
             messagebox.showwarning("Erreur", "Renseignez un montant au débit ou au crédit.", parent=self)
             return
         analytic_code = self._extract_code(self.analytic_var.get())
+        if analytic_code:
+            existe = self._appeler("analytic_code_exists", analytic_code)
+            if existe is APPEL_ECHEC:
+                return
+            if not existe:
+                messagebox.showerror(
+                    "Code analytique invalide",
+                    f"Le code analytique « {analytic_code} » n'existe pas. Choisissez-le dans la liste "
+                    f"déroulante plutôt que de le taper librement.", parent=self)
+                return
+        racine = compte[:2] if compte[:1] == "4" else compte[:1]
+        fournisseur_defaut = self._extract_code(self.fournisseur_var.get())
+        client_defaut = self._extract_code(self.client_var.get())
+        if racine == "40" and not fournisseur_defaut:
+            messagebox.showerror(
+                "Fournisseur manquant",
+                f"Le compte « {compte} » relève des Fournisseurs (racine 40) : choisissez le fournisseur "
+                f"concerné dans le champ « Fournisseur » de l'en-tête avant d'ajouter cette ligne.",
+                parent=self)
+            return
+        if racine == "41" and not client_defaut:
+            messagebox.showerror(
+                "Client manquant",
+                f"Le compte « {compte} » relève des Clients (racine 41) : choisissez le client concerné "
+                f"dans le champ « Client » de l'en-tête avant d'ajouter cette ligne.",
+                parent=self)
+            return
         self.lignes.append({
             "compte": compte, "libelle": libelle, "debit": debit, "credit": credit,
             "quantite": quantite, "analytic_code": analytic_code,
