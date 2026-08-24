@@ -434,6 +434,29 @@ class RemoteSaisieTab(ttk.Frame):
             "40x (Fournisseurs) ou 41x (Clients)."
         ), foreground="#595959", wraplength=1000).grid(row=2, column=0, columnspan=8, sticky="w", padx=4, pady=(2, 0))
 
+        stock_frame = ttk.LabelFrame(self, text=(
+            "Compte stock (optionnel) — pour une facture globale d'achat (matière + transport/douane) "
+            "ou une vente groupée à plusieurs clients : regroupe le mouvement de stock en un seul"))
+        stock_frame.pack(fill="x", padx=8, pady=(0, 8))
+        ttk.Label(stock_frame, text="Compte stock :").grid(row=0, column=0, sticky="w", padx=4, pady=4)
+        self.stock_compte_var = tk.StringVar()
+        self.stock_compte_combo = ttk.Combobox(stock_frame, textvariable=self.stock_compte_var, width=28)
+        self.stock_compte_combo.grid(row=0, column=1, padx=4)
+        self.stock_compte_combo.bind("<KeyRelease>", self._on_stock_compte_keyrelease)
+        self._refresh_stock_compte_values()
+        ttk.Label(stock_frame, text="Sens :").grid(row=0, column=2, sticky="w", padx=(16, 4))
+        self.stock_sens_var = tk.StringVar(value="Entrée (achat)")
+        ttk.Combobox(stock_frame, textvariable=self.stock_sens_var, width=16, state="readonly",
+                     values=["Entrée (achat)", "Sortie (vente)"]).grid(row=0, column=3, padx=4)
+        ttk.Label(stock_frame, text="Quantité :").grid(row=0, column=4, sticky="w", padx=(16, 4))
+        self.stock_qte_var = tk.StringVar()
+        ttk.Entry(stock_frame, textvariable=self.stock_qte_var, width=12).grid(row=0, column=5, padx=4)
+        ttk.Label(stock_frame, text=(
+            "Entrée : le coût du stock = somme de TOUTES les lignes au débit ci-dessous (matière + "
+            "frais accessoires : transport, douane, assurance...). Laissez « Compte stock » vide pour "
+            "revenir au comportement ligne par ligne (une quantité indépendante par ligne)."
+        ), foreground="#595959", wraplength=1000).grid(row=1, column=0, columnspan=6, sticky="w", padx=4, pady=(2, 4))
+
         ligne_frame = ttk.LabelFrame(self, text="Ajouter une ligne (compte au débit OU au crédit, pas les deux)")
         ligne_frame.pack(fill="x", padx=8, pady=(0, 8))
         ttk.Label(ligne_frame, text="Compte :").grid(row=0, column=0, sticky="w", padx=4, pady=4)
@@ -608,6 +631,19 @@ class RemoteSaisieTab(ttk.Frame):
         if items is not APPEL_ECHEC:
             combo["values"] = [f"{c['code']} — {c['label']}" for c in items]
 
+    def _refresh_stock_compte_values(self):
+        stocks = self._appeler("compute_stocks_detail", prefixes=["31", "32", "33", "36"])
+        if stocks is not APPEL_ECHEC:
+            self.stock_compte_combo["values"] = [f"{s['code']} — {s['label']}" for s in stocks]
+
+    def _on_stock_compte_keyrelease(self, event=None):
+        query = self._extract_code(self.stock_compte_var.get())
+        if query:
+            items = self._appeler("search_accounts", query, limit=30)
+            if items is not APPEL_ECHEC:
+                self.stock_compte_combo["values"] = [
+                    f"{a['code']} — {a['label']}" for a in items if a["classe"] == "3"]
+
     def _on_fournisseur_focusout(self, event=None):
         code = self._extract_code(self.fournisseur_var.get())
         if not code:
@@ -776,16 +812,46 @@ class RemoteSaisieTab(ttk.Frame):
         budget_code = self._extract_code(self.budget_var.get())
         donor_code = self._extract_code(self.bailleur_var.get())
 
+        compte_stock_global = self._extract_code(self.stock_compte_var.get()) or None
+        quantite_stock_global = 0.0
+        sens_stock_global = "entree"
+        if compte_stock_global:
+            existe = self._appeler("account_exists", compte_stock_global)
+            if existe is APPEL_ECHEC:
+                return
+            if not existe:
+                messagebox.showerror("Compte invalide",
+                                      f"Le compte stock « {compte_stock_global} » n'existe pas.", parent=self)
+                return
+            if not self.stock_qte_var.get().strip():
+                messagebox.showwarning(
+                    "Champ manquant",
+                    "La quantité est obligatoire quand un compte stock est choisi.", parent=self)
+                return
+            try:
+                quantite_stock_global = float(self.stock_qte_var.get())
+            except ValueError:
+                messagebox.showerror("Erreur", "La quantité doit être un nombre.", parent=self)
+                return
+            if quantite_stock_global <= 0:
+                messagebox.showerror("Erreur", "La quantité doit être strictement positive.", parent=self)
+                return
+            sens_stock_global = "sortie" if self.stock_sens_var.get().startswith("Sortie") else "entree"
+
         resultat = self._appeler(
             "add_ecriture_multi_lignes", date_str, piece, journal, self.lignes, tiers=tiers,
             fournisseur_code=fournisseur_code, client_code=client_code,
-            budget_code=budget_code, donor_code=donor_code)
+            budget_code=budget_code, donor_code=donor_code,
+            compte_stock_global=compte_stock_global, quantite_stock_global=quantite_stock_global,
+            sens_stock_global=sens_stock_global)
         if resultat is APPEL_ECHEC:
             return  # erreur déjà affichée par _appeler (session expirée, réseau, ou règle métier)
         messagebox.showinfo("Enregistré", f"Écriture « {piece} » enregistrée sur le serveur.", parent=self)
         self.lignes = []
         self._refresh_lignes()
         self.piece_var.set("")
+        self.stock_compte_var.set("")
+        self.stock_qte_var.set("")
         self.refresh_entries()
 
     def refresh_entries(self):
