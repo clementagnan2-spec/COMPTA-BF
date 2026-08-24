@@ -5223,6 +5223,12 @@ def valider_fabrication(conn, produit_code, date_str=None, piece=None, exercice=
 # ---------------------------------------------------------------------------
 def create_facture_vente(conn, numero, date_facture, client_code, entete="", pied_page="",
                           tva_taux=None, tva_compte=None):
+    if not numero or not str(numero).strip():
+        raise ValueError("Le numéro de facture est obligatoire.")
+    if not client_code or not str(client_code).strip():
+        raise ValueError("Le client est obligatoire pour créer une facture.")
+    if not client_exists(conn, client_code):
+        raise ValueError(f"Le client « {client_code} » n'existe pas dans la liste des clients.")
     if tva_taux is None:
         tva_taux = get_setting(conn, "tva_taux_defaut", TVA_TAUX_DEFAUT)
     if tva_compte is None:
@@ -5269,6 +5275,26 @@ def list_factures_vente(conn):
 
 
 def add_ligne_facture_vente(conn, facture_id, compte_vente, libelle, quantite, prix_unitaire, analytic_code=None):
+    facture = get_facture_vente(conn, facture_id)
+    if not facture:
+        raise ValueError(f"Facture ID {facture_id} introuvable.")
+    if facture["statut"] != "brouillon":
+        raise ValueError(
+            "Impossible d'ajouter une ligne à une facture déjà validée (écritures déjà envoyées en Saisie)."
+        )
+    if not compte_vente or not account_exists(conn, compte_vente):
+        raise ValueError(
+            f"Le compte de vente « {compte_vente} » n'existe pas dans le plan comptable — "
+            f"choisissez un compte dans la liste plutôt que de le saisir librement."
+        )
+    if not libelle or not libelle.strip():
+        raise ValueError("Le libellé de la ligne est obligatoire.")
+    if not quantite or quantite <= 0:
+        raise ValueError("La quantité doit être strictement positive.")
+    if not prix_unitaire or prix_unitaire <= 0:
+        raise ValueError("Le prix unitaire doit être strictement positif.")
+    if analytic_code and not analytic_code_exists(conn, analytic_code):
+        raise ValueError(f"Le code analytique « {analytic_code} » n'existe pas dans le plan analytique.")
     conn.execute(
         """INSERT INTO facture_vente_lignes (facture_id, compte_vente, libelle, quantite, prix_unitaire,
                                                analytic_code)

@@ -2132,16 +2132,22 @@ class RemoteFacturationTab(ttk.Frame):
         ttk.Label(header, text="Date (JJ/MM/AAAA) :").grid(row=0, column=2, sticky="w", padx=(12, 4))
         self.date_var = tk.StringVar(value=date.today().strftime("%d/%m/%Y"))
         ttk.Entry(header, textvariable=self.date_var, width=12).grid(row=0, column=3, padx=4)
-        ttk.Label(header, text="Client (code) :").grid(row=0, column=4, sticky="w", padx=(12, 4))
+        ttk.Label(header, text="Client :").grid(row=0, column=4, sticky="w", padx=(12, 4))
         self.client_var = tk.StringVar()
-        ttk.Entry(header, textvariable=self.client_var, width=14).grid(row=0, column=5, padx=4)
+        self.client_combo = ttk.Combobox(header, textvariable=self.client_var, width=26)
+        self.client_combo.grid(row=0, column=5, padx=4)
+        self.client_combo.bind("<KeyRelease>", self._on_client_keyrelease)
+        self._refresh_client_values()
         ttk.Button(header, text="Créer la facture", command=self.creer).grid(row=0, column=6, padx=12)
 
         ligne_frame = ttk.LabelFrame(self, text="Lignes (une fois la facture créée, sélectionnée dans la liste)")
         ligne_frame.pack(fill="x", padx=16, pady=(0, 8))
         ttk.Label(ligne_frame, text="Compte de vente :").grid(row=0, column=0, sticky="w", padx=4, pady=4)
         self.compte_var = tk.StringVar()
-        ttk.Entry(ligne_frame, textvariable=self.compte_var, width=14).grid(row=0, column=1, padx=4)
+        self.compte_combo = ttk.Combobox(ligne_frame, textvariable=self.compte_var, width=26)
+        self.compte_combo.grid(row=0, column=1, padx=4)
+        self.compte_combo.bind("<KeyRelease>", self._on_compte_keyrelease)
+        self._refresh_compte_values()
         ttk.Label(ligne_frame, text="Libellé :").grid(row=0, column=2, sticky="w", padx=(12, 4))
         self.libelle_var = tk.StringVar()
         ttk.Entry(ligne_frame, textvariable=self.libelle_var, width=26).grid(row=0, column=3, padx=4)
@@ -2160,8 +2166,13 @@ class RemoteFacturationTab(ttk.Frame):
             self.tree_lignes.heading(c, text=h)
             self.tree_lignes.column(c, width=w, anchor="w")
         self.tree_lignes.pack(fill="x", padx=16, pady=(0, 4))
-        ttk.Button(self, text="Valider la facture (comptabilise la vente sur le serveur)",
-                   command=self.valider).pack(anchor="w", padx=16, pady=8)
+
+        btns = ttk.Frame(self)
+        btns.pack(fill="x", padx=16, pady=8)
+        ttk.Button(btns, text="Valider la facture (comptabilise la vente sur le serveur)",
+                   command=self.valider).pack(side="left")
+        ttk.Button(btns, text="Supprimer la facture sélectionnée (brouillon uniquement)",
+                   command=self.supprimer_facture).pack(side="left", padx=8)
 
         ttk.Separator(self).pack(fill="x", padx=16, pady=4)
         ttk.Label(self, text="Factures existantes", font=("Segoe UI", 10, "bold")).pack(anchor="w", padx=16)
@@ -2178,12 +2189,44 @@ class RemoteFacturationTab(ttk.Frame):
     def _appeler(self, fonction, *args, **kwargs):
         return appeler(self, self.remote, fonction, *args, **kwargs)
 
+    @staticmethod
+    def _extract_code(raw):
+        raw = (raw or "").strip()
+        return raw.split(" — ", 1)[0].strip() if " — " in raw else raw
+
+    def _refresh_client_values(self):
+        items = self._appeler("list_clients")
+        if items is not APPEL_ECHEC:
+            self.client_combo["values"] = [f"{c['code']} — {c['raison_sociale']}" for c in items]
+
+    def _on_client_keyrelease(self, event=None):
+        query = self._extract_code(self.client_var.get())
+        if query:
+            items = self._appeler("list_clients", query)
+            if items is not APPEL_ECHEC:
+                self.client_combo["values"] = [f"{c['code']} — {c['raison_sociale']}" for c in items]
+
+    def _refresh_compte_values(self):
+        items = self._appeler("search_accounts", "7", limit=50)
+        if items is not APPEL_ECHEC:
+            self.compte_combo["values"] = [f"{a['code']} — {a['label']}" for a in items if a["classe"] == "7"]
+
+    def _on_compte_keyrelease(self, event=None):
+        query = self._extract_code(self.compte_var.get())
+        items = self._appeler("search_accounts", query, limit=30)
+        if items is not APPEL_ECHEC:
+            self.compte_combo["values"] = [f"{a['code']} — {a['label']}" for a in items]
+
     def creer(self):
         if not self.numero_var.get().strip():
             messagebox.showwarning("Champ manquant", "Le numéro est obligatoire.", parent=self)
             return
+        client_code = self._extract_code(self.client_var.get())
+        if not client_code:
+            messagebox.showwarning("Champ manquant", "Choisissez un client.", parent=self)
+            return
         date_str = core.to_iso_date(self.date_var.get().strip())
-        fid = self._appeler("create_facture_vente", self.numero_var.get(), date_str, self.client_var.get().strip())
+        fid = self._appeler("create_facture_vente", self.numero_var.get().strip(), date_str, client_code)
         if fid is APPEL_ECHEC:
             return
         self.facture_id_selectionnee = fid
@@ -2196,7 +2239,7 @@ class RemoteFacturationTab(ttk.Frame):
         if not self.facture_id_selectionnee:
             messagebox.showinfo("Info", "Créez ou sélectionnez d'abord une facture dans la liste.", parent=self)
             return
-        compte = self.compte_var.get().strip()
+        compte = self._extract_code(self.compte_var.get())
         libelle = self.libelle_var.get().strip()
         if not compte or not libelle:
             messagebox.showwarning("Champ manquant", "Compte de vente et libellé sont obligatoires.", parent=self)
@@ -2225,6 +2268,21 @@ class RemoteFacturationTab(ttk.Frame):
         if r is APPEL_ECHEC:
             return
         messagebox.showinfo("Validée", "Facture comptabilisée sur le serveur.", parent=self)
+        self.refresh()
+
+    def supprimer_facture(self):
+        if not self.facture_id_selectionnee:
+            messagebox.showinfo("Info", "Sélectionnez d'abord une facture dans la liste.", parent=self)
+            return
+        if not messagebox.askyesno("Confirmer",
+                                    "Supprimer cette facture et toutes ses lignes ? Impossible si elle est "
+                                    "déjà validée.", parent=self):
+            return
+        r = self._appeler("delete_facture_vente", self.facture_id_selectionnee)
+        if r is APPEL_ECHEC:
+            return
+        self.facture_id_selectionnee = None
+        self._refresh_lignes()
         self.refresh()
 
     def _on_select_facture(self, event=None):
