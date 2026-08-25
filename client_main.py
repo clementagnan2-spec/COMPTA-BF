@@ -4370,8 +4370,12 @@ class RemoteRecetteFabricationTab(ttk.Frame):
         self.compte_label = ttk.Label(form, text="Compte de stock :")
         self.compte_label.grid(row=0, column=4, sticky="w", padx=(12, 4))
         self.compte_var = tk.StringVar()
-        self.compte_combo = ttk.Combobox(form, textvariable=self.compte_var, width=26, state="readonly")
+        self.compte_combo = ttk.Combobox(form, textvariable=self.compte_var, width=26)
         self.compte_combo.grid(row=0, column=5, padx=4)
+        self.compte_combo.bind("<KeyRelease>", self._on_compte_keyrelease)
+        self.compte_combo.bind("<<ComboboxSelected>>", self._on_compte_changed)
+        self.compte_combo.bind("<FocusOut>", self._on_compte_changed)
+        self._stocks_cache = {}
         self._refresh_stock_accounts()
 
         self.ligne_qte_label = ttk.Label(form, text="Quantité :")
@@ -4385,6 +4389,10 @@ class RemoteRecetteFabricationTab(ttk.Frame):
         self.cout_entry = ttk.Entry(form, textvariable=self.ligne_cout_var, width=12)
         self.cout_entry.grid(row=1, column=3, padx=4, sticky="w")
 
+        self.compte_apercu_var = tk.StringVar()
+        ttk.Label(form, textvariable=self.compte_apercu_var, foreground="#1F7A1F").grid(
+            row=2, column=4, columnspan=2, sticky="w", padx=(12, 4))
+
         self.analytic_label = ttk.Label(form, text="Code analytique (Énergie/Maintenance...) :")
         self.analytic_label.grid(row=1, column=4, sticky="w", padx=(12, 4))
         self.ligne_analytic_var = tk.StringVar()
@@ -4396,9 +4404,9 @@ class RemoteRecetteFabricationTab(ttk.Frame):
 
         self.analytic_apercu_var = tk.StringVar()
         ttk.Label(form, textvariable=self.analytic_apercu_var, foreground="#1F7A1F").grid(
-            row=2, column=4, columnspan=2, sticky="w", padx=(12, 4))
+            row=3, column=4, columnspan=2, sticky="w", padx=(12, 4))
 
-        ttk.Button(form, text="Ajouter le composant", command=self.add_ligne).grid(row=3, column=5, padx=4, pady=4)
+        ttk.Button(form, text="Ajouter le composant", command=self.add_ligne).grid(row=4, column=5, padx=4, pady=4)
 
         cols = ("id", "type", "libelle", "compte", "quantite", "cout_unitaire", "analytique", "source", "montant")
         self.tree = ttk.Treeview(self, columns=cols, show="headings", height=8)
@@ -4428,7 +4436,43 @@ class RemoteRecetteFabricationTab(ttk.Frame):
         stocks = self._appeler("compute_stocks_detail", prefixes=["31", "32", "33", "36"])
         if stocks is APPEL_ECHEC:
             return
+        self._stocks_cache = {s["code"]: s for s in stocks}
         self.compte_combo["values"] = [f"{s['code']} — {s['label']}" for s in stocks]
+
+    def _on_compte_keyrelease(self, event=None):
+        query = self._extract_code(self.compte_var.get())
+        if query:
+            items = self._appeler("search_accounts", query, limit=30)
+            if items is APPEL_ECHEC:
+                return
+            self.compte_combo["values"] = [
+                f"{a['code']} — {a['label']}" for a in items if a["code"][:1] in ("3",)]
+
+    def _on_compte_changed(self, event=None):
+        code = self._extract_code(self.compte_var.get())
+        if not code:
+            self.compte_apercu_var.set("")
+            return
+        stock = self._stocks_cache.get(code)
+        if stock is None:
+            # Compte pas dans le cache initial (trouvé via la recherche) — on va le chercher.
+            detail = self._appeler("compute_stocks_detail", prefixes=[code[:2]])
+            if detail is APPEL_ECHEC:
+                return
+            self._stocks_cache.update({s["code"]: s for s in detail})
+            stock = self._stocks_cache.get(code)
+        if stock is None:
+            self.compte_apercu_var.set(f"Compte « {code} » introuvable parmi les comptes de stock.")
+            return
+        cu = stock.get("cout_unitaire_moyen")
+        if cu is not None:
+            self.compte_apercu_var.set(
+                f"Coût unitaire moyen en stock : {fmt_cfa(cu)} F CFA — "
+                f"{stock['qte_finale']:g} unité(s) disponible(s) (sera utilisé automatiquement)")
+        else:
+            self.compte_apercu_var.set(
+                "Aucune quantité en stock pour ce compte pour l'instant — saisissez un coût unitaire "
+                "manuel en attendant, ou renseignez d'abord un stock initial (onglet Stocks).")
 
     def _refresh_analytic_values(self):
         codes = self._appeler("list_analytic_codes")
@@ -4485,10 +4529,11 @@ class RemoteRecetteFabricationTab(ttk.Frame):
 
     def _on_type_changed(self, event=None):
         is_matiere = self.type_combo.get() == core.LIGNE_TYPES["matiere"]
-        state_compte = "readonly" if is_matiere else "disabled"
+        state_compte = "normal" if is_matiere else "disabled"
         self.compte_combo.configure(state=state_compte)
         if not is_matiere:
             self.compte_var.set("")
+            self.compte_apercu_var.set("")
 
     @staticmethod
     def _extract_code(raw):
