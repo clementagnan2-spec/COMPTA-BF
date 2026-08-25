@@ -5611,6 +5611,70 @@ def devalider_facture_achat(conn, facture_id):
     return deleted
 
 
+_UNITES_FR = ["", "un", "deux", "trois", "quatre", "cinq", "six", "sept", "huit", "neuf", "dix",
+              "onze", "douze", "treize", "quatorze", "quinze", "seize", "dix-sept", "dix-huit", "dix-neuf"]
+_DIZAINES_FR = ["", "", "vingt", "trente", "quarante", "cinquante", "soixante", "soixante", "quatre-vingt",
+                "quatre-vingt"]
+
+
+def _trois_chiffres_en_lettres(n):
+    """Convertit un nombre de 0 à 999 en toutes lettres françaises."""
+    if n == 0:
+        return ""
+    centaines, reste = divmod(n, 100)
+    mots = []
+    if centaines:
+        mots.append(("cent" if centaines == 1 else _UNITES_FR[centaines] + " cent") + ("s" if centaines > 1 and reste == 0 else ""))
+    if reste:
+        if reste < 20:
+            mots.append(_UNITES_FR[reste])
+        else:
+            dix, unite = divmod(reste, 10)
+            if dix in (7, 9):
+                # soixante-dix, quatre-vingt-dix : dizaine précédente + 10-19
+                base = _DIZAINES_FR[dix]
+                fin = _UNITES_FR[10 + unite]
+                mots.append(f"{base}-{fin}" if unite or dix in (7, 9) else base)
+            else:
+                base = _DIZAINES_FR[dix]
+                if unite == 0:
+                    mots.append(base + ("s" if dix == 8 else ""))
+                elif unite == 1 and dix not in (8,):
+                    mots.append(f"{base} et un")
+                else:
+                    mots.append(f"{base}-{_UNITES_FR[unite]}")
+    return " ".join(mots)
+
+
+def nombre_en_lettres_fr(n):
+    """Convertit un entier (francs CFA — pas de centimes) en toutes lettres
+    françaises, ex. 500000 -> « cinq cent mille ». Utilisé pour la mention
+    légale « Arrêtée la présente facture à la somme de... » sur les
+    factures imprimées."""
+    n = int(round(n))
+    if n == 0:
+        return "zéro"
+    negatif = n < 0
+    n = abs(n)
+    tranches = []
+    for diviseur, nom_sing, nom_plur in ((10**9, "milliard", "milliards"), (10**6, "million", "millions"),
+                                          (10**3, "mille", "mille"), (1, "", "")):
+        valeur, n = divmod(n, diviseur)
+        if valeur:
+            if diviseur == 1:
+                tranches.append(_trois_chiffres_en_lettres(valeur))
+            elif diviseur == 10**3:
+                if valeur == 1:
+                    tranches.append("mille")
+                else:
+                    tranches.append(f"{_trois_chiffres_en_lettres(valeur)} mille")
+            else:
+                nom = nom_sing if valeur == 1 else nom_plur
+                tranches.append(f"{_trois_chiffres_en_lettres(valeur)} {nom}")
+    resultat = " ".join(t for t in tranches if t)
+    return ("moins " if negatif else "") + resultat
+
+
 def _html_facture(titre, numero, date_facture, tiers_label, entete, lignes_rows, pied_page, totaux_rows):
     """Construit un document HTML simple, imprimable (Ctrl+P depuis le
     navigateur), commun aux factures de vente et d'achat."""
@@ -5650,47 +5714,210 @@ def _html_facture(titre, numero, date_facture, tiers_label, entete, lignes_rows,
 </body></html>"""
 
 
-def export_facture_vente_html(conn, facture_id, path):
-    """Génère la facture de vente en HTML imprimable (bouton « Imprimer »
-    intégré, ou Ctrl+P depuis le navigateur)."""
+def _html_facture_pro(conn, titre, numero, date_facture, tiers, lignes_rows, totaux_rows, montant_ttc,
+                       entete_libre="", pied_libre=""):
+    """Facture professionnelle « type imprimé commercial » : bloc entreprise,
+    bloc « Doit : » (client/fournisseur), tableau Réf/Désignation/Qté/PU/
+    Montant, bloc de totaux (HT / TVA / TTC), montant en toutes lettres, et
+    zone de signature — reprend les informations déjà saisies dans
+    ADMIN > Liasse fiscale (dénomination, adresse, IFU, RCCM...) plutôt que
+    de les ressaisir.
+
+    `tiers` : dict avec au moins 'nom' ; peut aussi contenir 'adresse',
+    'telephone', 'code'.
+    `lignes_rows` : liste de tuples (designation, quantite, prix_unitaire, montant_ht).
+    `totaux_rows` : liste de tuples (label, valeur) affichés dans le bloc de droite,
+    dans l'ordre voulu (ex. Montant H.T, TVA 18%, Montant TTC).
+    """
+    societe_nom = get_company_value(conn, "societe_nom") or "(Dénomination sociale non renseignée — ADMIN > Liasse fiscale)"
+    societe_adresse = get_company_value(conn, "societe_adresse")
+    societe_telephone = get_company_value(conn, "societe_telephone")
+    societe_ifu = get_company_value(conn, "societe_ifu")
+    societe_rccm = get_company_value(conn, "societe_rccm")
+
+    lignes_html = "\n".join(
+        f"<tr><td>{i+1}</td><td>{l[0]}</td><td style='text-align:right'>{l[1]:,.2f}</td>"
+        f"<td style='text-align:right'>{l[2]:,.2f}</td><td style='text-align:right'>{l[3]:,.2f}</td></tr>"
+        for i, l in enumerate(lignes_rows)
+    )
+    # Complète le tableau avec des lignes vides pour garder une hauteur homogène (style imprimé)
+    lignes_vides = "\n".join(
+        "<tr><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td></tr>"
+        for _ in range(max(0, 6 - len(lignes_rows)))
+    )
+    totaux_html = "\n".join(
+        f"<tr><td>{label}</td><td style='text-align:right'>{valeur:,.2f}</td></tr>"
+        for label, valeur in totaux_rows
+    )
+    montant_lettres = nombre_en_lettres_fr(montant_ttc)
+
+    return f"""<!DOCTYPE html>
+<html lang="fr"><head><meta charset="utf-8"><title>{titre} {numero}</title>
+<style>
+  body {{ font-family: 'Segoe UI', Arial, sans-serif; margin: 30px; color: #111; font-size: 13px; }}
+  .toolbar {{ margin-bottom: 16px; }}
+  .cadre-entreprise {{ border: 1px solid #000; padding: 8px 12px; text-align: center; margin-bottom: 10px; }}
+  .cadre-entreprise .nom {{ font-weight: bold; font-size: 15px; text-transform: uppercase; }}
+  .ligne-ident {{ border: 1px solid #000; border-top: none; padding: 4px 10px; font-size: 11px;
+                  display: flex; justify-content: space-between; margin-bottom: 16px; }}
+  .entete-facture {{ display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 14px; }}
+  .titre-facture {{ font-weight: bold; font-size: 16px; }}
+  .meta-facture div {{ margin: 2px 0; }}
+  .cadre-doit {{ border: 1px solid #000; padding: 8px 12px; width: 320px; }}
+  .cadre-doit .titre {{ font-weight: bold; text-decoration: underline; margin-bottom: 4px; }}
+  table.lignes {{ width: 100%; border-collapse: collapse; margin-top: 10px; }}
+  table.lignes th, table.lignes td {{ border: 1px solid #000; padding: 5px 8px; font-size: 12px; }}
+  table.lignes th {{ background: #eee; text-align: left; }}
+  .zone-bas {{ display: flex; justify-content: space-between; margin-top: 4px; }}
+  .zone-lettres {{ max-width: 55%; }}
+  table.totaux {{ border-collapse: collapse; }}
+  table.totaux td {{ border: 1px solid #000; padding: 4px 10px; font-size: 12px; }}
+  table.totaux td:first-child {{ font-weight: bold; }}
+  table.totaux td:last-child {{ text-align: right; min-width: 110px; }}
+  .signature {{ margin-top: 50px; text-align: right; font-size: 11px; }}
+  .signature .nom {{ font-weight: bold; }}
+  @media print {{ .toolbar {{ display: none; }} }}
+</style></head>
+<body>
+<div class="toolbar"><button onclick="window.print()">🖨️ Imprimer / Enregistrer en PDF</button>
+  <span style="margin-left:10px;color:#595959;font-size:12px;">
+    Ceci est l'aperçu avant impression — rien n'est encore imprimé. Vérifiez le document, puis cliquez sur
+    « Imprimer » ci-dessus (ou Ctrl+P).</span></div>
+
+<div class="cadre-entreprise">
+  <div class="nom">{societe_nom}</div>
+  <div>{societe_adresse}</div>
+</div>
+<div class="ligne-ident">
+  <span>{"Tél : " + societe_telephone if societe_telephone else ""}</span>
+  <span>{"IFU : " + societe_ifu if societe_ifu else ""}</span>
+  <span>{"RCCM : " + societe_rccm if societe_rccm else ""}</span>
+</div>
+
+<div class="entete-facture">
+  <div class="meta-facture">
+    <div class="titre-facture">{titre} N° {numero}</div>
+    <div>Date : {date_facture}</div>
+  </div>
+  <div class="cadre-doit">
+    <div class="titre">Doit :</div>
+    <div>{tiers.get('nom', '')}</div>
+    <div>{tiers.get('adresse') or ''}</div>
+    <div>{('Tél : ' + tiers['telephone']) if tiers.get('telephone') else ''}</div>
+  </div>
+</div>
+
+<div class="entete">{entete_libre or ""}</div>
+
+<table class="lignes">
+<tr><th style="width:34px">Réf.</th><th>Désignation</th><th style="width:90px">Quantité</th>
+<th style="width:110px">P.U. HT</th><th style="width:120px">Montant HT</th></tr>
+{lignes_html}
+{lignes_vides}
+</table>
+
+<div class="zone-bas">
+  <div class="zone-lettres">
+    <p><b>Arrêtée la présente facture à la somme de :</b><br>{montant_lettres} francs CFA.</p>
+    <div class="pied">{pied_libre or ""}</div>
+  </div>
+  <table class="totaux">
+{totaux_html}
+  </table>
+</div>
+
+<div class="signature">
+  <div class="nom">{societe_nom}</div>
+  <div>{societe_adresse}</div>
+</div>
+</body></html>"""
+
+
+def render_facture_vente_html(conn, facture_id):
+    """Facture de vente en HTML — renvoie le contenu (str), sans écrire de
+    fichier, pour un usage local (bureau) ET distant (client réseau, qui
+    écrira le fichier lui-même sur le poste client)."""
     facture = get_facture_vente(conn, facture_id)
     if not facture:
         raise ValueError("Facture introuvable.")
     lignes = list_lignes_facture_vente(conn, facture_id)
+    if not lignes:
+        raise ValueError("Cette facture n'a aucune ligne — ajoutez au moins une ligne avant d'imprimer.")
     totals = compute_facture_totals(conn, facture_id)
     client = get_client(conn, facture["client_code"])
-    tiers_label = f"Client : {client['raison_sociale']}" if client else f"Client : {facture['client_code']}"
+    tiers = {"nom": client["raison_sociale"] if client else facture["client_code"],
+              "adresse": client["adresse"] if client else None,
+              "telephone": client["telephone"] if client else None}
     lignes_rows = [(l["libelle"], l["quantite"], l["prix_unitaire"], l["montant_ht"]) for l in lignes]
-    totaux_rows = [("TOTAL HT", totals["total_ht"]),
-                    (f"TVA ({totals['tva_taux']:g}%)", totals["tva_montant"]),
-                    ("TOTAL TTC", totals["total_ttc"])]
-    html = _html_facture("Facture de vente", facture["numero"], to_display_date(facture["date_facture"]),
-                          tiers_label, facture["entete"], lignes_rows, facture["pied_page"], totaux_rows)
+    totaux_rows = [("Montant H.T", totals["total_ht"]),
+                    (f"T.V.A {totals['tva_taux']:g}%", totals["tva_montant"]),
+                    ("Montant TTC", totals["total_ttc"])]
+    return _html_facture_pro(conn, "FACTURE", facture["numero"], to_display_date(facture["date_facture"]),
+                              tiers, lignes_rows, totaux_rows, totals["total_ttc"], facture["entete"],
+                              facture["pied_page"])
+
+
+def export_facture_vente_html(conn, facture_id, path):
+    """Génère la facture de vente en HTML imprimable (bouton « Imprimer »
+    intégré, ou Ctrl+P depuis le navigateur) et l'écrit dans `path`."""
+    html = render_facture_vente_html(conn, facture_id)
     with open(path, "w", encoding="utf-8") as f:
         f.write(html)
     return path
 
 
-def export_facture_achat_html(conn, facture_id, path):
-    """Génère la facture d'achat en HTML imprimable (bouton « Imprimer »
-    intégré, ou Ctrl+P depuis le navigateur)."""
+def render_facture_achat_html(conn, facture_id):
+    """Facture d'achat en HTML — renvoie le contenu (str), sans écrire de fichier."""
     facture = get_facture_achat(conn, facture_id)
     if not facture:
         raise ValueError("Facture introuvable.")
     lignes = list_lignes_facture_achat(conn, facture_id)
+    if not lignes:
+        raise ValueError("Cette facture n'a aucune ligne — ajoutez au moins une ligne avant d'imprimer.")
     totals = compute_facture_achat_totals(conn, facture_id)
     fournisseur = get_fournisseur(conn, facture["fournisseur_code"])
-    tiers_label = (f"Fournisseur : {fournisseur['raison_sociale']}" if fournisseur
-                   else f"Fournisseur : {facture['fournisseur_code']}")
+    tiers = {"nom": fournisseur["raison_sociale"] if fournisseur else facture["fournisseur_code"],
+              "adresse": fournisseur["adresse"] if fournisseur else None,
+              "telephone": fournisseur["telephone"] if fournisseur else None}
     lignes_rows = [(l["libelle"], l["quantite"], l["prix_unitaire"], l["montant_ht"]) for l in lignes]
-    totaux_rows = [("TOTAL HT", totals["total_ht"]),
+    totaux_rows = [("Montant H.T", totals["total_ht"]),
                     (f"Retenue à la source ({totals['retenue_taux']:g}%)", -totals["retenue_montant"]),
-                    ("NET À PAYER", totals["net_a_payer"])]
-    html = _html_facture("Facture d'achat", facture["numero"], to_display_date(facture["date_facture"]),
-                          tiers_label, facture["entete"], lignes_rows, facture["pied_page"], totaux_rows)
+                    ("Net à payer", totals["net_a_payer"])]
+    return _html_facture_pro(conn, "FACTURE D'ACHAT", facture["numero"], to_display_date(facture["date_facture"]),
+                              tiers, lignes_rows, totaux_rows, totals["net_a_payer"], facture["entete"],
+                              facture["pied_page"])
+
+
+def export_facture_achat_html(conn, facture_id, path):
+    """Génère la facture d'achat en HTML imprimable (bouton « Imprimer »
+    intégré, ou Ctrl+P depuis le navigateur) et l'écrit dans `path`."""
+    html = render_facture_achat_html(conn, facture_id)
     with open(path, "w", encoding="utf-8") as f:
         f.write(html)
     return path
+
+
+def render_bon_commande_html(conn, facture_id):
+    """Bon de commande en HTML — renvoie le contenu (str), sans écrire de fichier."""
+    facture = get_facture_achat(conn, facture_id)
+    if not facture:
+        raise ValueError("Bon de commande introuvable.")
+    lignes = list_lignes_facture_achat(conn, facture_id)
+    if not lignes:
+        raise ValueError("Ce bon de commande n'a aucune ligne — ajoutez au moins une ligne avant d'imprimer.")
+    totals = compute_facture_achat_totals(conn, facture_id)
+    fournisseur = get_fournisseur(conn, facture["fournisseur_code"])
+    tiers = {"nom": fournisseur["raison_sociale"] if fournisseur else facture["fournisseur_code"],
+              "adresse": fournisseur["adresse"] if fournisseur else None,
+              "telephone": fournisseur["telephone"] if fournisseur else None}
+    lignes_rows = [(l["libelle"], l["quantite"], l["prix_unitaire"], l["montant_ht"]) for l in lignes]
+    totaux_rows = [("Montant H.T", totals["total_ht"]),
+                    (f"Retenue à la source ({totals['retenue_taux']:g}%)", -totals["retenue_montant"]),
+                    ("Net estimé", totals["net_a_payer"])]
+    entete = facture["entete"] or get_text_setting(conn, "bon_commande_entete_defaut", "")
+    pied = facture["pied_page"] or get_text_setting(conn, "bon_commande_pied_defaut", "")
+    return _html_facture_pro(conn, "BON DE COMMANDE", facture["numero"], to_display_date(facture["date_facture"]),
+                              tiers, lignes_rows, totaux_rows, totals["net_a_payer"], entete, pied)
 
 
 def export_bon_commande_html(conn, facture_id, path):
@@ -5699,22 +5926,7 @@ def export_bon_commande_html(conn, facture_id, path):
     propres à cette commande s'ils sont renseignés, sinon le modèle par
     défaut paramétrable dans ADMIN (« bon_commande_entete_defaut »/
     « bon_commande_pied_defaut »)."""
-    facture = get_facture_achat(conn, facture_id)
-    if not facture:
-        raise ValueError("Bon de commande introuvable.")
-    lignes = list_lignes_facture_achat(conn, facture_id)
-    totals = compute_facture_achat_totals(conn, facture_id)
-    fournisseur = get_fournisseur(conn, facture["fournisseur_code"])
-    tiers_label = (f"Fournisseur : {fournisseur['raison_sociale']}" if fournisseur
-                   else f"Fournisseur : {facture['fournisseur_code']}")
-    lignes_rows = [(l["libelle"], l["quantite"], l["prix_unitaire"], l["montant_ht"]) for l in lignes]
-    totaux_rows = [("TOTAL HT", totals["total_ht"]),
-                    (f"Retenue à la source ({totals['retenue_taux']:g}%)", -totals["retenue_montant"]),
-                    ("NET ESTIMÉ", totals["net_a_payer"])]
-    entete = facture["entete"] or get_text_setting(conn, "bon_commande_entete_defaut", "")
-    pied = facture["pied_page"] or get_text_setting(conn, "bon_commande_pied_defaut", "")
-    html = _html_facture("Bon de commande", facture["numero"], to_display_date(facture["date_facture"]),
-                          tiers_label, entete, lignes_rows, pied, totaux_rows)
+    html = render_bon_commande_html(conn, facture_id)
     with open(path, "w", encoding="utf-8") as f:
         f.write(html)
     return path
@@ -6114,7 +6326,9 @@ COMPANY_FIELDS = {
     "societe_nom": "Dénomination sociale",
     "societe_sigle": "Sigle usuel",
     "societe_adresse": "Adresse",
+    "societe_telephone": "Téléphone",
     "societe_ifu": "N° IFU du contribuable",
+    "societe_rccm": "N° RCCM",
     "societe_teledeclarant": "N° de télédéclarant (NES)",
     "exercice_clos_le": "Exercice clos le (JJ/MM/AAAA)",
 }

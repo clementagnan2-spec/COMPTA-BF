@@ -3279,7 +3279,7 @@ class LiasseFiscaleTab(ttk.Frame):
             ttk.Entry(info, textvariable=var, width=40).grid(row=r * 2 + 1, column=c, sticky="we", padx=4, pady=(0, 6))
             self.vars[key] = var
         ttk.Button(info, text="Enregistrer les informations", command=self.save_info).grid(
-            row=6, column=0, sticky="w", padx=4, pady=6)
+            row=(len(core.COMPANY_FIELDS) + 1) // 2 * 2, column=0, sticky="w", padx=4, pady=6)
 
         params = ttk.LabelFrame(self, text="Paramètres d'export")
         params.pack(fill="x", padx=8, pady=(0, 8))
@@ -5427,7 +5427,7 @@ class FacturationTab(ttk.Frame):
         self.corriger_btn = ttk.Button(top, text="Corriger cette facture (erreur sur les chiffres)",
                                         command=self.corriger_facture)
         self.corriger_btn.pack(side="left", padx=2)
-        ttk.Button(top, text="Imprimer la facture", command=self.imprimer_facture).pack(side="left", padx=2)
+        ttk.Button(top, text="Aperçu avant impression", command=self.imprimer_facture).pack(side="left", padx=2)
         self.statut_var = tk.StringVar()
         ttk.Label(top, textvariable=self.statut_var, font=("Segoe UI", 10, "bold")).pack(side="left", padx=16)
 
@@ -6253,7 +6253,7 @@ class FacturesFrsTab(ttk.Frame):
         btns = ttk.Frame(self)
         btns.pack(fill="x", padx=12, pady=8)
         ttk.Button(btns, text="Enregistrer BON DE COMMANDE", command=self.save_facture).pack(side="left", padx=2)
-        ttk.Button(btns, text="Imprimer le bon de commande", command=self.imprimer_facture).pack(side="left", padx=2)
+        ttk.Button(btns, text="Aperçu avant impression (bon de commande)", command=self.imprimer_facture).pack(side="left", padx=2)
         ttk.Button(btns, text="Valider et envoyer en Saisie", command=self.valider).pack(side="left", padx=2)
 
         self.refresh_factures_list()

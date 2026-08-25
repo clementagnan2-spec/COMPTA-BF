@@ -2173,6 +2173,8 @@ class RemoteFacturationTab(ttk.Frame):
                    command=self.valider).pack(side="left")
         ttk.Button(btns, text="Supprimer la facture sélectionnée (brouillon uniquement)",
                    command=self.supprimer_facture).pack(side="left", padx=8)
+        ttk.Button(btns, text="Aperçu avant impression",
+                   command=self.imprimer_facture).pack(side="left", padx=8)
 
         ttk.Separator(self).pack(fill="x", padx=16, pady=4)
         ttk.Label(self, text="Factures existantes", font=("Segoe UI", 10, "bold")).pack(anchor="w", padx=16)
@@ -2269,6 +2271,21 @@ class RemoteFacturationTab(ttk.Frame):
             return
         messagebox.showinfo("Validée", "Facture comptabilisée sur le serveur.", parent=self)
         self.refresh()
+
+    def imprimer_facture(self):
+        if not self.facture_id_selectionnee:
+            messagebox.showinfo("Info", "Sélectionnez d'abord une facture dans la liste.", parent=self)
+            return
+        html = self._appeler("render_facture_vente_html", self.facture_id_selectionnee)
+        if html is APPEL_ECHEC:
+            return
+        import tempfile
+        import webbrowser
+        import os
+        path = os.path.join(tempfile.gettempdir(), f"facture_vente_{self.facture_id_selectionnee}.html")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(html)
+        webbrowser.open(f"file://{path}")
 
     def supprimer_facture(self):
         if not self.facture_id_selectionnee:
