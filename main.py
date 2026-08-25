@@ -277,7 +277,7 @@ class App(tk.Tk):
             ("Fabrication", "production"),
             ("Produits finis", "stocks"),
         ])
-        add_top_menu("RAPPORT FINANCIERS", [
+        add_top_menu("RAPPORTS FINANCIERS", [
             ("Grand livre", "grand_livre"),
             ("Balance", "balance"),
             ("Bilan SYSCOHADA", "bilan_syscohada"),
@@ -313,7 +313,7 @@ class App(tk.Tk):
             ("Immobilisations", "immobilisations"),
             ("Amortissements", "amortissements"),
         ])
-        add_top_menu("RAPPORTS TECHNIQUE", [
+        add_top_menu("RAPPORTS TECHNIQUES", [
             ("Rapports technique", "rapports_technique"),
         ])
         add_top_menu("MAINTENANCE-QUALITÉ", [
@@ -1752,7 +1752,7 @@ class EtatFormuleTab(ttk.Frame):
 
 
 class BilanSyscohadaTab(ttk.Frame):
-    """Bilan SYSCOHADA (menu RAPPORT FINANCIERS) — MONTÉ SUR LE SOLDE DE
+    """Bilan SYSCOHADA (menu RAPPORTS FINANCIERS) — MONTÉ SUR LE SOLDE DE
     CLÔTURE HABITUEL (colonne N = solde d'ouverture + cumul des opérations
     de la période) ; la colonne N-1 contient le solde d'ouverture de
     l'exercice, qui correspond mathématiquement au solde de clôture de
