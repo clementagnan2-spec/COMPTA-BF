@@ -183,6 +183,7 @@ class ClientApp(tk.Tk):
         "grh_kpi": lambda parent, remote: RemoteKpiTab(parent, remote),
         "grh_tableau_bord": lambda parent, remote: RemoteTableauBordGrhTab(parent, remote),
         "grh_hs": lambda parent, remote: RemoteHsTab(parent, remote),
+        "grh_paie": lambda parent, remote: RemotePaieTab(parent, remote),
         "fournisseurs": lambda parent, remote: RemoteFournisseursTab(parent, remote),
         "reglements": lambda parent, remote: RemoteReglementsTab(parent, remote),
         "grand_livre": lambda parent, remote: RemoteGrandLivreTab(parent, remote),
@@ -1467,6 +1468,499 @@ class RemoteHsTab(ttk.Frame):
             self.tree.insert("", "end", values=(
                 h["id"], core.to_display_date(h["date_evenement"]), h["type_evenement"], h["gravite"] or "",
                 h["statut"], h["description"] or ""))
+
+
+class RemotePaieBulletinsTab(ttk.Frame):
+    """Saisie des éléments de gain de chaque employé pour une période de
+    paie via le réseau — équivalent réseau complet de PaieBulletinsTab
+    (bureau), réutilisant les employés déjà saisis dans GRH > Personnel."""
+
+    CHAMPS = [
+        ("classification", "Classification", "combo"),
+        ("salaire_base", "Salaire de base", "num"),
+        ("prime_anciennete", "Prime d'ancienneté", "num"),
+        ("heures_sup", "Heures supplémentaires", "num"),
+        ("sursalaire", "Sursalaire", "num"),
+        ("gratification", "Gratification", "num"),
+        ("indemnite_caisse", "Indemnité Caisse", "num"),
+        ("indemnite_logement", "Indemnité Logement", "num"),
+        ("indemnite_fonction", "Indemnité Fonction", "num"),
+        ("indemnite_transport", "Indemnité Transport", "num"),
+        ("personnes_a_charge", "Personnes à charge", "num"),
+        ("retenue_pret", "Retenue prêt/avance", "num"),
+    ]
+
+    def __init__(self, parent, remote: RemoteConnection):
+        super().__init__(parent)
+        self.remote = remote
+        self.selected_bulletin_id = None
+        self.selected_personnel_id = None
+        self.personnel_by_label = {}
+
+        top = ttk.Frame(self)
+        top.pack(fill="x", padx=12, pady=8)
+        ttk.Label(top, text="Période (AAAA-MM) :").pack(side="left")
+        self.periode_var = tk.StringVar(value=date.today().strftime("%Y-%m"))
+        ttk.Entry(top, textvariable=self.periode_var, width=10).pack(side="left", padx=4)
+        ttk.Button(top, text="Actualiser", command=self.refresh).pack(side="left", padx=8)
+        ttk.Button(top, text="Dupliquer vers une autre période...", command=self.dupliquer).pack(
+            side="left", padx=8)
+
+        import_bar = ttk.Frame(self)
+        import_bar.pack(fill="x", padx=12, pady=(0, 4))
+        ttk.Button(import_bar, text="Importer des bulletins (.xlsx)", command=self.import_xlsx).pack(
+            side="left", padx=2)
+        ttk.Button(import_bar, text="Télécharger un modèle (.xlsx)", command=self.download_template).pack(
+            side="left", padx=2)
+
+        body = ttk.Frame(self)
+        body.pack(fill="both", expand=True, padx=12, pady=(0, 8))
+
+        right = ttk.Frame(body, width=320)
+        right.pack(side="right", fill="y")
+        right.pack_propagate(False)
+
+        left = ttk.Frame(body)
+        left.pack(side="left", fill="both", expand=True, padx=(0, 8))
+
+        cols = ("matricule", "nom", "prenom", "classification", "salaire_base", "net_percu")
+        self.tree = ttk.Treeview(left, columns=cols, show="headings")
+        headers = ["Matricule", "Nom", "Prénom", "Classification", "Salaire base", "Net perçu (calculé)"]
+        widths = [90, 150, 130, 110, 110, 130]
+        for c, h, w in zip(cols, headers, widths):
+            self.tree.heading(c, text=h)
+            self.tree.column(c, width=w, anchor="w")
+        self.tree.pack(fill="x")
+        self.tree.bind("<<TreeviewSelect>>", self._on_select)
+
+        ttk.Label(right, text="Bulletin employé", font=("Segoe UI", 11, "bold")).pack(pady=(0, 8))
+        ttk.Label(right, text="Employé :").pack(anchor="w")
+        self.employe_var = tk.StringVar()
+        self.employe_combo = ttk.Combobox(right, textvariable=self.employe_var, width=32, state="readonly")
+        self.employe_combo.pack(anchor="w", pady=(0, 8))
+
+        self.form_vars = {}
+        form = ttk.Frame(right)
+        form.pack(fill="x")
+        for i, (key, label, kind) in enumerate(self.CHAMPS):
+            ttk.Label(form, text=label).grid(row=i, column=0, sticky="w", pady=2)
+            var = tk.StringVar()
+            if kind == "combo":
+                w = ttk.Combobox(form, textvariable=var, values=["CADRE", "AUTRE"], state="readonly", width=16)
+                var.set("AUTRE")
+            else:
+                w = ttk.Entry(form, textvariable=var, width=18)
+                var.set("0")
+            w.grid(row=i, column=1, pady=2, sticky="w")
+            self.form_vars[key] = var
+
+        btns = ttk.Frame(right)
+        btns.pack(pady=12)
+        ttk.Button(btns, text="Enregistrer le bulletin", command=self.save_bulletin).grid(row=0, column=0, padx=2)
+        ttk.Button(btns, text="Supprimer", command=self.delete_bulletin).grid(row=0, column=1, padx=2)
+        ttk.Button(right, text="Vider le formulaire", command=self.clear_form).pack()
+
+        self.refresh()
+
+    def _appeler(self, fonction, *args, **kwargs):
+        return appeler(self, self.remote, fonction, *args, **kwargs)
+
+    def _refresh_employes(self):
+        items = self._appeler("list_personnel", actifs_only=True)
+        if items is APPEL_ECHEC:
+            return
+        self.personnel_by_label = {}
+        values = []
+        for p in items:
+            label = f"{p['matricule'] or p['id']} — {p['nom']} {p['prenom'] or ''}".strip()
+            values.append(label)
+            self.personnel_by_label[label] = p
+        self.employe_combo["values"] = values
+
+    def clear_form(self):
+        self.selected_bulletin_id = None
+        self.selected_personnel_id = None
+        self.employe_var.set("")
+        for key, _, kind in self.CHAMPS:
+            self.form_vars[key].set("AUTRE" if kind == "combo" else "0")
+
+    def _on_select(self, event=None):
+        sel = self.tree.selection()
+        if not sel:
+            return
+        personnel_id = int(sel[0])
+        self.selected_personnel_id = personnel_id
+        periode = self.periode_var.get().strip()
+        b = self._appeler("get_bulletin_paie", personnel_id, periode)
+        if b is APPEL_ECHEC or not b:
+            return
+        self.selected_bulletin_id = b["id"]
+        p = self._appeler("get_personnel", personnel_id)
+        if p is APPEL_ECHEC:
+            return
+        label = f"{p['matricule'] or p['id']} — {p['nom']} {p['prenom'] or ''}".strip()
+        self.employe_var.set(label)
+        for key, _, _ in self.CHAMPS:
+            self.form_vars[key].set(str(b.get(key, 0)))
+
+    def save_bulletin(self):
+        label = self.employe_var.get().strip()
+        p = self.personnel_by_label.get(label)
+        if not p:
+            messagebox.showwarning("Champ manquant", "Choisissez un employé dans la liste.", parent=self)
+            return
+        periode = self.periode_var.get().strip()
+        if len(periode) != 7 or periode[4] != "-":
+            messagebox.showerror("Erreur", "Période invalide — format attendu : AAAA-MM (ex. 2026-08).",
+                                  parent=self)
+            return
+        try:
+            champs = {}
+            for key, _, kind in self.CHAMPS:
+                if kind == "combo":
+                    champs[key] = self.form_vars[key].get()
+                elif key == "personnes_a_charge":
+                    champs[key] = int(float(self.form_vars[key].get() or 0))
+                else:
+                    champs[key] = float(self.form_vars[key].get() or 0)
+        except ValueError:
+            messagebox.showerror("Erreur", "Merci de vérifier les valeurs numériques saisies.", parent=self)
+            return
+        if self._appeler("set_bulletin_paie", p["id"], periode, **champs) is APPEL_ECHEC:
+            return
+        self.refresh()
+        messagebox.showinfo("Enregistré", "Bulletin de paie enregistré.", parent=self)
+
+    def delete_bulletin(self):
+        if not self.selected_bulletin_id:
+            messagebox.showinfo("Info", "Sélectionnez d'abord un bulletin dans le tableau.", parent=self)
+            return
+        if messagebox.askyesno("Confirmer", "Supprimer ce bulletin de paie ?", parent=self):
+            if self._appeler("delete_bulletin_paie", self.selected_bulletin_id) is APPEL_ECHEC:
+                return
+            self.clear_form()
+            self.refresh()
+
+    def dupliquer(self):
+        cible = simpledialog.askstring(
+            "Dupliquer vers une autre période",
+            "Copier les bulletins de la période affichée vers quelle période (AAAA-MM) ?",
+            initialvalue=self.periode_var.get().strip(), parent=self)
+        if not cible:
+            return
+        n = self._appeler("dupliquer_bulletins_periode", self.periode_var.get().strip(), cible.strip())
+        if n is APPEL_ECHEC:
+            return
+        messagebox.showinfo("Terminé", f"{n} bulletin(s) dupliqué(s) vers {cible.strip()}.", parent=self)
+
+    def download_template(self):
+        path = filedialog.asksaveasfilename(
+            defaultextension=".xlsx", filetypes=[("Classeur Excel", "*.xlsx")],
+            initialfile="Modele_bulletins_paie.xlsx", title="Enregistrer le modèle", parent=self)
+        if not path:
+            return
+        try:
+            core.export_paie_bulletins_template(path)
+        except Exception as exc:
+            messagebox.showerror("Erreur", f"Échec de la création du modèle : {exc}", parent=self)
+            return
+        messagebox.showinfo("Modèle créé", f"Modèle enregistré :\n{path}", parent=self)
+
+    def import_xlsx(self):
+        path = filedialog.askopenfilename(filetypes=[("Classeur Excel", "*.xlsx")],
+                                           title="Importer des bulletins de paie", parent=self)
+        if not path:
+            return
+        try:
+            rows = core.parse_paie_bulletins_xlsx(path)
+        except Exception as exc:
+            messagebox.showerror("Erreur", f"Échec de la lecture du fichier : {exc}", parent=self)
+            return
+        resultat = self._appeler("apply_paie_bulletins_rows", rows)
+        if resultat is APPEL_ECHEC:
+            return
+        imported, warnings = resultat
+        self.refresh()
+        msg = f"{imported} bulletin(s) importé(s)/mis à jour sur le serveur."
+        if warnings:
+            msg += "\n\nAvertissements :\n" + "\n".join(warnings[:20])
+        messagebox.showinfo("Import terminé", msg, parent=self)
+
+    def refresh(self):
+        self._refresh_employes()
+        for row in self.tree.get_children():
+            self.tree.delete(row)
+        periode = self.periode_var.get().strip()
+        if len(periode) != 7:
+            return
+        etat = self._appeler("compute_paie_periode", periode)
+        if etat is APPEL_ECHEC:
+            return
+        for l in etat["lignes"]:
+            self.tree.insert("", "end", iid=str(l["personnel_id"]), values=(
+                l["matricule"], l["nom"], l["prenom"] or "", l["classification"],
+                fmt_cfa(l["salaire_base"]), fmt_cfa(l["net_percu"])))
+
+
+class RemotePaieEtatTab(ttk.Frame):
+    """État de paie calculé pour une période via le réseau — équivalent
+    réseau complet de PaieEtatTab (bureau)."""
+
+    RESULT_COLS = [
+        ("matricule", "Matricule", 80), ("nom", "Nom", 120), ("prenom", "Prénom", 100),
+        ("remuneration_totale", "Rém. Totale", 100), ("cnss_salariale", "CNSS", 90),
+        ("salaire_brut", "Sal. Brut", 100), ("base_imposable", "Base Imp.", 100),
+        ("iuts_net", "IUTS", 90), ("salaire_net", "Salaire Net", 100),
+        ("retenue_obligatoire", "Ret. Oblig.", 90), ("retenue_pret", "Ret. Prêt", 90),
+        ("net_percu", "Net Perçu", 110), ("cout_total_employeur", "Coût Employeur", 120),
+    ]
+
+    def __init__(self, parent, remote: RemoteConnection):
+        super().__init__(parent)
+        self.remote = remote
+        self.last_etat = None
+
+        top = ttk.Frame(self)
+        top.pack(fill="x", padx=12, pady=8)
+        ttk.Label(top, text="Période (AAAA-MM) :").pack(side="left")
+        self.periode_var = tk.StringVar(value=date.today().strftime("%Y-%m"))
+        ttk.Entry(top, textvariable=self.periode_var, width=10).pack(side="left", padx=4)
+        ttk.Button(top, text="Calculer la paie", command=self.calculer).pack(side="left", padx=12)
+        ttk.Button(top, text="Exporter vers Excel", command=self.export_excel).pack(side="left", padx=4)
+        ttk.Button(top, text="Valider la paie (comptabiliser)", command=self.valider).pack(side="left", padx=12)
+
+        self.statut_var = tk.StringVar()
+        ttk.Label(self, textvariable=self.statut_var, foreground="#B00020", font=("Segoe UI", 9, "bold")).pack(
+            anchor="w", padx=12)
+
+        cols = [c[0] for c in self.RESULT_COLS]
+        self.tree = ttk.Treeview(self, columns=cols, show="headings")
+        for key, label, width in self.RESULT_COLS:
+            self.tree.heading(key, text=label)
+            self.tree.column(key, width=width, anchor="w" if key in ("matricule", "nom", "prenom") else "e")
+        self.tree.pack(fill="x", padx=12, pady=(0, 4))
+        self.tree.bind("<Double-1>", self._on_double_click)
+        ttk.Label(self, text="Double-cliquez une ligne pour l'aperçu avant impression du bulletin.",
+                  foreground="#595959").pack(anchor="w", padx=12)
+
+        self.totaux_var = tk.StringVar()
+        ttk.Label(self, textvariable=self.totaux_var, font=("Segoe UI", 10, "bold")).pack(
+            anchor="w", padx=12, pady=8)
+
+        self.calculer()
+
+    def _appeler(self, fonction, *args, **kwargs):
+        return appeler(self, self.remote, fonction, *args, **kwargs)
+
+    def calculer(self):
+        periode = self.periode_var.get().strip()
+        if len(periode) != 7 or periode[4] != "-":
+            messagebox.showerror("Erreur", "Période invalide — format attendu : AAAA-MM (ex. 2026-08).",
+                                  parent=self)
+            return
+        etat = self._appeler("compute_paie_periode", periode)
+        if etat is APPEL_ECHEC:
+            return
+        self.last_etat = etat
+        for row in self.tree.get_children():
+            self.tree.delete(row)
+        for l in etat["lignes"]:
+            values = [fmt_cfa(l[k]) if k not in ("matricule", "nom", "prenom") else l[k]
+                      for k, _, _ in self.RESULT_COLS]
+            self.tree.insert("", "end", iid=str(l["bulletin_id"]), values=values)
+        t = etat["totaux"]
+        self.totaux_var.set(
+            f"Total Net Perçu : {fmt_cfa(t['net_percu'])}   Total CNSS : {fmt_cfa(t['cnss_total'])}   "
+            f"Total IUTS : {fmt_cfa(t['iuts_net'])}   Total Ret. Oblig. : {fmt_cfa(t['retenue_obligatoire'])}   "
+            f"Coût total employeur : {fmt_cfa(t['cout_total_employeur'])} F CFA")
+        validee = self._appeler("est_periode_paie_validee", periode)
+        if validee is not APPEL_ECHEC and validee:
+            self.statut_var.set(
+                f"✓ Paie de {periode} déjà VALIDÉE (comptabilisée) — les bulletins ne sont plus modifiables.")
+        else:
+            self.statut_var.set("")
+        if not etat["lignes"]:
+            messagebox.showinfo("Info", "Aucun bulletin saisi pour cette période — utilisez l'onglet Bulletins.",
+                                 parent=self)
+
+    def valider(self):
+        periode = self.periode_var.get().strip()
+        if len(periode) != 7 or periode[4] != "-":
+            messagebox.showerror("Erreur", "Période invalide — format attendu : AAAA-MM (ex. 2026-08).",
+                                  parent=self)
+            return
+        validee = self._appeler("est_periode_paie_validee", periode)
+        if validee is APPEL_ECHEC:
+            return
+        if validee:
+            messagebox.showinfo("Info", f"La paie de {periode} est déjà validée.", parent=self)
+            return
+        etat = self._appeler("compute_paie_periode", periode)
+        if etat is APPEL_ECHEC:
+            return
+        if not etat["lignes"]:
+            messagebox.showwarning("Rien à valider", "Aucun bulletin saisi pour cette période.", parent=self)
+            return
+        t = etat["totaux"]
+        if not messagebox.askyesno(
+            "Confirmer la validation de la paie",
+            f"Valider la paie de {periode} pour {len(etat['lignes'])} employé(s) ?\n\n"
+            f"Total Net à payer : {fmt_cfa(t['net_percu'])} F CFA\n"
+            f"Total CNSS (salariale + patronale) : {fmt_cfa(t['cnss_total'])} F CFA\n"
+            f"Total IUTS : {fmt_cfa(t['iuts_net'])} F CFA\n"
+            f"Coût total employeur : {fmt_cfa(t['cout_total_employeur'])} F CFA\n\n"
+            f"Cette action envoie les écritures comptables sur le serveur (débit charges de personnel, "
+            f"crédit CNSS/IUTS/rémunérations dues) et VERROUILLE les bulletins de cette période — ils ne "
+            f"pourront plus être modifiés. Cette action est définitive.", parent=self
+        ):
+            return
+        resultat = self._appeler("valider_paie_periode", periode)
+        if resultat is APPEL_ECHEC:
+            return
+        _, piece = resultat
+        messagebox.showinfo("Validation terminée",
+                             f"Paie de {periode} comptabilisée (pièce {piece}). Les écritures sont visibles "
+                             f"dans le menu SAISIE.", parent=self)
+        self.calculer()
+
+    def _on_double_click(self, event=None):
+        sel = self.tree.selection()
+        if not sel:
+            return
+        bulletin_id = int(sel[0])
+        html = self._appeler("render_bulletin_paie_html", bulletin_id)
+        if html is APPEL_ECHEC:
+            return
+        import tempfile, webbrowser, os
+        path = os.path.join(tempfile.gettempdir(), f"bulletin_paie_{bulletin_id}.html")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(html)
+        webbrowser.open(f"file://{path}")
+
+    def export_excel(self):
+        if not self.last_etat or not self.last_etat["lignes"]:
+            messagebox.showinfo("Info", "Rien à exporter — calculez d'abord la paie de la période.", parent=self)
+            return
+        path = filedialog.asksaveasfilename(
+            defaultextension=".xlsx", filetypes=[("Classeur Excel", "*.xlsx")],
+            initialfile=f"Etat_paie_{self.periode_var.get().strip()}.xlsx", title="Exporter l'état de paie",
+            parent=self)
+        if not path:
+            return
+        try:
+            import openpyxl
+            from openpyxl.styles import Font, PatternFill
+        except ImportError:
+            messagebox.showerror(
+                "Module manquant",
+                "L'export Excel nécessite le module openpyxl, absent de cette version du client.",
+                parent=self)
+            return
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Etat de paie"
+        header_font = Font(bold=True, color="FFFFFFFF")
+        header_fill = PatternFill("solid", fgColor="1F4E78")
+        for i, (_, label, _) in enumerate(self.RESULT_COLS, start=1):
+            c = ws.cell(row=1, column=i, value=label)
+            c.font = header_font
+            c.fill = header_fill
+        for r, l in enumerate(self.last_etat["lignes"], start=2):
+            for i, (key, _, _) in enumerate(self.RESULT_COLS, start=1):
+                ws.cell(row=r, column=i, value=l[key])
+        wb.save(path)
+        messagebox.showinfo("Export terminé", f"État de paie exporté :\n{path}", parent=self)
+
+
+class RemotePaieParametresTab(ttk.Frame):
+    """Paramètres de paie via le réseau — équivalent réseau complet de
+    PaieParametresTab (bureau)."""
+
+    CHAMPS = [
+        ("taux_cnss_salarie", "Taux CNSS salariale", True),
+        ("plafond_cnss", "Plafond rémunération CNSS", False),
+        ("cnss_salariale_plafonnee", "CNSS salariale plafonnée", False),
+        ("taux_cnss_patronale", "Taux CNSS patronale", True),
+        ("taux_tpa", "Taux TPA (patronale)", True),
+        ("taux_retenue_obligatoire", "Taux retenue obligatoire", True),
+        ("abattement_cadre", "Abattement CADRE", True),
+        ("abattement_autre", "Abattement AUTRE", True),
+        ("taux_plafond_fiscal", "Taux plafond fiscal", True),
+    ]
+
+    def __init__(self, parent, remote: RemoteConnection):
+        super().__init__(parent)
+        self.remote = remote
+        ttk.Label(self, text="PARAMÈTRES DE PAIE", font=("Segoe UI", 14, "bold")).pack(
+            anchor="w", padx=16, pady=(16, 4))
+        ttk.Label(self, text=(
+            "Taux et plafonds utilisés pour tous les calculs de paie (CNSS, TPA, abattements). "
+            "Les indemnités exonérées (Logement/Fonction/Transport) et le barème IUTS restent aux valeurs "
+            "réglementaires par défaut."
+        ), foreground="#595959", wraplength=1000).pack(anchor="w", padx=16, pady=(0, 12))
+
+        form = ttk.Frame(self)
+        form.pack(anchor="w", padx=16)
+        self.vars = {}
+        for i, (key, label, is_pct) in enumerate(self.CHAMPS):
+            ttk.Label(form, text=label + (" (%)" if is_pct else "") + " :").grid(
+                row=i, column=0, sticky="w", padx=4, pady=4)
+            var = tk.StringVar()
+            ttk.Entry(form, textvariable=var, width=14).grid(row=i, column=1, padx=4, pady=4)
+            self.vars[key] = (var, is_pct)
+        ttk.Button(self, text="Enregistrer les paramètres", command=self.save).pack(
+            anchor="w", padx=16, pady=12)
+
+        self.refresh()
+
+    def _appeler(self, fonction, *args, **kwargs):
+        return appeler(self, self.remote, fonction, *args, **kwargs)
+
+    def refresh(self):
+        params = self._appeler("get_paie_parametres")
+        if params is APPEL_ECHEC:
+            return
+        for key, (var, is_pct) in self.vars.items():
+            val = params.get(key, 0)
+            var.set(str(val * 100 if is_pct else val))
+
+    def save(self):
+        params = self._appeler("get_paie_parametres")
+        if params is APPEL_ECHEC:
+            return
+        try:
+            for key, (var, is_pct) in self.vars.items():
+                val = float(var.get())
+                params[key] = val / 100 if is_pct else val
+        except ValueError:
+            messagebox.showerror("Erreur", "Toutes les valeurs doivent être des nombres.", parent=self)
+            return
+        if self._appeler("set_paie_parametres", params) is APPEL_ECHEC:
+            return
+        messagebox.showinfo("Enregistré", "Paramètres de paie enregistrés.", parent=self)
+
+
+class RemotePaieTab(ttk.Frame):
+    """Regroupe la saisie des bulletins, l'état de paie calculé et les
+    paramètres via le réseau — équivalent réseau complet de PaieTab
+    (bureau)."""
+
+    def __init__(self, parent, remote: RemoteConnection):
+        super().__init__(parent)
+        self.remote = remote
+        inner = ttk.Notebook(self)
+        inner.pack(fill="both", expand=True)
+        self.bulletins_tab = RemotePaieBulletinsTab(inner, remote)
+        self.etat_tab = RemotePaieEtatTab(inner, remote)
+        self.params_tab = RemotePaieParametresTab(inner, remote)
+        inner.add(self.bulletins_tab, text="Bulletins")
+        inner.add(self.etat_tab, text="État de paie")
+        inner.add(self.params_tab, text="Paramètres de paie")
+
+    def refresh(self):
+        self.bulletins_tab.refresh()
+        self.etat_tab.calculer()
+        self.params_tab.refresh()
 
 
 class RemoteFournisseursTab(ttk.Frame):

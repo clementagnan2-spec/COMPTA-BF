@@ -6,7 +6,9 @@ testable en ligne de commande. main.py ne fait qu'appeler ces fonctions.
 """
 import hashlib
 import json
+import math
 import os
+import copy
 import re
 import secrets
 import sys
@@ -752,6 +754,34 @@ def init_db(conn):
             heures REAL NOT NULL DEFAULT 0,
             activite TEXT,
             notes TEXT
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS paie_bulletins (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            personnel_id INTEGER NOT NULL,
+            periode TEXT NOT NULL,
+            classification TEXT NOT NULL DEFAULT 'AUTRE',
+            salaire_base REAL NOT NULL DEFAULT 0,
+            prime_anciennete REAL NOT NULL DEFAULT 0,
+            heures_sup REAL NOT NULL DEFAULT 0,
+            sursalaire REAL NOT NULL DEFAULT 0,
+            gratification REAL NOT NULL DEFAULT 0,
+            indemnite_caisse REAL NOT NULL DEFAULT 0,
+            indemnite_logement REAL NOT NULL DEFAULT 0,
+            indemnite_fonction REAL NOT NULL DEFAULT 0,
+            indemnite_transport REAL NOT NULL DEFAULT 0,
+            personnes_a_charge INTEGER NOT NULL DEFAULT 0,
+            retenue_pret REAL NOT NULL DEFAULT 0,
+            date_saisie TEXT,
+            UNIQUE(personnel_id, periode)
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS paie_periodes_validees (
+            periode TEXT PRIMARY KEY,
+            date_validation TEXT NOT NULL,
+            piece TEXT
         )
     """)
     conn.execute("""
@@ -8251,7 +8281,8 @@ MENU_STRUCTURE = [
                               ("Bordereau de livraison", "bordereau_livraison"),
                               ("Règlements", "reglements")]),
     ("GRH", [("Liste du personnel", "grh_personnel"), ("Time sheet", "grh_time_sheet"), ("KPI", "grh_kpi"),
-             ("Tableau de bord GRH", "grh_tableau_bord"), ("HS (hygiène santé)", "grh_hs")]),
+             ("Tableau de bord GRH", "grh_tableau_bord"), ("HS (hygiène santé)", "grh_hs"),
+             ("Paie", "grh_paie")]),
     ("TRESORERIE", [("Trésorerie", "tresorerie")]),
     ("TRANSPORT", [("Parc auto", "transport"), ("Missions", "missions"),
                     ("Pièces de rechange", "pieces_rechange"), ("Réparations", "reparations")]),
@@ -8306,7 +8337,7 @@ def ajouter_niveaux_acces_suggeres_menus(conn):
     vendeur_menus = ["clients", "recouvrement", "facturation", "stocks", "marges"]
     charge_achats_menus = ["fournisseurs", "contrats", "expression_besoin", "ep_bon_commande",
                             "bordereau_livraison", "reglements"]
-    grh_menus = ["grh_personnel", "grh_time_sheet", "grh_kpi", "grh_tableau_bord", "grh_hs"]
+    grh_menus = ["grh_personnel", "grh_time_sheet", "grh_kpi", "grh_tableau_bord", "grh_hs", "grh_paie"]
     tresorier_menus = ["tresorerie", "recouvrement", "reglements"]
     usine_menus = ["stocks", "production", "transport", "missions", "pieces_rechange", "reparations",
                    "immobilisations", "amortissements", "energie", "maintenance", "rapports_technique"]
@@ -8592,6 +8623,616 @@ def list_personnel(conn, actifs_only=False):
         q += " WHERE statut = 'actif'"
     q += " ORDER BY nom, prenom"
     return [dict(r) for r in conn.execute(q).fetchall()]
+
+
+# ---------------------------------------------------------------------------
+# Paie (GRH > Paie) — reproduit fidèlement les formules du calculateur
+# « Paie Burkina » (CNSS, IUTS, exonérations, abattement CADRE/AUTRE...),
+# adapté pour lire/écrire dans cette base plutôt que dans un fichier JSON
+# séparé, et réutiliser les employés déjà saisis dans GRH > Personnel.
+# ---------------------------------------------------------------------------
+
+PAIE_DEFAULT_PARAMS = {
+    "taux_cnss_salarie": 0.055,
+    "plafond_cnss": 800000,
+    "cnss_salariale_plafonnee": 44000,
+    "taux_cnss_patronale": 0.16,
+    "taux_tpa": 0.03,
+    "taux_retenue_obligatoire": 0.01,
+
+    "abattement_cadre": 0.2,
+    "abattement_autre": 0.25,
+
+    "taux_plafond_fiscal": 0.08,
+
+    # indemnité: [taux_exonere, plafond_mensuel]
+    "exo_logement": [0.2, 75000],
+    "exo_fonction": [0.05, 50000],
+    "exo_transport": [0.05, 30000],
+
+    # tranches IUTS: [de, a, taux, montant_cumule_anterieur]. a=None -> et plus
+    "bareme_iuts": [
+        [0, 10000, 0.0, 0],
+        [10000, 20000, 0.0, 0],
+        [20000, 30000, 0.0, 0],
+        [30000, 50000, 0.121, 0],
+        [50000, 80000, 0.139, 2420],
+        [80000, 120000, 0.157, 6590],
+        [120000, 170000, 0.184, 12870],
+        [170000, 250000, 0.217, 22070],
+        [250000, None, 0.25, 39430],
+    ],
+
+    # réduction IUTS selon personnes à charge
+    "reduction_charges": {"0": 1.0, "1": 0.92, "2": 0.9, "3": 0.88, "4+": 0.86},
+}
+
+PAIE_LIGNE_LABELS = {
+    "salaire_base": "Salaire de base", "prime_anciennete": "Prime d'ancienneté",
+    "heures_sup": "Heures supplémentaires", "sursalaire": "Sursalaire",
+    "gratification": "Gratification", "indemnite_caisse": "Indemnité Caisse",
+    "indemnite_logement": "Indemnité Logement", "indemnite_fonction": "Indemnité Fonction",
+    "indemnite_transport": "Indemnité Transport", "personnes_a_charge": "Personnes à charge",
+    "retenue_pret": "Retenue prêt/avance",
+}
+
+
+def _paie_round(x, ndigits=0):
+    """Reproduit ROUND() d'Excel (arrondi arithmétique, pas 'banker's rounding')."""
+    if ndigits == 0:
+        return math.floor(x + 0.5) if x >= 0 else math.ceil(x - 0.5)
+    factor = 10 ** ndigits
+    return _paie_round(x * factor) / factor
+
+
+def _paie_rounddown_to_hundred(x):
+    """Reproduit ROUNDDOWN(x, -2) d'Excel : arrondi à la centaine inférieure."""
+    return math.floor(x / 100.0) * 100.0
+
+
+def _paie_charge_key(n):
+    n = int(n)
+    return "4+" if n >= 4 else str(n)
+
+
+def _paie_iuts_brut(base_imposable, bareme):
+    """Calcule l'IUTS brut par la formule en cascade du barème progressif."""
+    x = base_imposable
+    for de, a, taux, cumul in bareme:
+        if a is None or x < a:
+            return (x - de) * taux + cumul
+    de, a, taux, cumul = bareme[-1]
+    return (x - de) * taux + cumul
+
+
+def _paie_exoneration_indemnite(taux, plafond, indemnite_versee, salaire_brut):
+    """=IF(taux*Brut<=Indem, IF(taux*Brut<=Plafond, taux*Brut, Plafond),
+             IF(Indem>=Plafond, Plafond, Indem))"""
+    seuil = taux * salaire_brut
+    if seuil <= indemnite_versee:
+        return seuil if seuil <= plafond else plafond
+    return plafond if indemnite_versee >= plafond else indemnite_versee
+
+
+def get_paie_parametres(conn):
+    """Paramètres de paie (taux CNSS, plafonds, barème IUTS...) — stockés en
+    JSON dans les settings, modifiables par un administrateur dans
+    GRH > Paie > Paramètres. Complète automatiquement les clés manquantes
+    avec les valeurs par défaut si le fichier vient d'une version antérieure."""
+    raw = get_text_setting(conn, "paie_parametres", "")
+    params = copy.deepcopy(PAIE_DEFAULT_PARAMS)
+    if raw:
+        try:
+            saved = json.loads(raw)
+            params.update(saved)
+        except (ValueError, TypeError):
+            pass
+    return params
+
+
+def set_paie_parametres(conn, params):
+    set_text_setting(conn, "paie_parametres", json.dumps(params, ensure_ascii=False))
+
+
+def compute_bulletin_paie(bulletin, params):
+    """Calcule un bulletin de paie complet à partir des éléments de gain
+    saisis (`bulletin`, un dict) et des paramètres de paie (`params`, voir
+    get_paie_parametres) — reproduit exactement les formules du classeur
+    Excel de référence (CNSS plafonnée, plafond fiscal, abattement, IUTS à
+    9 tranches, réduction pour charges de famille)."""
+    F = bulletin.get("salaire_base", 0) or 0
+    G = bulletin.get("prime_anciennete", 0) or 0
+    H = bulletin.get("heures_sup", 0) or 0
+    I = bulletin.get("sursalaire", 0) or 0
+    J = bulletin.get("gratification", 0) or 0
+    K = bulletin.get("indemnite_caisse", 0) or 0
+    L = bulletin.get("indemnite_logement", 0) or 0
+    M = bulletin.get("indemnite_fonction", 0) or 0
+    N = bulletin.get("indemnite_transport", 0) or 0
+    classification = bulletin.get("classification") or "AUTRE"
+
+    O = F + G + H + I + J + K + L + M + N
+
+    if O <= params["plafond_cnss"]:
+        P = _paie_round(O * params["taux_cnss_salarie"])
+    else:
+        P = params["cnss_salariale_plafonnee"]
+
+    Q = params["taux_plafond_fiscal"] * (F + G + H + I)
+    R = O - Q if P >= Q else O - P
+    R = _paie_round(R)
+
+    base_abattement = F + G + H + I
+    taux_abattement = params["abattement_cadre"] if classification == "CADRE" else params["abattement_autre"]
+    S = _paie_round(taux_abattement * base_abattement)
+
+    taux_log, plaf_log = params["exo_logement"]
+    taux_fct, plaf_fct = params["exo_fonction"]
+    taux_trp, plaf_trp = params["exo_transport"]
+    T = _paie_exoneration_indemnite(taux_log, plaf_log, L, R)
+    U = _paie_exoneration_indemnite(taux_fct, plaf_fct, M, R)
+    V = _paie_exoneration_indemnite(taux_trp, plaf_trp, N, R)
+
+    W = S + T + U + V
+    X = _paie_rounddown_to_hundred(R - W)
+    Y = int(bulletin.get("personnes_a_charge", 0) or 0)
+    Z = _paie_iuts_brut(X, params["bareme_iuts"])
+    reduction = params["reduction_charges"].get(_paie_charge_key(Y), 1.0)
+    AA = _paie_round(Z * reduction)
+
+    AB = O - P - AA
+    AC = _paie_round(AB * params["taux_retenue_obligatoire"])
+    AD = bulletin.get("retenue_pret", 0) or 0
+    AE = AB - AC - AD
+
+    AF = _paie_round(O * params["taux_tpa"])
+    AG = _paie_round(O * params["taux_cnss_patronale"])
+    AH = AF + AG
+    AI = O + AH
+    AJ = AG + P
+    AK = AF + AA
+
+    return {
+        "salaire_base": F, "prime_anciennete": G, "heures_sup": H, "sursalaire": I,
+        "gratification": J, "indemnite_caisse": K, "indemnite_logement": L,
+        "indemnite_fonction": M, "indemnite_transport": N,
+        "remuneration_totale": O, "cnss_salariale": P, "plafond_fiscal": Q, "salaire_brut": R,
+        "abattement": S, "exo_logement": T, "exo_fonction": U, "exo_transport": V,
+        "total_exonerations": W, "base_imposable": X, "personnes_a_charge": Y,
+        "iuts_brut": Z, "iuts_net": AA, "salaire_net": AB, "retenue_obligatoire": AC,
+        "retenue_pret": AD, "net_percu": AE, "tpa_patronale": AF, "cnss_patronale": AG,
+        "total_charges_patronales": AH, "cout_total_employeur": AI, "cnss_total": AJ,
+        "iuts_plus_tpa": AK,
+    }
+
+
+def est_periode_paie_validee(conn, periode):
+    return conn.execute(
+        "SELECT 1 FROM paie_periodes_validees WHERE periode = ?", (periode,)
+    ).fetchone() is not None
+
+
+def set_bulletin_paie(conn, personnel_id, periode, **champs):
+    """Crée ou met à jour le bulletin de paie (éléments de gain saisis, PAS
+    les montants calculés — recalculés à la volée par compute_bulletin_paie)
+    d'un employé pour une période donnée (« AAAA-MM »)."""
+    if not get_personnel(conn, personnel_id):
+        raise ValueError(f"Employé ID {personnel_id} introuvable.")
+    if not periode or len(periode) != 7 or periode[4] != "-":
+        raise ValueError("Période invalide — format attendu : AAAA-MM (ex. 2026-08).")
+    if est_periode_paie_validee(conn, periode):
+        raise ValueError(
+            f"La paie de la période {periode} a déjà été validée (comptabilisée) — "
+            f"elle ne peut plus être modifiée."
+        )
+    existing = conn.execute(
+        "SELECT * FROM paie_bulletins WHERE personnel_id = ? AND periode = ?", (personnel_id, periode)
+    ).fetchone()
+    valeurs = dict(existing) if existing else {}
+    valeurs.update({k: v for k, v in champs.items() if v is not None})
+    valeurs.setdefault("classification", "AUTRE")
+    for champ in ("salaire_base", "prime_anciennete", "heures_sup", "sursalaire", "gratification",
+                  "indemnite_caisse", "indemnite_logement", "indemnite_fonction", "indemnite_transport",
+                  "personnes_a_charge", "retenue_pret"):
+        valeurs.setdefault(champ, 0)
+    conn.execute(
+        """INSERT INTO paie_bulletins
+               (personnel_id, periode, classification, salaire_base, prime_anciennete, heures_sup,
+                sursalaire, gratification, indemnite_caisse, indemnite_logement, indemnite_fonction,
+                indemnite_transport, personnes_a_charge, retenue_pret, date_saisie)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(personnel_id, periode) DO UPDATE SET
+               classification = excluded.classification, salaire_base = excluded.salaire_base,
+               prime_anciennete = excluded.prime_anciennete, heures_sup = excluded.heures_sup,
+               sursalaire = excluded.sursalaire, gratification = excluded.gratification,
+               indemnite_caisse = excluded.indemnite_caisse, indemnite_logement = excluded.indemnite_logement,
+               indemnite_fonction = excluded.indemnite_fonction,
+               indemnite_transport = excluded.indemnite_transport,
+               personnes_a_charge = excluded.personnes_a_charge, retenue_pret = excluded.retenue_pret,
+               date_saisie = excluded.date_saisie""",
+        (personnel_id, periode, valeurs["classification"], valeurs["salaire_base"],
+         valeurs["prime_anciennete"], valeurs["heures_sup"], valeurs["sursalaire"],
+         valeurs["gratification"], valeurs["indemnite_caisse"], valeurs["indemnite_logement"],
+         valeurs["indemnite_fonction"], valeurs["indemnite_transport"], valeurs["personnes_a_charge"],
+         valeurs["retenue_pret"], date.today().isoformat()),
+    )
+    conn.commit()
+
+
+def delete_bulletin_paie(conn, bulletin_id):
+    row = conn.execute("SELECT periode FROM paie_bulletins WHERE id = ?", (bulletin_id,)).fetchone()
+    if row and est_periode_paie_validee(conn, row["periode"]):
+        raise ValueError(
+            f"La paie de la période {row['periode']} a déjà été validée (comptabilisée) — "
+            f"ce bulletin ne peut plus être supprimé."
+        )
+    conn.execute("DELETE FROM paie_bulletins WHERE id = ?", (bulletin_id,))
+    conn.commit()
+
+
+def get_bulletin_paie(conn, personnel_id, periode):
+    row = conn.execute(
+        "SELECT * FROM paie_bulletins WHERE personnel_id = ? AND periode = ?", (personnel_id, periode)
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def list_bulletins_paie(conn, periode=None):
+    """Bulletins de paie (éléments de gain saisis), avec le nom/matricule de
+    l'employé — filtrés sur une période (« AAAA-MM ») si fournie, sinon
+    tous. Ne renvoie PAS les montants calculés : utiliser compute_paie_periode
+    pour l'état de paie complet (calculé)."""
+    q = """SELECT b.*, p.nom, p.prenom, p.matricule, p.poste
+           FROM paie_bulletins b JOIN personnel p ON p.id = b.personnel_id"""
+    params = []
+    if periode:
+        q += " WHERE b.periode = ?"
+        params.append(periode)
+    q += " ORDER BY p.nom, p.prenom"
+    return [dict(r) for r in conn.execute(q, params).fetchall()]
+
+
+def compute_paie_periode(conn, periode):
+    """État de paie calculé pour tous les employés ayant un bulletin sur
+    cette période — chaque ligne combine les éléments de gain saisis et
+    tous les montants calculés (CNSS, IUTS, net perçu, coût employeur...),
+    plus les totaux de la période."""
+    params = get_paie_parametres(conn)
+    bulletins = list_bulletins_paie(conn, periode)
+    lignes = []
+    totaux = {"net_percu": 0.0, "cnss_total": 0.0, "iuts_net": 0.0,
+              "retenue_obligatoire": 0.0, "cout_total_employeur": 0.0}
+    for b in bulletins:
+        resultat = compute_bulletin_paie(b, params)
+        resultat.update({
+            "bulletin_id": b["id"], "personnel_id": b["personnel_id"],
+            "nom": b["nom"], "prenom": b["prenom"], "matricule": b["matricule"] or "",
+            "poste": b["poste"] or "", "classification": b["classification"], "periode": periode,
+        })
+        lignes.append(resultat)
+        for k in totaux:
+            totaux[k] += resultat[k]
+    return {"periode": periode, "lignes": lignes, "totaux": totaux}
+
+
+def dupliquer_bulletins_periode(conn, periode_source, periode_cible):
+    """Duplique tous les bulletins de paie (éléments de gain saisis, hors
+    montants calculés) d'une période vers une autre — pratique en début de
+    mois pour repartir des mêmes chiffres que le mois précédent plutôt que
+    tout ressaisir. Les bulletins déjà existants sur la période cible pour
+    un même employé sont écrasés."""
+    if periode_source == periode_cible:
+        raise ValueError("La période source et la période cible doivent être différentes.")
+    bulletins = list_bulletins_paie(conn, periode_source)
+    if not bulletins:
+        raise ValueError(f"Aucun bulletin trouvé pour la période {periode_source}.")
+    for b in bulletins:
+        set_bulletin_paie(
+            conn, b["personnel_id"], periode_cible, classification=b["classification"],
+            salaire_base=b["salaire_base"], prime_anciennete=b["prime_anciennete"],
+            heures_sup=b["heures_sup"], sursalaire=b["sursalaire"], gratification=b["gratification"],
+            indemnite_caisse=b["indemnite_caisse"], indemnite_logement=b["indemnite_logement"],
+            indemnite_fonction=b["indemnite_fonction"], indemnite_transport=b["indemnite_transport"],
+            personnes_a_charge=b["personnes_a_charge"], retenue_pret=b["retenue_pret"],
+        )
+    return len(bulletins)
+
+
+PAIE_COMPTES = {
+    "salaires": "661100",           # Appointements, salaires — débit (charge)
+    "cnss": "431000",               # Sécurité sociale — crédit (salariale + patronale)
+    "iuts": "447210",               # État, IUTS — crédit
+    "retenue_obligatoire": "447220",  # Retenue obligatoire 1% salaire — crédit
+    "avance_pret": "421000",        # Personnel, avances et acomptes — crédit (remboursement de prêt/avance)
+    "remunerations_dues": "422000",  # Personnel, rémunérations dues — crédit (net à payer)
+    "charges_cnss_patronale": "664100",  # Charges sociales sur rémunérations — débit
+    "charges_tpa": "664200",        # Charges sociales (TPA) — débit
+    "tpa_a_payer": "442810",        # TPA — crédit
+}
+
+
+def valider_paie_periode(conn, periode, date_str=None, piece=None):
+    """Comptabilise la paie d'une période entière (tous les bulletins
+    saisis) : pour chaque employé, une écriture regroupant la rémunération
+    brute (débit 661100), les retenues salariales (crédit CNSS 431000,
+    IUTS 447210, retenue obligatoire 447220, remboursement prêt 421000) et
+    le net à payer (crédit 422000) ; puis les charges patronales (débit
+    664100/664200, crédit CNSS 431000 / TPA 442810).
+
+    Marque la période comme VALIDÉE : les bulletins ne peuvent plus être
+    modifiés ni supprimés ensuite (cohérent avec le fonctionnement des
+    factures). Lève une erreur si la période est vide ou déjà validée.
+
+    Retourne (état de paie calculé, pièce comptable utilisée)."""
+    if est_periode_paie_validee(conn, periode):
+        raise ValueError(f"La paie de la période {periode} a déjà été validée.")
+    etat = compute_paie_periode(conn, periode)
+    if not etat["lignes"]:
+        raise ValueError(f"Aucun bulletin saisi pour la période {periode} — rien à valider.")
+
+    exercice = periode[:4]
+    if date_str is None:
+        annee, mois = int(periode[:4]), int(periode[5:7])
+        dernier_jour = 31 if mois == 12 else (date(annee, mois + 1, 1) - timedelta(days=1)).day
+        date_str = f"{annee:04d}-{mois:02d}-{dernier_jour:02d}"
+    piece = piece or f"PAIE-{periode}"
+
+    for l in etat["lignes"]:
+        libelle = f"Paie {periode} — {l['nom']} {l['prenom'] or ''}".strip()
+        O = l["remuneration_totale"]
+        if O > 0:
+            add_entry(conn, date_str, piece, "OD", PAIE_COMPTES["salaires"], "", libelle, O, 0)
+        if l["cnss_salariale"] > 0:
+            add_entry(conn, date_str, piece, "OD", PAIE_COMPTES["cnss"], "", libelle, 0, l["cnss_salariale"])
+        if l["iuts_net"] > 0:
+            add_entry(conn, date_str, piece, "OD", PAIE_COMPTES["iuts"], "", libelle, 0, l["iuts_net"])
+        if l["retenue_obligatoire"] > 0:
+            add_entry(conn, date_str, piece, "OD", PAIE_COMPTES["retenue_obligatoire"], "", libelle,
+                      0, l["retenue_obligatoire"])
+        if l["retenue_pret"] > 0:
+            add_entry(conn, date_str, piece, "OD", PAIE_COMPTES["avance_pret"], "", libelle,
+                      0, l["retenue_pret"])
+        if l["net_percu"] > 0:
+            add_entry(conn, date_str, piece, "OD", PAIE_COMPTES["remunerations_dues"], "", libelle,
+                      0, l["net_percu"])
+        # Charges patronales
+        if l["cnss_patronale"] > 0:
+            add_entry(conn, date_str, piece, "OD", PAIE_COMPTES["charges_cnss_patronale"], "",
+                      f"Charges patronales CNSS — {libelle}", l["cnss_patronale"], 0)
+            add_entry(conn, date_str, piece, "OD", PAIE_COMPTES["cnss"], "",
+                      f"Charges patronales CNSS — {libelle}", 0, l["cnss_patronale"])
+        if l["tpa_patronale"] > 0:
+            add_entry(conn, date_str, piece, "OD", PAIE_COMPTES["charges_tpa"], "",
+                      f"TPA patronale — {libelle}", l["tpa_patronale"], 0)
+            add_entry(conn, date_str, piece, "OD", PAIE_COMPTES["tpa_a_payer"], "",
+                      f"TPA patronale — {libelle}", 0, l["tpa_patronale"])
+
+    conn.execute(
+        "INSERT OR REPLACE INTO paie_periodes_validees (periode, date_validation, piece) VALUES (?, ?, ?)",
+        (periode, date.today().isoformat(), piece),
+    )
+    conn.commit()
+    return etat, piece
+
+
+PAIE_IMPORT_COLUMNS = [
+    ("matricule", "Matricule", ["matricule"]),
+    ("periode", "Période (AAAA-MM)", ["période (aaaa-mm)", "periode", "période"]),
+    ("classification", "Classification (CADRE/AUTRE)", ["classification (cadre/autre)", "classification"]),
+    ("salaire_base", "Salaire de base", ["salaire de base", "salaire base"]),
+    ("prime_anciennete", "Prime d'ancienneté", ["prime d'ancienneté", "prime anciennete"]),
+    ("heures_sup", "Heures supplémentaires", ["heures supplémentaires", "heures sup"]),
+    ("sursalaire", "Sursalaire", ["sursalaire"]),
+    ("gratification", "Gratification", ["gratification"]),
+    ("indemnite_caisse", "Indemnité Caisse", ["indemnité caisse", "indemnite caisse"]),
+    ("indemnite_logement", "Indemnité Logement", ["indemnité logement", "indemnite logement"]),
+    ("indemnite_fonction", "Indemnité Fonction", ["indemnité fonction", "indemnite fonction"]),
+    ("indemnite_transport", "Indemnité Transport", ["indemnité transport", "indemnite transport"]),
+    ("personnes_a_charge", "Personnes à charge", ["personnes à charge", "personnes a charge"]),
+    ("retenue_pret", "Retenue prêt/avance", ["retenue prêt/avance", "retenue pret"]),
+]
+
+
+def export_paie_bulletins_template(path):
+    """Modèle Excel pour importer/mettre à jour en masse les bulletins de
+    paie — chaque ligne doit référencer un employé déjà saisi dans
+    GRH > Personnel via son matricule."""
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Bulletins de paie"
+    header_font = Font(bold=True, color="FFFFFFFF")
+    header_fill = PatternFill("solid", fgColor="1F4E78")
+    for i, (_, label, _) in enumerate(PAIE_IMPORT_COLUMNS, start=1):
+        c = ws.cell(row=1, column=i, value=label)
+        c.font = header_font
+        c.fill = header_fill
+    example = ["EMP001", "2026-08", "AUTRE", 120000, 5000, 0, 0, 0, 0, 0, 0, 15000, 1, 0]
+    for i, val in enumerate(example, start=1):
+        ws.cell(row=2, column=i, value=val)
+    for i, w in enumerate([14, 16, 20, 14, 16, 18, 12, 14, 16, 18, 18, 18, 16, 16], start=1):
+        ws.column_dimensions[chr(64 + i)].width = w
+    wb.save(path)
+    return path
+
+
+def parse_paie_bulletins_xlsx(path):
+    """Lit un fichier Excel de bulletins de paie et renvoie la liste des
+    lignes sous forme de dicts, SANS toucher à la base de données —
+    utilisable localement (bureau) ou à distance (client réseau)."""
+    import openpyxl
+
+    wb = openpyxl.load_workbook(path, data_only=True)
+    ws = wb.active
+    header_cells = next(ws.iter_rows(min_row=1, max_row=1))
+    headers = [str(c.value).strip().lower() if c.value is not None else "" for c in header_cells]
+
+    colmap = {}
+    for key, _, aliases in PAIE_IMPORT_COLUMNS:
+        for i, h in enumerate(headers):
+            if h in aliases:
+                colmap[key] = i
+                break
+
+    if "matricule" not in colmap:
+        raise ValueError(
+            "Colonne obligatoire introuvable (« Matricule »). Utilisez le bouton « Télécharger un modèle »."
+        )
+
+    def get(values, key, default=None):
+        idx = colmap.get(key)
+        if idx is None or idx >= len(values):
+            return default
+        return values[idx]
+
+    rows = []
+    for row_idx, row in enumerate(ws.iter_rows(min_row=2), start=2):
+        values = [c.value for c in row]
+        if all(v in (None, "") for v in values):
+            continue
+        rows.append({
+            "ligne": row_idx,
+            "matricule": str(get(values, "matricule") or "").strip(),
+            "periode": str(get(values, "periode") or "").strip(),
+            "classification": (str(get(values, "classification") or "AUTRE").strip().upper() or "AUTRE"),
+            "salaire_base": get(values, "salaire_base"),
+            "prime_anciennete": get(values, "prime_anciennete"),
+            "heures_sup": get(values, "heures_sup"),
+            "sursalaire": get(values, "sursalaire"),
+            "gratification": get(values, "gratification"),
+            "indemnite_caisse": get(values, "indemnite_caisse"),
+            "indemnite_logement": get(values, "indemnite_logement"),
+            "indemnite_fonction": get(values, "indemnite_fonction"),
+            "indemnite_transport": get(values, "indemnite_transport"),
+            "personnes_a_charge": get(values, "personnes_a_charge"),
+            "retenue_pret": get(values, "retenue_pret"),
+        })
+    return rows
+
+
+def apply_paie_bulletins_rows(conn, rows):
+    """Applique en base une liste de bulletins déjà lus (voir
+    parse_paie_bulletins_xlsx) : associe chaque ligne à son employé via le
+    matricule, valide la période, et enregistre le bulletin — les
+    matricules introuvables ou périodes déjà validées sont ignorés avec un
+    avertissement plutôt que de faire échouer tout l'import."""
+    personnel_par_matricule = {
+        (p["matricule"] or "").strip(): p for p in list_personnel(conn) if p["matricule"]
+    }
+    imported, warnings = 0, []
+    for r in rows:
+        row_idx = r.get("ligne", "?")
+        matricule = (r.get("matricule") or "").strip()
+        p = personnel_par_matricule.get(matricule)
+        if not p:
+            warnings.append(f"Ligne {row_idx} : matricule « {matricule} » introuvable dans GRH > Personnel, "
+                             f"ligne ignorée.")
+            continue
+        periode = (r.get("periode") or "").strip()
+        if len(periode) != 7 or periode[4] != "-":
+            warnings.append(f"Ligne {row_idx} : période « {periode} » invalide (attendu AAAA-MM), ligne ignorée.")
+            continue
+        if r.get("classification") not in ("CADRE", "AUTRE"):
+            warnings.append(f"Ligne {row_idx} : classification invalide — « AUTRE » utilisée par défaut.")
+        try:
+            champs = {"classification": r.get("classification") if r.get("classification") in ("CADRE", "AUTRE")
+                      else "AUTRE"}
+            for champ in ("salaire_base", "prime_anciennete", "heures_sup", "sursalaire", "gratification",
+                          "indemnite_caisse", "indemnite_logement", "indemnite_fonction",
+                          "indemnite_transport", "retenue_pret"):
+                champs[champ] = float(r.get(champ) or 0)
+            champs["personnes_a_charge"] = int(float(r.get("personnes_a_charge") or 0))
+        except (TypeError, ValueError):
+            warnings.append(f"Ligne {row_idx} : valeur numérique invalide, ligne ignorée.")
+            continue
+        try:
+            set_bulletin_paie(conn, p["id"], periode, **champs)
+            imported += 1
+        except ValueError as exc:
+            warnings.append(f"Ligne {row_idx} : {exc}")
+    return imported, warnings
+
+
+def render_bulletin_paie_html(conn, bulletin_id):
+    """Bulletin de paie individuel en HTML imprimable (aperçu avant
+    impression) — renvoie le contenu (str), sans écrire de fichier, pour un
+    usage local (bureau) ET distant (client réseau)."""
+    row = conn.execute(
+        "SELECT b.*, p.nom, p.prenom, p.matricule, p.poste FROM paie_bulletins b "
+        "JOIN personnel p ON p.id = b.personnel_id WHERE b.id = ?", (bulletin_id,)
+    ).fetchone()
+    if not row:
+        raise ValueError("Bulletin introuvable.")
+    b = dict(row)
+    params = get_paie_parametres(conn)
+    r = compute_bulletin_paie(b, params)
+
+    societe_nom = get_company_value(conn, "societe_nom") or "(Dénomination non renseignée — ADMIN > Liasse fiscale)"
+    societe_adresse = get_company_value(conn, "societe_adresse")
+    societe_telephone = get_company_value(conn, "societe_telephone")
+
+    gains_rows = "\n".join(
+        f"<tr><td>{PAIE_LIGNE_LABELS[k]}</td><td style='text-align:right'>{r[k]:,.0f}</td></tr>"
+        for k in ("salaire_base", "prime_anciennete", "heures_sup", "sursalaire", "gratification",
+                   "indemnite_caisse", "indemnite_logement", "indemnite_fonction", "indemnite_transport")
+        if r[k]
+    )
+    return f"""<!DOCTYPE html>
+<html lang="fr"><head><meta charset="utf-8"><title>Bulletin de paie — {b['nom']} {b['prenom'] or ''}</title>
+<style>
+  body {{ font-family: 'Segoe UI', Arial, sans-serif; margin: 30px; color: #111; font-size: 13px; }}
+  .toolbar {{ margin-bottom: 16px; }}
+  .cadre-entreprise {{ border: 1px solid #000; padding: 8px 12px; text-align: center; margin-bottom: 10px; }}
+  .cadre-entreprise .nom {{ font-weight: bold; font-size: 15px; text-transform: uppercase; }}
+  h1 {{ font-size: 16px; text-align: center; margin: 10px 0; }}
+  .identite {{ display: flex; justify-content: space-between; border: 1px solid #000; padding: 8px 12px;
+               margin-bottom: 12px; }}
+  table {{ width: 100%; border-collapse: collapse; margin-bottom: 12px; }}
+  th, td {{ border: 1px solid #000; padding: 5px 10px; font-size: 12px; }}
+  th {{ background: #eee; text-align: left; }}
+  table.totaux td:first-child {{ font-weight: bold; }}
+  table.totaux td:last-child {{ text-align: right; }}
+  .net {{ font-size: 15px; font-weight: bold; text-align: right; border: 2px solid #000; padding: 8px 12px; }}
+  @media print {{ .toolbar {{ display: none; }} }}
+</style></head>
+<body>
+<div class="toolbar"><button onclick="window.print()">🖨️ Imprimer / Enregistrer en PDF</button>
+  <span style="margin-left:10px;color:#595959;font-size:12px;">Aperçu avant impression — rien n'est encore imprimé.</span></div>
+
+<div class="cadre-entreprise">
+  <div class="nom">{societe_nom}</div>
+  <div>{societe_adresse or ''}{' — Tél : ' + societe_telephone if societe_telephone else ''}</div>
+</div>
+<h1>BULLETIN DE PAIE — {b['periode']}</h1>
+<div class="identite">
+  <div><b>{b['nom']} {b['prenom'] or ''}</b><br>Matricule : {b['matricule'] or '—'}<br>Poste : {b['poste'] or '—'}</div>
+  <div>Classification : {b['classification']}<br>Personnes à charge : {r['personnes_a_charge']}</div>
+</div>
+
+<table>
+<tr><th>Éléments de gain</th><th style="width:140px">Montant</th></tr>
+{gains_rows}
+<tr><td><b>Rémunération totale</b></td><td style="text-align:right"><b>{r['remuneration_totale']:,.0f}</b></td></tr>
+</table>
+
+<table class="totaux">
+<tr><td>CNSS salariale</td><td>{r['cnss_salariale']:,.0f}</td></tr>
+<tr><td>Salaire brut</td><td>{r['salaire_brut']:,.0f}</td></tr>
+<tr><td>Base imposable</td><td>{r['base_imposable']:,.0f}</td></tr>
+<tr><td>IUTS net</td><td>{r['iuts_net']:,.0f}</td></tr>
+<tr><td>Salaire net</td><td>{r['salaire_net']:,.0f}</td></tr>
+<tr><td>Retenue obligatoire (1%)</td><td>{r['retenue_obligatoire']:,.0f}</td></tr>
+<tr><td>Retenue prêt/avance</td><td>{r['retenue_pret']:,.0f}</td></tr>
+</table>
+
+<div class="net">NET PERÇU : {r['net_percu']:,.0f} F CFA</div>
+
+<p style="margin-top:30px;font-size:11px;color:#595959;">
+Ce bulletin de paie est établi conformément à la législation du travail en vigueur au Burkina Faso.
+À conserver sans limitation de durée.</p>
+</body></html>"""
 
 
 # ---- Time sheet ----
