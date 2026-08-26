@@ -2671,8 +2671,8 @@ class RecetteFabricationTab(ttk.Frame):
         self.cout_entry.grid(row=1, column=3, padx=4, sticky="w")
 
         self.compte_apercu_var = tk.StringVar()
-        ttk.Label(form, textvariable=self.compte_apercu_var, foreground="#1F7A1F").grid(
-            row=2, column=4, columnspan=2, sticky="w", padx=(12, 4))
+        ttk.Label(form, textvariable=self.compte_apercu_var, foreground="#1F7A1F", wraplength=480,
+                  justify="left").grid(row=2, column=4, columnspan=2, sticky="w", padx=(12, 4))
 
         self.analytic_label = ttk.Label(form, text="Code analytique (Énergie/Maintenance...) :")
         self.analytic_label.grid(row=1, column=4, sticky="w", padx=(12, 4))
@@ -2684,8 +2684,8 @@ class RecetteFabricationTab(ttk.Frame):
         self._refresh_analytic_values()
 
         self.analytic_apercu_var = tk.StringVar()
-        ttk.Label(form, textvariable=self.analytic_apercu_var, foreground="#1F7A1F").grid(
-            row=3, column=4, columnspan=2, sticky="w", padx=(12, 4))
+        ttk.Label(form, textvariable=self.analytic_apercu_var, foreground="#1F7A1F", wraplength=480,
+                  justify="left").grid(row=3, column=4, columnspan=2, sticky="w", padx=(12, 4))
 
         ttk.Button(form, text="Ajouter le composant", command=self.add_ligne).grid(row=4, column=5, padx=4, pady=4)
 
