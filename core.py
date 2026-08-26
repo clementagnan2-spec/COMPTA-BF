@@ -716,7 +716,9 @@ def init_db(conn):
             compte TEXT PRIMARY KEY,
             fournisseur_code TEXT,
             prix_achat REAL NOT NULL DEFAULT 0,
-            date_acquisition TEXT
+            date_acquisition TEXT,
+            base_repartition_quantite REAL,
+            base_repartition_unite TEXT
         )
     """)
     conn.execute("""
@@ -875,6 +877,12 @@ def _migrate(conn):
         conn.execute("ALTER TABLE reglements ADD COLUMN compte_paiement TEXT")
     if r_cols and "paiement_comptabilise" not in r_cols:
         conn.execute("ALTER TABLE reglements ADD COLUMN paiement_comptabilise INTEGER NOT NULL DEFAULT 0")
+
+    if_cols = [r["name"] for r in conn.execute("PRAGMA table_info(immobilisations_fiche)")]
+    if if_cols and "base_repartition_quantite" not in if_cols:
+        conn.execute("ALTER TABLE immobilisations_fiche ADD COLUMN base_repartition_quantite REAL")
+    if if_cols and "base_repartition_unite" not in if_cols:
+        conn.execute("ALTER TABLE immobilisations_fiche ADD COLUMN base_repartition_unite TEXT")
 
     # Migre l'ancien mécanisme "stock_initial_<compte>" (settings) vers opening_balances
     default_exercice = str(datetime.today().year)
@@ -5034,6 +5042,7 @@ LIGNE_TYPES = {
     "matiere": "Matière première (depuis un compte de stock)",
     "main_oeuvre": "Main-d'œuvre",
     "energie": "Énergie",
+    "amortissement": "Amortissement d'équipement (depuis une immobilisation)",
     "autre": "Autre charge de fabrication",
 }
 
@@ -5105,6 +5114,12 @@ def compute_cout_production(conn, produit_code, exercice=None):
     - pour chaque ligne « matière première » liée à un compte de stock, le coût
       unitaire réel est repris automatiquement du coût unitaire moyen calculé
       dans l'onglet Stocks (valeur du stock / quantité) ;
+    - pour chaque ligne « amortissement d'équipement » liée à un compte
+      d'immobilisation (classe 2), le coût unitaire réel est repris
+      automatiquement de l'amortissement RÉELLEMENT comptabilisé pour cet
+      équipement, divisé par sa base de répartition (tonnes/an, heures/an —
+      renseignée une fois dans l'écran Immobilisations), voir
+      compute_cout_amortissement_unitaire() ;
     - pour chaque ligne « main-d'œuvre », « énergie » ou « autre » liée à un
       CODE ANALYTIQUE (ex. MAINT-MACH, ENERGIE-EAU), le coût unitaire réel est
       repris automatiquement du coût unitaire moyen pondéré de ce code (total
@@ -5132,7 +5147,17 @@ def compute_cout_production(conn, produit_code, exercice=None):
             elif cu is None:
                 cu = 0.0
                 source = "aucun coût connu — à saisir"
-        elif l["type_ligne"] != "matiere" and l["analytic_code"]:
+        elif l["type_ligne"] == "amortissement" and l["compte"]:
+            cu_amort = compute_cout_amortissement_unitaire(conn, l["compte"], exercice=exercice)
+            if cu_amort is not None:
+                cu = cu_amort
+                fiche = get_immobilisation_fiche(conn, l["compte"])
+                unite = fiche.get("base_repartition_unite") or ""
+                source = f"amortissement équipement{f' / {unite}' if unite else ''}"
+            elif cu is None:
+                cu = 0.0
+                source = "base de répartition non renseignée (écran Immobilisations) — à saisir"
+        elif l["type_ligne"] not in ("matiere", "amortissement") and l["analytic_code"]:
             cu_analytique = compute_cout_unitaire_moyen_analytique(conn, l["analytic_code"], toutes_dates=True)
             if cu_analytique is not None:
                 cu = cu_analytique
@@ -7778,10 +7803,18 @@ def compute_cout_total_reparation(conn, reparation_id):
 # d'achat (fiche), et taux d'amortissement paramétrables par catégorie
 # (réutilise IMMO_CATEGORIES, la même catégorisation que le Bilan).
 # ---------------------------------------------------------------------------
-def set_immobilisation_fiche(conn, compte, fournisseur_code=None, prix_achat=None, date_acquisition=None):
-    """Crée ou met à jour la fiche (fournisseur, prix d'achat, date) d'un
-    compte d'immobilisation — les champs non fournis (None) conservent leur
-    valeur existante plutôt que d'être écrasés à vide."""
+def set_immobilisation_fiche(conn, compte, fournisseur_code=None, prix_achat=None, date_acquisition=None,
+                              base_repartition_quantite=None, base_repartition_unite=None):
+    """Crée ou met à jour la fiche (fournisseur, prix d'achat, date, base de
+    répartition de l'amortissement) d'un compte d'immobilisation — les
+    champs non fournis (None) conservent leur valeur existante plutôt que
+    d'être écrasés à vide.
+
+    `base_repartition_quantite`/`base_repartition_unite` : quantité annuelle
+    de référence (ex. 5000 tonnes/an, ou 2000 heures/an) permettant de
+    calculer le coût d'amortissement PAR UNITÉ D'USAGE de cet équipement —
+    utilisée dans les recettes de fabrication (composant « Amortissement
+    d'équipement »)."""
     existing = conn.execute("SELECT * FROM immobilisations_fiche WHERE compte = ?", (compte,)).fetchone()
     if fournisseur_code is None:
         fournisseur_code = existing["fournisseur_code"] if existing else ""
@@ -7789,17 +7822,27 @@ def set_immobilisation_fiche(conn, compte, fournisseur_code=None, prix_achat=Non
         prix_achat = existing["prix_achat"] if existing else 0
     if date_acquisition is None:
         date_acquisition = existing["date_acquisition"] if existing else ""
+    if base_repartition_quantite is None:
+        base_repartition_quantite = existing["base_repartition_quantite"] if existing else None
+    if base_repartition_unite is None:
+        base_repartition_unite = existing["base_repartition_unite"] if existing else ""
     conn.execute(
-        """INSERT OR REPLACE INTO immobilisations_fiche (compte, fournisseur_code, prix_achat, date_acquisition)
-           VALUES (?, ?, ?, ?)""",
-        (compte, fournisseur_code, prix_achat or 0, date_acquisition),
+        """INSERT OR REPLACE INTO immobilisations_fiche
+           (compte, fournisseur_code, prix_achat, date_acquisition,
+            base_repartition_quantite, base_repartition_unite)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        (compte, fournisseur_code, prix_achat or 0, date_acquisition,
+         base_repartition_quantite, base_repartition_unite),
     )
     conn.commit()
 
 
 def get_immobilisation_fiche(conn, compte):
     row = conn.execute("SELECT * FROM immobilisations_fiche WHERE compte = ?", (compte,)).fetchone()
-    return dict(row) if row else {"compte": compte, "fournisseur_code": "", "prix_achat": 0, "date_acquisition": ""}
+    if row:
+        return dict(row)
+    return {"compte": compte, "fournisseur_code": "", "prix_achat": 0, "date_acquisition": "",
+            "base_repartition_quantite": None, "base_repartition_unite": ""}
 
 
 def categorie_immobilisation(compte):
@@ -7882,6 +7925,34 @@ def compute_immobilisations_liste(conn, exercice=None):
         })
     result.sort(key=lambda l: (l["categorie"], l["compte"]))
     return result
+
+
+def compute_cout_amortissement_unitaire(conn, compte_immobilisation, exercice=None):
+    """Coût d'amortissement PAR UNITÉ D'USAGE (par tonne, par heure...) d'un
+    équipement précis, pour l'incorporer au coût de production d'une
+    recette de fabrication (composant « Amortissement d'équipement »).
+
+    = amortissement RÉELLEMENT comptabilisé pour ce compte sur l'exercice
+      (même valeur que dans l'écran Immobilisations, au prorata de sa
+      catégorie — voir compute_immobilisations_liste)
+      ÷ base_repartition_quantite (quantité annuelle de référence saisie
+      sur la fiche de l'équipement, ex. 5000 tonnes/an ou 2000 heures/an).
+
+    Renvoie None si le compte n'a pas de base de répartition renseignée, ou
+    si aucun amortissement n'est comptabilisé pour ce compte (dans les deux
+    cas, il faut renseigner la fiche de l'équipement dans l'écran
+    Immobilisations avant de pouvoir l'utiliser dans une recette)."""
+    fiche = get_immobilisation_fiche(conn, compte_immobilisation)
+    base = fiche.get("base_repartition_quantite")
+    if not base:
+        return None
+    liste = compute_immobilisations_liste(conn, exercice=exercice)
+    ligne = next((l for l in liste if l["compte"] == compte_immobilisation), None)
+    if not ligne or not ligne["amortissement"]:
+        return None
+    # « amortissement » est stocké en négatif par convention interne (valeur_nette = brut + amortissement) ;
+    # ici on veut un COÛT positif à incorporer dans le coût de production.
+    return abs(ligne["amortissement"]) / base
 
 
 # ---------------------------------------------------------------------------

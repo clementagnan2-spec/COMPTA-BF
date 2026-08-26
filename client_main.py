@@ -2642,6 +2642,17 @@ class RemoteImmobilisationsTab(ttk.Frame):
         ttk.Label(form, text="Date d'acquisition :").grid(row=1, column=4, sticky="w", padx=(12, 4))
         self.date_var = tk.StringVar()
         ttk.Entry(form, textvariable=self.date_var, width=12).grid(row=1, column=5, padx=4)
+        ttk.Label(form, text="Base de répartition (quantité annuelle) :").grid(
+            row=2, column=0, sticky="w", padx=4, pady=(4, 0))
+        self.base_qte_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.base_qte_var, width=12).grid(row=2, column=1, padx=4, pady=(4, 0))
+        ttk.Label(form, text="Unité (tonnes, heures...) :").grid(row=2, column=2, sticky="w", padx=(12, 4), pady=(4, 0))
+        self.base_unite_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.base_unite_var, width=16).grid(row=2, column=3, padx=4, pady=(4, 0))
+        ttk.Label(form, text=(
+            "Pour utiliser cet équipement dans une recette de fabrication (composant « Amortissement "
+            "d'équipement ») : indiquez sa capacité annuelle normale (ex. 5000 tonnes/an ou 2000 heures/an)."
+        ), foreground="#595959", wraplength=850).grid(row=3, column=0, columnspan=5, sticky="w", padx=4, pady=(2, 0))
         ttk.Button(form, text="Enregistrer la fiche", command=self.save_fiche).grid(row=1, column=6, padx=12)
 
         cols = ("compte", "libelle", "categorie", "fournisseur", "prix_achat", "taux", "brut", "amort", "net")
@@ -2693,6 +2704,8 @@ class RemoteImmobilisationsTab(ttk.Frame):
             if fournisseur else (fiche["fournisseur_code"] or ""))
         self.prix_var.set(str(fiche["prix_achat"]) if fiche["prix_achat"] else "")
         self.date_var.set(core.to_display_date(fiche["date_acquisition"] or ""))
+        self.base_qte_var.set(str(fiche["base_repartition_quantite"]) if fiche.get("base_repartition_quantite") else "")
+        self.base_unite_var.set(fiche.get("base_repartition_unite") or "")
 
     def save_fiche(self):
         if not self.selected_compte:
@@ -2705,9 +2718,17 @@ class RemoteImmobilisationsTab(ttk.Frame):
         except ValueError:
             messagebox.showerror("Erreur", "Le prix d'achat doit être un nombre.", parent=self)
             return
+        base_qte = None
+        if self.base_qte_var.get().strip():
+            try:
+                base_qte = float(self.base_qte_var.get())
+            except ValueError:
+                messagebox.showerror("Erreur", "La base de répartition doit être un nombre.", parent=self)
+                return
         if self._appeler("set_immobilisation_fiche", self.selected_compte, fournisseur_code=fournisseur_code or None,
-                          prix_achat=prix,
-                          date_acquisition=core.to_iso_date(self.date_var.get().strip())) is APPEL_ECHEC:
+                          prix_achat=prix, date_acquisition=core.to_iso_date(self.date_var.get().strip()),
+                          base_repartition_quantite=base_qte,
+                          base_repartition_unite=self.base_unite_var.get().strip() or None) is APPEL_ECHEC:
             return
         self.refresh()
         messagebox.showinfo("Enregistré", "Fiche d'immobilisation enregistrée.", parent=self)
@@ -4433,18 +4454,29 @@ class RemoteRecetteFabricationTab(ttk.Frame):
         return appeler(self, self.remote, fonction, *args, **kwargs)
 
     def _refresh_stock_accounts(self):
-        stocks = self._appeler("compute_stocks_detail", prefixes=["31", "32", "33", "36"])
-        if stocks is APPEL_ECHEC:
-            return
-        self._stocks_cache = {s["code"]: s for s in stocks}
-        self.compte_combo["values"] = [f"{s['code']} — {s['label']}" for s in stocks]
+        if self.type_combo.get() == core.LIGNE_TYPES["amortissement"]:
+            immos = self._appeler("compute_immobilisations_liste")
+            if immos is APPEL_ECHEC:
+                return
+            self._stocks_cache = {}
+            self.compte_combo["values"] = [f"{i['compte']} — {i['libelle']}" for i in immos]
+        else:
+            stocks = self._appeler("compute_stocks_detail", prefixes=["31", "32", "33", "36"])
+            if stocks is APPEL_ECHEC:
+                return
+            self._stocks_cache = {s["code"]: s for s in stocks}
+            self.compte_combo["values"] = [f"{s['code']} — {s['label']}" for s in stocks]
 
     def _on_compte_keyrelease(self, event=None):
         query = self._extract_code(self.compte_var.get())
-        if query:
-            items = self._appeler("search_accounts", query, limit=30)
-            if items is APPEL_ECHEC:
-                return
+        if not query:
+            return
+        items = self._appeler("search_accounts", query, limit=30)
+        if items is APPEL_ECHEC:
+            return
+        if self.type_combo.get() == core.LIGNE_TYPES["amortissement"]:
+            self.compte_combo["values"] = [f"{a['code']} — {a['label']}" for a in items if a["classe"] == "2"]
+        else:
             self.compte_combo["values"] = [
                 f"{a['code']} — {a['label']}" for a in items if a["code"][:1] in ("3",)]
 
@@ -4452,6 +4484,30 @@ class RemoteRecetteFabricationTab(ttk.Frame):
         code = self._extract_code(self.compte_var.get())
         if not code:
             self.compte_apercu_var.set("")
+            return
+        if self.type_combo.get() == core.LIGNE_TYPES["amortissement"]:
+            fiche = self._appeler("get_immobilisation_fiche", code)
+            if fiche is APPEL_ECHEC:
+                return
+            base = fiche.get("base_repartition_quantite")
+            unite = fiche.get("base_repartition_unite") or "unité"
+            if not base:
+                self.compte_apercu_var.set(
+                    f"Base de répartition non renseignée pour ce compte — allez dans IMMOBILISATIONS, "
+                    f"sélectionnez « {code} » et indiquez sa quantité annuelle de référence (ex. "
+                    f"5000 tonnes/an ou 2000 heures/an).")
+                return
+            cu = self._appeler("compute_cout_amortissement_unitaire", code)
+            if cu is APPEL_ECHEC:
+                return
+            if cu is not None:
+                self.compte_apercu_var.set(
+                    f"Coût d'amortissement : {fmt_cfa(cu)} F CFA / {unite} "
+                    f"(amortissement de la période ÷ {base:g} {unite}/an — sera utilisé automatiquement)")
+            else:
+                self.compte_apercu_var.set(
+                    "Aucun amortissement comptabilisé pour cet équipement pour l'instant — saisissez un "
+                    "coût unitaire manuel en attendant.")
             return
         stock = self._stocks_cache.get(code)
         if stock is None:
@@ -4528,10 +4584,15 @@ class RemoteRecetteFabricationTab(ttk.Frame):
                 f"{a['code']} — {a['label']}" for a in items if a["code"].startswith("36")]
 
     def _on_type_changed(self, event=None):
-        is_matiere = self.type_combo.get() == core.LIGNE_TYPES["matiere"]
-        state_compte = "normal" if is_matiere else "disabled"
-        self.compte_combo.configure(state=state_compte)
-        if not is_matiere:
+        type_label = self.type_combo.get()
+        actif = type_label in (core.LIGNE_TYPES["matiere"], core.LIGNE_TYPES["amortissement"])
+        self.compte_combo.configure(state="normal" if actif else "disabled")
+        if actif:
+            self.compte_label.configure(
+                text="Compte d'immobilisation :" if type_label == core.LIGNE_TYPES["amortissement"]
+                else "Compte de stock :")
+            self._refresh_stock_accounts()
+        else:
             self.compte_var.set("")
             self.compte_apercu_var.set("")
 
@@ -4625,7 +4686,7 @@ class RemoteRecetteFabricationTab(ttk.Frame):
             messagebox.showerror("Erreur", "La quantité doit être un nombre.", parent=self)
             return
         type_key = self._type_key()
-        compte = self._extract_code(self.compte_var.get()) if type_key == "matiere" else None
+        compte = self._extract_code(self.compte_var.get()) if type_key in ("matiere", "amortissement") else None
         cout_unitaire = None
         if self.ligne_cout_var.get().strip():
             try:
@@ -4633,10 +4694,11 @@ class RemoteRecetteFabricationTab(ttk.Frame):
             except ValueError:
                 messagebox.showerror("Erreur", "Le coût unitaire doit être un nombre.", parent=self)
                 return
-        if type_key == "matiere" and not compte and cout_unitaire is None:
+        if type_key in ("matiere", "amortissement") and not compte and cout_unitaire is None:
             messagebox.showwarning(
                 "Champ manquant",
-                "Choisissez un compte de stock ou saisissez un coût unitaire manuel.", parent=self)
+                "Choisissez un compte (stock ou immobilisation) ou saisissez un coût unitaire manuel.",
+                parent=self)
             return
         analytic_code = self._extract_code(self.ligne_analytic_var.get()) or None
         if self._appeler("add_recette_ligne", self.selected_produit, type_key, libelle, qte, compte,
