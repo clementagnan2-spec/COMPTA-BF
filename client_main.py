@@ -2649,10 +2649,17 @@ class RemoteImmobilisationsTab(ttk.Frame):
         ttk.Label(form, text="Unité (tonnes, heures...) :").grid(row=2, column=2, sticky="w", padx=(12, 4), pady=(4, 0))
         self.base_unite_var = tk.StringVar()
         ttk.Entry(form, textvariable=self.base_unite_var, width=16).grid(row=2, column=3, padx=4, pady=(4, 0))
+        ttk.Label(form, text="Amortissement annuel (si pas comptabilisé) :").grid(
+            row=2, column=4, sticky="w", padx=(12, 4), pady=(4, 0))
+        self.amort_manuel_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.amort_manuel_var, width=16).grid(row=2, column=5, padx=4, pady=(4, 0))
         ttk.Label(form, text=(
             "Pour utiliser cet équipement dans une recette de fabrication (composant « Amortissement "
-            "d'équipement ») : indiquez sa capacité annuelle normale (ex. 5000 tonnes/an ou 2000 heures/an)."
-        ), foreground="#595959", wraplength=850).grid(row=3, column=0, columnspan=5, sticky="w", padx=4, pady=(2, 0))
+            "d'équipement ») : indiquez sa capacité annuelle normale (ex. 5000 tonnes/an ou 2000 heures/an). "
+            "Le coût unitaire = amortissement RÉELLEMENT comptabilisé (dotations 68x/28x déjà saisies) ÷ "
+            "cette capacité ; si aucune dotation n'est encore comptabilisée pour cet équipement, le montant "
+            "« Amortissement annuel » saisi ci-dessus est utilisé à la place, en attendant."
+        ), foreground="#595959", wraplength=1050).grid(row=3, column=0, columnspan=6, sticky="w", padx=4, pady=(2, 0))
         ttk.Button(form, text="Enregistrer la fiche", command=self.save_fiche).grid(row=1, column=6, padx=12)
 
         cols = ("compte", "libelle", "categorie", "fournisseur", "prix_achat", "taux", "brut", "amort", "net")
@@ -2706,6 +2713,8 @@ class RemoteImmobilisationsTab(ttk.Frame):
         self.date_var.set(core.to_display_date(fiche["date_acquisition"] or ""))
         self.base_qte_var.set(str(fiche["base_repartition_quantite"]) if fiche.get("base_repartition_quantite") else "")
         self.base_unite_var.set(fiche.get("base_repartition_unite") or "")
+        self.amort_manuel_var.set(
+            str(fiche["amortissement_annuel_manuel"]) if fiche.get("amortissement_annuel_manuel") else "")
 
     def save_fiche(self):
         if not self.selected_compte:
@@ -2725,10 +2734,18 @@ class RemoteImmobilisationsTab(ttk.Frame):
             except ValueError:
                 messagebox.showerror("Erreur", "La base de répartition doit être un nombre.", parent=self)
                 return
+        amort_manuel = None
+        if self.amort_manuel_var.get().strip():
+            try:
+                amort_manuel = float(self.amort_manuel_var.get())
+            except ValueError:
+                messagebox.showerror("Erreur", "L'amortissement annuel doit être un nombre.", parent=self)
+                return
         if self._appeler("set_immobilisation_fiche", self.selected_compte, fournisseur_code=fournisseur_code or None,
                           prix_achat=prix, date_acquisition=core.to_iso_date(self.date_var.get().strip()),
                           base_repartition_quantite=base_qte,
-                          base_repartition_unite=self.base_unite_var.get().strip() or None) is APPEL_ECHEC:
+                          base_repartition_unite=self.base_unite_var.get().strip() or None,
+                          amortissement_annuel_manuel=amort_manuel) is APPEL_ECHEC:
             return
         self.refresh()
         messagebox.showinfo("Enregistré", "Fiche d'immobilisation enregistrée.", parent=self)
