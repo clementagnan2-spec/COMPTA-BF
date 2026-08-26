@@ -2632,27 +2632,32 @@ class RemoteImmobilisationsTab(ttk.Frame):
             row=0, column=0, columnspan=4, sticky="w", padx=4, pady=4)
         ttk.Label(form, text="Fournisseur :").grid(row=1, column=0, sticky="w", padx=4)
         self.fournisseur_var = tk.StringVar()
-        self.fournisseur_combo = ttk.Combobox(form, textvariable=self.fournisseur_var, width=28)
+        self.fournisseur_combo = ttk.Combobox(form, textvariable=self.fournisseur_var, width=28, state="disabled")
         self.fournisseur_combo.grid(row=1, column=1, padx=4, pady=4)
         self.fournisseur_combo.bind("<KeyRelease>", self._on_fournisseur_keyrelease)
         self._refresh_fournisseur_values()
         ttk.Label(form, text="Prix d'achat :").grid(row=1, column=2, sticky="w", padx=(12, 4))
         self.prix_var = tk.StringVar()
-        ttk.Entry(form, textvariable=self.prix_var, width=16).grid(row=1, column=3, padx=4)
+        self.prix_entry = ttk.Entry(form, textvariable=self.prix_var, width=16, state="disabled")
+        self.prix_entry.grid(row=1, column=3, padx=4)
         ttk.Label(form, text="Date d'acquisition :").grid(row=1, column=4, sticky="w", padx=(12, 4))
         self.date_var = tk.StringVar()
-        ttk.Entry(form, textvariable=self.date_var, width=12).grid(row=1, column=5, padx=4)
+        self.date_entry = ttk.Entry(form, textvariable=self.date_var, width=12, state="disabled")
+        self.date_entry.grid(row=1, column=5, padx=4)
         ttk.Label(form, text="Base de répartition (quantité annuelle) :").grid(
             row=2, column=0, sticky="w", padx=4, pady=(4, 0))
         self.base_qte_var = tk.StringVar()
-        ttk.Entry(form, textvariable=self.base_qte_var, width=12).grid(row=2, column=1, padx=4, pady=(4, 0))
+        self.base_qte_entry = ttk.Entry(form, textvariable=self.base_qte_var, width=12, state="disabled")
+        self.base_qte_entry.grid(row=2, column=1, padx=4, pady=(4, 0))
         ttk.Label(form, text="Unité (tonnes, heures...) :").grid(row=2, column=2, sticky="w", padx=(12, 4), pady=(4, 0))
         self.base_unite_var = tk.StringVar()
-        ttk.Entry(form, textvariable=self.base_unite_var, width=16).grid(row=2, column=3, padx=4, pady=(4, 0))
+        self.base_unite_entry = ttk.Entry(form, textvariable=self.base_unite_var, width=16, state="disabled")
+        self.base_unite_entry.grid(row=2, column=3, padx=4, pady=(4, 0))
         ttk.Label(form, text="Amortissement annuel (si pas comptabilisé) :").grid(
             row=2, column=4, sticky="w", padx=(12, 4), pady=(4, 0))
         self.amort_manuel_var = tk.StringVar()
-        ttk.Entry(form, textvariable=self.amort_manuel_var, width=16).grid(row=2, column=5, padx=4, pady=(4, 0))
+        self.amort_manuel_entry = ttk.Entry(form, textvariable=self.amort_manuel_var, width=16, state="disabled")
+        self.amort_manuel_entry.grid(row=2, column=5, padx=4, pady=(4, 0))
         ttk.Label(form, text=(
             "Pour utiliser cet équipement dans une recette de fabrication (composant « Amortissement "
             "d'équipement ») : indiquez sa capacité annuelle normale (ex. 5000 tonnes/an ou 2000 heures/an). "
@@ -2660,8 +2665,14 @@ class RemoteImmobilisationsTab(ttk.Frame):
             "cette capacité ; si aucune dotation n'est encore comptabilisée pour cet équipement, le montant "
             "« Amortissement annuel » saisi ci-dessus est utilisé à la place, en attendant."
         ), foreground="#595959", wraplength=1050).grid(row=3, column=0, columnspan=6, sticky="w", padx=4, pady=(2, 0))
+        ttk.Label(form, text=(
+            "Les champs sont verrouillés par défaut, pour éviter toute modification accidentelle. Cliquez "
+            "« Modifier la fiche » pour les déverrouiller, puis « Enregistrer la fiche » une fois vos "
+            "changements faits."
+        ), foreground="#B00020", wraplength=1050).grid(row=4, column=0, columnspan=6, sticky="w", padx=4, pady=(2, 0))
         ttk.Button(form, text="Enregistrer la fiche", command=self.save_fiche).grid(row=1, column=6, padx=12)
-        ttk.Button(form, text="Modifier la fiche", command=self.save_fiche).grid(row=2, column=6, padx=12, pady=(4, 0))
+        ttk.Button(form, text="Modifier la fiche", command=self.modifier_fiche).grid(
+            row=2, column=6, padx=12, pady=(4, 0))
 
         cols = ("compte", "libelle", "categorie", "fournisseur", "prix_achat", "taux", "brut", "amort", "net")
         self.tree = ttk.Treeview(self, columns=cols, show="headings", height=18)
@@ -2692,6 +2703,22 @@ class RemoteImmobilisationsTab(ttk.Frame):
             return
         self.fournisseur_combo["values"] = [f"{f['code']} — {f['raison_sociale']}" for f in items]
 
+    def _lock_fields(self):
+        for widget in (self.fournisseur_combo, self.prix_entry, self.date_entry, self.base_qte_entry,
+                       self.base_unite_entry, self.amort_manuel_entry):
+            widget.configure(state="disabled")
+
+    def _unlock_fields(self):
+        for widget in (self.fournisseur_combo, self.prix_entry, self.date_entry, self.base_qte_entry,
+                       self.base_unite_entry, self.amort_manuel_entry):
+            widget.configure(state="normal")
+
+    def modifier_fiche(self):
+        if not self.selected_compte:
+            messagebox.showinfo("Info", "Sélectionnez d'abord un compte dans le tableau.", parent=self)
+            return
+        self._unlock_fields()
+
     def _on_select(self, event=None):
         sel = self.tree.selection()
         if not sel:
@@ -2716,6 +2743,7 @@ class RemoteImmobilisationsTab(ttk.Frame):
         self.base_unite_var.set(fiche.get("base_repartition_unite") or "")
         self.amort_manuel_var.set(
             str(fiche["amortissement_annuel_manuel"]) if fiche.get("amortissement_annuel_manuel") else "")
+        self._lock_fields()  # reverrouille à chaque nouvelle sélection : il faut recliquer « Modifier »
 
     def save_fiche(self):
         if not self.selected_compte:
@@ -2748,6 +2776,7 @@ class RemoteImmobilisationsTab(ttk.Frame):
                           base_repartition_unite=self.base_unite_var.get().strip() or None,
                           amortissement_annuel_manuel=amort_manuel) is APPEL_ECHEC:
             return
+        self._lock_fields()
         self.refresh()
         messagebox.showinfo("Enregistré", "Fiche d'immobilisation enregistrée.", parent=self)
 
