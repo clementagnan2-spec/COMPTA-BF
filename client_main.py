@@ -2661,6 +2661,7 @@ class RemoteImmobilisationsTab(ttk.Frame):
             "« Amortissement annuel » saisi ci-dessus est utilisé à la place, en attendant."
         ), foreground="#595959", wraplength=1050).grid(row=3, column=0, columnspan=6, sticky="w", padx=4, pady=(2, 0))
         ttk.Button(form, text="Enregistrer la fiche", command=self.save_fiche).grid(row=1, column=6, padx=12)
+        ttk.Button(form, text="Modifier la fiche", command=self.save_fiche).grid(row=2, column=6, padx=12, pady=(4, 0))
 
         cols = ("compte", "libelle", "categorie", "fournisseur", "prix_achat", "taux", "brut", "amort", "net")
         self.tree = ttk.Treeview(self, columns=cols, show="headings", height=18)
