@@ -1112,7 +1112,7 @@ class RemoteTimeSheetTab(ttk.Frame):
         for c, h, w in zip(cols, ["ID", "Employé", "Date", "Heures", "Activité"], [40, 180, 100, 80, 350]):
             self.tree.heading(c, text=h)
             self.tree.column(c, width=w, anchor="w")
-        self.tree.pack(fill="both", expand=True, padx=16, pady=8)
+        self.tree.pack(fill="both", padx=16, pady=8)
         ttk.Button(self, text="Supprimer la ligne sélectionnée", command=self.delete_sel).pack(
             anchor="w", padx=16, pady=(0, 12))
         self.refresh()
@@ -2490,7 +2490,7 @@ class RemoteStocksMouvementsTab(ttk.Frame):
             self.tree.heading(c, text=h)
             self.tree.column(c, width=w, anchor="w")
         self.tree.tag_configure("auto", foreground="#1F4E78")
-        self.tree.pack(fill="both", expand=True, padx=8, pady=8)
+        self.tree.pack(fill="both", padx=8, pady=8)
 
         self.totals_var = tk.StringVar()
         ttk.Label(self, textvariable=self.totals_var, font=("Segoe UI", 10, "bold")).pack(
@@ -2663,7 +2663,7 @@ class RemoteImmobilisationsTab(ttk.Frame):
         for c, h, w in zip(cols, headers, widths):
             self.tree.heading(c, text=h)
             self.tree.column(c, width=w, anchor="w")
-        self.tree.pack(fill="both", expand=True, padx=16, pady=8)
+        self.tree.pack(fill="both", padx=16, pady=8)
         self.tree.bind("<<TreeviewSelect>>", self._on_select)
         ttk.Button(self, text="Actualiser", command=self.refresh).pack(anchor="w", padx=16, pady=(0, 12))
         self.refresh()
@@ -3931,7 +3931,7 @@ class RemoteReparationDialog(tk.Toplevel):
                      values=["en_cours", "terminee"]).grid(row=1, column=3, padx=4, pady=(4, 0))
 
         lignes_frame = ttk.LabelFrame(self, text="Pièces utilisées (décrémente le stock)")
-        lignes_frame.pack(fill="both", expand=True, padx=10, pady=6)
+        lignes_frame.pack(fill="both", padx=10, pady=6)
         form = ttk.Frame(lignes_frame)
         form.pack(fill="x", padx=6, pady=4)
         ttk.Label(form, text="Pièce :").grid(row=0, column=0, sticky="w")
@@ -3949,7 +3949,7 @@ class RemoteReparationDialog(tk.Toplevel):
         for c, h, w in zip(cols, ["ID", "Pièce", "Quantité", "Coût unit.", "Montant"], [40, 300, 90, 100, 110]):
             self.tree.heading(c, text=h)
             self.tree.column(c, width=w, anchor="w")
-        self.tree.pack(fill="both", expand=True, padx=6, pady=6)
+        self.tree.pack(fill="both", padx=6, pady=6)
         ttk.Button(lignes_frame, text="Supprimer la ligne sélectionnée (restitue le stock)",
                    command=self.delete_ligne).pack(anchor="w", padx=6, pady=(0, 6))
         self.total_var = tk.StringVar()
@@ -4312,7 +4312,7 @@ class RemoteCoutsFabricationPeriodeTab(ttk.Frame):
             "sur la ligne correspondante dans l'onglet Saisie."
         ), foreground="#595959").pack(anchor="w", padx=8, pady=(8, 0))
         self.text = tk.Text(self, font=("Consolas", 11), wrap="none")
-        self.text.pack(fill="both", expand=True, padx=8, pady=8)
+        self.text.pack(fill="both", padx=8, pady=8)
         ttk.Button(self, text="Actualiser", command=self.refresh).pack(pady=(0, 8))
         self.refresh()
 
@@ -4437,7 +4437,7 @@ class RemoteRecetteFabricationTab(ttk.Frame):
         for c, h, w in zip(cols, headers, widths):
             self.tree.heading(c, text=h)
             self.tree.column(c, width=w, anchor="w")
-        self.tree.pack(fill="both", expand=True, padx=12, pady=8)
+        self.tree.pack(fill="both", padx=12, pady=8)
         ttk.Button(self, text="Supprimer le composant sélectionné", command=self.delete_ligne).pack(
             anchor="w", padx=12)
 
@@ -4936,7 +4936,7 @@ class RemoteOuvertureTab(ttk.Frame):
             self.tree.heading(c, text=h)
             self.tree.column(c, width=w, anchor="w" if c in ("code", "label") else "e")
         self.tree.tag_configure("total", background="#1F4E78", foreground="white", font=("Segoe UI", 10, "bold"))
-        self.tree.pack(fill="both", expand=True, padx=16, pady=8)
+        self.tree.pack(fill="both", padx=16, pady=8)
 
         self.total_var = tk.StringVar()
         ttk.Label(self, textvariable=self.total_var, font=("Segoe UI", 10, "bold")).pack(

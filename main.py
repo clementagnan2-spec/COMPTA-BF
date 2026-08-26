@@ -491,7 +491,7 @@ class MultiLigneDialog(tk.Toplevel):
         lignes_frame = ttk.LabelFrame(self, text=(
             "Lignes de l'écriture — autant de comptes que nécessaire au débit ET au crédit "
             "(renseignez Débit OU Crédit par ligne, pas les deux)"))
-        lignes_frame.pack(fill="both", expand=True, padx=10, pady=6, side="top")
+        lignes_frame.pack(fill="both", padx=10, pady=6, side="top")
 
         form = ttk.Frame(lignes_frame)
         form.pack(fill="x", padx=6, pady=4)
@@ -551,7 +551,7 @@ class MultiLigneDialog(tk.Toplevel):
             self.tree.column(c, width=w, anchor="w")
         tree_scroll = ttk.Scrollbar(lignes_frame, orient="vertical", command=self.tree.yview)
         self.tree.configure(yscrollcommand=tree_scroll.set)
-        self.tree.pack(side="left", fill="both", expand=True, padx=(6, 0), pady=6)
+        self.tree.pack(side="left", fill="both", padx=(6, 0), pady=6)
         tree_scroll.pack(side="left", fill="y", padx=(0, 6), pady=6)
         ttk.Button(lignes_frame, text="Supprimer la ligne sélectionnée", command=self.delete_ligne).pack(
             anchor="w", padx=6, pady=(0, 6))
@@ -1486,7 +1486,7 @@ class BalanceTab(ttk.Frame):
             self.tree.column(c, width=w, anchor="w")
         self.tree.tag_configure("classe_total", background="#DCE6F1", font=("Segoe UI", 9, "bold"))
         self.tree.tag_configure("grand_total", background="#1F4E78", foreground="white", font=("Segoe UI", 10, "bold"))
-        self.tree.pack(fill="both", expand=True, padx=8, pady=8)
+        self.tree.pack(fill="both", padx=8, pady=8)
         btn_bar = ttk.Frame(self)
         btn_bar.pack(fill="x", pady=(0, 4))
         ttk.Button(btn_bar, text="Actualiser", command=self.refresh).pack(side="left", padx=8)
@@ -1579,7 +1579,7 @@ class CompteResultatTab(ttk.Frame):
             tree_font = ("Segoe UI", 9, "bold") if key == "total" else ("Segoe UI", 9)
             self.tree.tag_configure(key, background=color, foreground=fg, font=tree_font)
             self.tree.tag_configure(key + "_header", background=color, foreground=fg, font=("Segoe UI", 9, "bold"))
-        self.tree.pack(fill="both", expand=True, padx=8, pady=8)
+        self.tree.pack(fill="both", padx=8, pady=8)
         ttk.Label(self, text=(
             "Calculé à partir de la même fonction que la Liasse fiscale, la Situation financière et "
             "le TFT (compute_liasse_resultat) — toujours cohérent avec la Balance et le Bilan."
@@ -2067,7 +2067,7 @@ class PiecesNonEquilibreesTab(ttk.Frame):
             self.tree.heading(c, text=h)
             self.tree.column(c, width=w, anchor="w" if c in ("piece", "journal") else "e")
         self.tree.tag_configure("total", background="#1F4E78", foreground="white", font=("Segoe UI", 10, "bold"))
-        self.tree.pack(fill="both", expand=True, padx=16, pady=8)
+        self.tree.pack(fill="both", padx=16, pady=8)
 
         self.total_var = tk.StringVar()
         ttk.Label(self, textvariable=self.total_var, font=("Segoe UI", 10, "bold")).pack(
@@ -2258,7 +2258,7 @@ class OpeningBalancesTab(ttk.Frame):
             self.tree.heading(c, text=h)
             self.tree.column(c, width=w, anchor="w" if c in ("code", "label") else "e")
         self.tree.tag_configure("total", background="#1F4E78", foreground="white", font=("Segoe UI", 10, "bold"))
-        self.tree.pack(fill="both", expand=True, padx=8, pady=8)
+        self.tree.pack(fill="both", padx=8, pady=8)
         self.tree.bind("<<TreeviewSelect>>", self._on_select)
 
         bottom = ttk.Frame(self)
@@ -2540,7 +2540,7 @@ class StocksMouvementsTab(ttk.Frame):
             self.tree.heading(c, text=h)
             self.tree.column(c, width=w, anchor="w")
         self.tree.tag_configure("auto", foreground="#1F4E78")
-        self.tree.pack(fill="both", expand=True, padx=8, pady=8)
+        self.tree.pack(fill="both", padx=8, pady=8)
 
         self.totals_var = tk.StringVar()
         ttk.Label(self, textvariable=self.totals_var, font=("Segoe UI", 10, "bold")).pack(anchor="w", padx=8, pady=(0, 8))
@@ -2579,7 +2579,7 @@ class CoutsFabricationPeriodeTab(ttk.Frame):
             "sur la ligne correspondante dans l'onglet Saisie."
         ), foreground="#595959").pack(anchor="w", padx=8, pady=(8, 0))
         self.text = tk.Text(self, font=("Consolas", 11), wrap="none")
-        self.text.pack(fill="both", expand=True, padx=8, pady=8)
+        self.text.pack(fill="both", padx=8, pady=8)
         ttk.Button(self, text="Actualiser", command=self.refresh).pack(pady=(0, 8))
         self.refresh()
 
@@ -2697,7 +2697,7 @@ class RecetteFabricationTab(ttk.Frame):
         for c, h, w in zip(cols, headers, widths):
             self.tree.heading(c, text=h)
             self.tree.column(c, width=w, anchor="w")
-        self.tree.pack(fill="both", expand=True, padx=12, pady=8)
+        self.tree.pack(fill="both", padx=12, pady=8)
         self.tree.bind("<<TreeviewSelect>>", self._on_ligne_select)
         ttk.Button(self, text="Supprimer le composant sélectionné", command=self.delete_ligne).pack(
             anchor="w", padx=12)
@@ -3048,7 +3048,7 @@ class TftIndirectTab(ttk.Frame):
             tree_font = ("Segoe UI", 9, "bold") if key == "total" else ("Segoe UI", 9)
             self.tree.tag_configure(key, background=color, foreground=fg, font=tree_font)
             self.tree.tag_configure(key + "_header", background=color, foreground=fg, font=("Segoe UI", 9, "bold"))
-        self.tree.pack(fill="both", expand=True, padx=8, pady=8)
+        self.tree.pack(fill="both", padx=8, pady=8)
         self.ecart_var = tk.StringVar()
         ttk.Label(self, textvariable=self.ecart_var, font=("Segoe UI", 10, "bold")).pack(anchor="w", padx=8)
         ttk.Button(self, text="Actualiser", command=self.refresh).pack(pady=8)
@@ -3227,7 +3227,7 @@ class SituationFinanciereTab(ttk.Frame):
             tree_font = ("Segoe UI", 9, "bold") if key == "total" else ("Segoe UI", 9)
             self.tree.tag_configure(key, background=color, foreground=fg, font=tree_font)
             self.tree.tag_configure(key + "_header", background=color, foreground=fg, font=("Segoe UI", 9, "bold"))
-        self.tree.pack(fill="both", expand=True, padx=8, pady=8)
+        self.tree.pack(fill="both", padx=8, pady=8)
         self.ecart_var = tk.StringVar()
         ttk.Label(self, textvariable=self.ecart_var, font=("Segoe UI", 10, "bold")).pack(anchor="w", padx=8)
         ttk.Button(self, text="Actualiser", command=self.refresh).pack(pady=8)
@@ -3600,7 +3600,7 @@ class TimeSheetTab(ttk.Frame):
         for c, h, w in zip(cols, ["ID", "Employé", "Date", "Heures", "Activité"], [40, 180, 100, 80, 350]):
             self.tree.heading(c, text=h)
             self.tree.column(c, width=w, anchor="w")
-        self.tree.pack(fill="both", expand=True, padx=16, pady=8)
+        self.tree.pack(fill="both", padx=16, pady=8)
         ttk.Button(self, text="Supprimer la ligne sélectionnée", command=self.delete_sel).pack(anchor="w", padx=16, pady=(0, 12))
         self.refresh()
 
@@ -4439,7 +4439,7 @@ class ReparationDialog(tk.Toplevel):
                      values=["en_cours", "terminee"]).grid(row=1, column=3, padx=4, pady=(4, 0))
 
         lignes_frame = ttk.LabelFrame(self, text="Pièces utilisées (décrémente le stock)")
-        lignes_frame.pack(fill="both", expand=True, padx=10, pady=6)
+        lignes_frame.pack(fill="both", padx=10, pady=6)
         form = ttk.Frame(lignes_frame)
         form.pack(fill="x", padx=6, pady=4)
         ttk.Label(form, text="Pièce :").grid(row=0, column=0, sticky="w")
@@ -4457,7 +4457,7 @@ class ReparationDialog(tk.Toplevel):
         for c, h, w in zip(cols, ["ID", "Pièce", "Quantité", "Coût unit.", "Montant"], [40, 300, 90, 100, 110]):
             self.tree.heading(c, text=h)
             self.tree.column(c, width=w, anchor="w")
-        self.tree.pack(fill="both", expand=True, padx=6, pady=6)
+        self.tree.pack(fill="both", padx=6, pady=6)
         ttk.Button(lignes_frame, text="Supprimer la ligne sélectionnée (restitue le stock)",
                    command=self.delete_ligne).pack(anchor="w", padx=6, pady=(0, 6))
         self.total_var = tk.StringVar()
@@ -4655,7 +4655,7 @@ class ImmobilisationsTab(ttk.Frame):
         for c, h, w in zip(cols, headers, widths):
             self.tree.heading(c, text=h)
             self.tree.column(c, width=w, anchor="w")
-        self.tree.pack(fill="both", expand=True, padx=16, pady=8)
+        self.tree.pack(fill="both", padx=16, pady=8)
         self.tree.bind("<<TreeviewSelect>>", self._on_select)
         ttk.Button(self, text="Actualiser", command=self.refresh).pack(anchor="w", padx=16, pady=(0, 12))
         self.refresh()
@@ -4810,7 +4810,7 @@ class AnalytiquePeriodeTab(ttk.Frame):
             self.tree.heading(c, text=h)
             self.tree.column(c, width=w, anchor="w")
         self.tree.tag_configure("total", background="#1F4E78", foreground="white", font=("Segoe UI", 10, "bold"))
-        self.tree.pack(fill="both", expand=True, padx=16, pady=8)
+        self.tree.pack(fill="both", padx=16, pady=8)
 
         ttk.Label(self, text=(
             "Pour qu'une charge apparaisse ici : dans l'onglet Saisie, renseignez le champ "
@@ -4895,7 +4895,7 @@ class ClassePeriodeTab(ttk.Frame):
             self.tree.heading(c, text=h)
             self.tree.column(c, width=w, anchor="w")
         self.tree.tag_configure("total", background="#1F4E78", foreground="white", font=("Segoe UI", 10, "bold"))
-        self.tree.pack(fill="both", expand=True, padx=16, pady=8)
+        self.tree.pack(fill="both", padx=16, pady=8)
         self.total_var = tk.StringVar()
         ttk.Label(self, textvariable=self.total_var, font=("Segoe UI", 10, "bold")).pack(anchor="w", padx=16, pady=(0, 12))
         self.refresh()
@@ -4970,7 +4970,7 @@ class RapprochementBancaireTab(ttk.Frame):
         self.tree.tag_configure("compte_header", background="#B4C6E7", font=("Segoe UI", 9, "bold"))
         self.tree.tag_configure("compte_footer", background="#DCE6F1", font=("Segoe UI", 9, "bold"))
         self.tree.tag_configure("pointe", background="#D9EAD3")
-        self.tree.pack(fill="both", expand=True, padx=16, pady=8)
+        self.tree.pack(fill="both", padx=16, pady=8)
         self.tree.bind("<Button-1>", self._on_click)
 
         self.ecart_var = tk.StringVar()
@@ -5062,7 +5062,7 @@ class VentesTab(ttk.Frame):
         for c, h, w in zip(cols, headers, widths):
             self.tree.heading(c, text=h)
             self.tree.column(c, width=w, anchor="w")
-        self.tree.pack(fill="both", expand=True, padx=16, pady=8)
+        self.tree.pack(fill="both", padx=16, pady=8)
         self.total_var = tk.StringVar()
         ttk.Label(self, textvariable=self.total_var, font=("Segoe UI", 10, "bold")).pack(anchor="w", padx=16, pady=(0, 12))
         self.refresh()
@@ -5121,7 +5121,7 @@ class AchatsTab(ttk.Frame):
         for c, h, w in zip(cols, headers, widths):
             self.tree.heading(c, text=h)
             self.tree.column(c, width=w, anchor="w")
-        self.tree.pack(fill="both", expand=True, padx=16, pady=8)
+        self.tree.pack(fill="both", padx=16, pady=8)
         self.total_var = tk.StringVar()
         ttk.Label(self, textvariable=self.total_var, font=("Segoe UI", 10, "bold")).pack(anchor="w", padx=16, pady=(0, 12))
         self.refresh()
@@ -5587,7 +5587,7 @@ class FacturationTab(ttk.Frame):
         for c, h, w in zip(cols, headers, widths):
             self.tree.heading(c, text=h)
             self.tree.column(c, width=w, anchor="w")
-        self.tree.pack(fill="both", expand=True, padx=12, pady=6)
+        self.tree.pack(fill="both", padx=12, pady=6)
         ttk.Button(self, text="Supprimer la ligne sélectionnée", command=self.delete_ligne).pack(anchor="w", padx=12)
 
         self.totals_var = tk.StringVar()
@@ -6221,7 +6221,7 @@ class BalanceAgeeDetailDialog(tk.Toplevel):
         for c, h, w in zip(cols, headers, widths):
             tree.heading(c, text=h)
             tree.column(c, width=w, anchor="w" if c in ("piece", "libelle") else "e")
-        tree.pack(fill="both", expand=True, padx=12, pady=8)
+        tree.pack(fill="both", padx=12, pady=8)
         for f in sorted(client["factures"], key=lambda x: -x["age_jours"]):
             tree.insert("", "end", values=(
                 f["piece"], f["libelle"], core.to_display_date(f["date_facture"]), f["age_jours"],
@@ -6329,7 +6329,7 @@ class FacturesFrsTab(ttk.Frame):
         for c, h, w in zip(cols, headers, widths):
             self.tree.heading(c, text=h)
             self.tree.column(c, width=w, anchor="w")
-        self.tree.pack(fill="both", expand=True, padx=12, pady=6)
+        self.tree.pack(fill="both", padx=12, pady=6)
         ttk.Button(self, text="Supprimer la ligne sélectionnée", command=self.delete_ligne).pack(anchor="w", padx=12)
 
         self.totals_var = tk.StringVar()
@@ -6702,7 +6702,7 @@ class ExpressionBesoinDialog(tk.Toplevel):
             row=1, column=3, columnspan=3, sticky="w", padx=(12, 4), pady=(4, 0))
 
         lignes_frame = ttk.LabelFrame(self, text="Lignes du besoin")
-        lignes_frame.pack(fill="both", expand=True, padx=10, pady=6)
+        lignes_frame.pack(fill="both", padx=10, pady=6)
         form = ttk.Frame(lignes_frame)
         form.pack(fill="x", padx=6, pady=4)
         ttk.Label(form, text="Libellé :").grid(row=0, column=0, sticky="w")
@@ -6722,7 +6722,7 @@ class ExpressionBesoinDialog(tk.Toplevel):
         for c, h, w in zip(cols, ["ID", "Libellé", "Quantité", "Unité"], [40, 400, 100, 100]):
             self.tree.heading(c, text=h)
             self.tree.column(c, width=w, anchor="w")
-        self.tree.pack(fill="both", expand=True, padx=6, pady=6)
+        self.tree.pack(fill="both", padx=6, pady=6)
         self.delete_ligne_btn = ttk.Button(lignes_frame, text="Supprimer la ligne sélectionnée",
                                             command=self.delete_ligne)
         self.delete_ligne_btn.pack(anchor="w", padx=6, pady=(0, 6))
@@ -6948,7 +6948,7 @@ class BonCommandeEPDialog(tk.Toplevel):
         lignes_frame = ttk.LabelFrame(self, text=(
             "Lignes — un compte débiteur (charge ou immobilisation) est OBLIGATOIRE sur chaque ligne "
             "pour pouvoir valider"))
-        lignes_frame.pack(fill="both", expand=True, padx=10, pady=6)
+        lignes_frame.pack(fill="both", padx=10, pady=6)
         form = ttk.Frame(lignes_frame)
         form.pack(fill="x", padx=6, pady=4)
         ttk.Label(form, text="Compte débiteur (charge ou immobilisation) :").grid(row=0, column=0, sticky="w")
@@ -6995,7 +6995,7 @@ class BonCommandeEPDialog(tk.Toplevel):
         for c, h, w in zip(cols, headers, widths):
             self.tree.heading(c, text=h)
             self.tree.column(c, width=w, anchor="w")
-        self.tree.pack(fill="both", expand=True, padx=6, pady=6)
+        self.tree.pack(fill="both", padx=6, pady=6)
         self.tree.bind("<<TreeviewSelect>>", self._on_select_ligne)
         self.total_var = tk.StringVar()
         ttk.Label(lignes_frame, textvariable=self.total_var, font=("Segoe UI", 10, "bold")).pack(
@@ -7337,7 +7337,7 @@ class BordereauLivraisonDialog(tk.Toplevel):
             row=1, column=0, columnspan=4, sticky="w", padx=4, pady=(4, 0))
 
         lignes_frame = ttk.LabelFrame(self, text="Lignes livrées (quantité livrée modifiable)")
-        lignes_frame.pack(fill="both", expand=True, padx=10, pady=6)
+        lignes_frame.pack(fill="both", padx=10, pady=6)
 
         cols = ("id", "libelle", "qte_cmd", "qte_liv", "unite")
         self.tree = ttk.Treeview(lignes_frame, columns=cols, show="headings", height=14)
@@ -7346,7 +7346,7 @@ class BordereauLivraisonDialog(tk.Toplevel):
         for c, h, w in zip(cols, headers, widths):
             self.tree.heading(c, text=h)
             self.tree.column(c, width=w, anchor="w")
-        self.tree.pack(fill="both", expand=True, padx=6, pady=6)
+        self.tree.pack(fill="both", padx=6, pady=6)
         self.tree.bind("<Double-1>", self._on_edit_qte_livree)
 
         ttk.Label(lignes_frame, text=(
@@ -7568,7 +7568,7 @@ class ReglementDialog(tk.Toplevel):
 
         lignes_frame = ttk.LabelFrame(self, text=(
             "Lignes — sélectionnez une ligne pour lui affecter un compte de charge et un code analytique"))
-        lignes_frame.pack(fill="both", expand=True, padx=10, pady=6)
+        lignes_frame.pack(fill="both", padx=10, pady=6)
 
         form = ttk.Frame(lignes_frame)
         form.pack(fill="x", padx=6, pady=4)
@@ -7613,7 +7613,7 @@ class ReglementDialog(tk.Toplevel):
         for c, h, w in zip(cols, headers, widths):
             self.tree.heading(c, text=h)
             self.tree.column(c, width=w, anchor="w")
-        self.tree.pack(fill="both", expand=True, padx=6, pady=6)
+        self.tree.pack(fill="both", padx=6, pady=6)
         self.tree.bind("<<TreeviewSelect>>", self._on_select_ligne)
 
         self.total_var = tk.StringVar()
