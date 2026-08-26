@@ -7980,6 +7980,167 @@ def compute_cout_amortissement_unitaire(conn, compte_immobilisation, exercice=No
     return None
 
 
+IMMOBILISATION_IMPORT_COLUMNS = [
+    ("compte", "N° Compte", ["n° compte", "compte", "n compte", "numero compte"]),
+    ("fournisseur_code", "Code fournisseur", ["code fournisseur", "fournisseur"]),
+    ("prix_achat", "Prix d'achat", ["prix d'achat", "prix achat", "prix"]),
+    ("date_acquisition", "Date d'acquisition (JJ/MM/AAAA)",
+     ["date d'acquisition (jj/mm/aaaa)", "date d'acquisition", "date acquisition"]),
+    ("base_repartition_quantite", "Base de répartition (quantité annuelle)",
+     ["base de répartition (quantité annuelle)", "base de repartition", "quantite annuelle"]),
+    ("base_repartition_unite", "Unité (tonnes, heures...)", ["unité (tonnes, heures...)", "unite", "unité"]),
+    ("amortissement_annuel_manuel", "Amortissement annuel (si pas comptabilisé)",
+     ["amortissement annuel (si pas comptabilisé)", "amortissement annuel", "amortissement manuel"]),
+]
+
+
+def export_immobilisations_template(path):
+    """Modèle Excel pour importer/mettre à jour en masse les fiches
+    d'immobilisations (fournisseur, prix d'achat, date, base de répartition,
+    amortissement manuel) — le compte DOIT déjà exister dans le Plan
+    comptable et avoir un solde dans la Balance (classe 2) ; ce modèle ne
+    crée pas de nouveaux comptes, il complète leur fiche."""
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Immobilisations"
+    header_font = Font(bold=True, color="FFFFFFFF")
+    header_fill = PatternFill("solid", fgColor="1F4E78")
+    for i, (_, label, _) in enumerate(IMMOBILISATION_IMPORT_COLUMNS, start=1):
+        c = ws.cell(row=1, column=i, value=label)
+        c.font = header_font
+        c.fill = header_fill
+    example = ["241101", "FRS-0001", 12000000, "01/01/2026", 5000, "tonnes", 2000000]
+    for i, val in enumerate(example, start=1):
+        ws.cell(row=2, column=i, value=val)
+    for i, w in enumerate([14, 16, 14, 22, 26, 20, 30], start=1):
+        ws.column_dimensions[chr(64 + i)].width = w
+    wb.save(path)
+    return path
+
+
+def parse_immobilisations_xlsx(path):
+    """Lit un fichier Excel de fiches d'immobilisations et renvoie la liste
+    des lignes sous forme de dicts, SANS toucher à la base de données —
+    utilisable aussi bien localement (bureau) qu'à distance (le client
+    réseau lit le fichier sur son propre poste, puis envoie les lignes au
+    serveur via apply_immobilisations_rows)."""
+    import openpyxl
+
+    wb = openpyxl.load_workbook(path, data_only=True)
+    ws = wb.active
+    header_cells = next(ws.iter_rows(min_row=1, max_row=1))
+    headers = [str(c.value).strip().lower() if c.value is not None else "" for c in header_cells]
+
+    colmap = {}
+    for key, _, aliases in IMMOBILISATION_IMPORT_COLUMNS:
+        for i, h in enumerate(headers):
+            if h in aliases:
+                colmap[key] = i
+                break
+
+    if "compte" not in colmap:
+        raise ValueError(
+            "Colonne obligatoire introuvable (« N° Compte »). Utilisez le bouton « Télécharger un modèle »."
+        )
+
+    def get(values, key, default=None):
+        idx = colmap.get(key)
+        if idx is None or idx >= len(values):
+            return default
+        return values[idx]
+
+    rows = []
+    for row_idx, row in enumerate(ws.iter_rows(min_row=2), start=2):
+        values = [c.value for c in row]
+        if all(v in (None, "") for v in values):
+            continue
+        compte = str(get(values, "compte") or "").strip()
+        date_brute = get(values, "date_acquisition")
+        date_str = None
+        if isinstance(date_brute, str):
+            date_str = date_brute
+        elif hasattr(date_brute, "strftime"):
+            date_str = date_brute.strftime("%d/%m/%Y")
+        rows.append({
+            "ligne": row_idx, "compte": compte,
+            "fournisseur_code": str(get(values, "fournisseur_code") or "").strip(),
+            "prix_achat": get(values, "prix_achat"),
+            "date_acquisition": date_str,
+            "base_repartition_quantite": get(values, "base_repartition_quantite"),
+            "base_repartition_unite": str(get(values, "base_repartition_unite") or "").strip(),
+            "amortissement_annuel_manuel": get(values, "amortissement_annuel_manuel"),
+        })
+    return rows
+
+
+def apply_immobilisations_rows(conn, rows):
+    """Applique en base une liste de lignes déjà lues (voir
+    parse_immobilisations_xlsx) : valide chaque compte/fournisseur et met à
+    jour la fiche d'immobilisation correspondante — les comptes ou
+    fournisseurs introuvables sont ignorés avec un avertissement plutôt que
+    de faire échouer tout l'import. Utilisable en RPC par le client réseau."""
+    imported, warnings = 0, []
+    for r in rows:
+        row_idx = r.get("ligne", "?")
+        compte = (r.get("compte") or "").strip()
+        if not compte:
+            warnings.append(f"Ligne {row_idx} : numéro de compte manquant, ligne ignorée.")
+            continue
+        if not account_exists(conn, compte):
+            warnings.append(
+                f"Ligne {row_idx} : le compte « {compte} » n'existe pas dans le Plan comptable, ligne ignorée."
+            )
+            continue
+        fournisseur_code = (r.get("fournisseur_code") or "").strip() or None
+        if fournisseur_code and not fournisseur_exists(conn, fournisseur_code):
+            warnings.append(f"Ligne {row_idx} : le fournisseur « {fournisseur_code} » n'existe pas — laissé vide.")
+            fournisseur_code = None
+        prix_achat = None
+        if r.get("prix_achat") not in (None, ""):
+            try:
+                prix_achat = float(r["prix_achat"]) or None
+            except (TypeError, ValueError):
+                warnings.append(f"Ligne {row_idx} : prix d'achat invalide, ignoré.")
+        date_acquisition = None
+        if r.get("date_acquisition"):
+            date_acquisition = to_iso_date(r["date_acquisition"])
+            if not date_acquisition:
+                warnings.append(f"Ligne {row_idx} : date d'acquisition invalide, ignorée.")
+        base_qte = None
+        if r.get("base_repartition_quantite") not in (None, ""):
+            try:
+                base_qte = float(r["base_repartition_quantite"])
+            except (TypeError, ValueError):
+                warnings.append(f"Ligne {row_idx} : base de répartition invalide, ignorée.")
+        base_unite = (r.get("base_repartition_unite") or "").strip() or None
+        amort_manuel = None
+        if r.get("amortissement_annuel_manuel") not in (None, ""):
+            try:
+                amort_manuel = float(r["amortissement_annuel_manuel"])
+            except (TypeError, ValueError):
+                warnings.append(f"Ligne {row_idx} : amortissement annuel invalide, ignoré.")
+        set_immobilisation_fiche(
+            conn, compte, fournisseur_code=fournisseur_code, prix_achat=prix_achat,
+            date_acquisition=date_acquisition, base_repartition_quantite=base_qte,
+            base_repartition_unite=base_unite, amortissement_annuel_manuel=amort_manuel,
+        )
+        imported += 1
+    return imported, warnings
+
+
+def import_immobilisations_from_xlsx(conn, path):
+    """Import direct depuis un fichier local (usage bureau uniquement — le
+    fichier et la base sont sur la même machine) : lit puis applique en un
+    seul appel. Le client réseau utilise séparément
+    parse_immobilisations_xlsx (localement) puis apply_immobilisations_rows
+    (via RPC), car le fichier Excel n'est pas accessible au serveur."""
+    rows = parse_immobilisations_xlsx(path)
+    return apply_immobilisations_rows(conn, rows)
+
+
 # ---------------------------------------------------------------------------
 # Balance âgée des créances clients (menu COMMERCE > Recouvrement) — répartit
 # le montant des factures NON PAYÉES (table factures_clients) par tranche
