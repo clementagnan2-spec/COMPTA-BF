@@ -2296,6 +2296,13 @@ class RemoteEtatFormuleTab(ttk.Frame):
                 valeurs.append(None)
             self.tree.insert("", "end", values=(l["libelle"], fmt_cfa(valeurs[0]), fmt_cfa(valeurs[1]),
                                                  fmt_cfa(valeurs[2])))
+        if d.get("errors"):
+            detail = "\n".join(f"• Cellule {coord} : {msg}" for coord, _formula, msg in d["errors"][:10])
+            messagebox.showwarning(
+                "Formules en erreur",
+                f"{len(d['errors'])} formule(s) du gabarit n'ont pas pu être évaluées. Les autres lignes "
+                f"restent correctes.\n\n{detail}", parent=self,
+            )
 
 
 class RemoteBilanTab(ttk.Frame):

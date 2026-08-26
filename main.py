@@ -1718,11 +1718,11 @@ class EtatFormuleTab(ttk.Frame):
                                                            fmt(valeurs[2])))
 
         if d["errors"]:
+            detail = "\n".join(f"• Cellule {coord} : {msg}" for coord, _formula, msg in d["errors"][:10])
             messagebox.showwarning(
                 "Formules en erreur",
-                f"{len(d['errors'])} formule(s) du gabarit n'ont pas pu être évaluées (souvent une "
-                f"division par zéro — ex. un ratio quand les capitaux propres sont nuls). Les autres "
-                f"lignes restent correctes.",
+                f"{len(d['errors'])} formule(s) du gabarit n'ont pas pu être évaluées. Les autres lignes "
+                f"restent correctes.\n\n{detail}",
             )
 
     def modifier_template(self):
